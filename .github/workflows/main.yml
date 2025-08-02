@@ -41,6 +41,10 @@ jobs:
       - name: Verify Dart SDK version
         run: dart --version
 
+      - name: Verify Flutter's Dart SDK version
+        run: |
+          dart --version | grep "3.8.1" || (echo "Dart SDK version mismatch!" && exit 1)
+
       - name: Get dependencies
         run: flutter pub get
 
