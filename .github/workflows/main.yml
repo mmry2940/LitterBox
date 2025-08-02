@@ -27,6 +27,11 @@ jobs:
         with:
           sdk: '3.8.1'
 
+      - name: Override Dart SDK version
+        run: |
+          echo "export PATH=\"\$HOME/.dart-sdks/3.8.1/bin:\$PATH\"" >> $GITHUB_ENV
+          dart --version
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
