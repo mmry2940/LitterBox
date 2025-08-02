@@ -25,6 +25,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/gradle-build-action@v3
 
+      - name: Initialize Gradle Build
+        run: gradle init --type java-application --dsl groovy --project-name SSH-client-android --package com.example.sshclient
+
       - name: Build APK
         run: gradle assembleDebug
 
