@@ -28,6 +28,16 @@ jobs:
           flutter-version: '3.27.1'
           channel: 'stable'
 
+      - name: Set up Dart SDK
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: '3.8.0'
+
+      - name: Override Dart SDK version
+        run: |
+          echo "export PATH=\"\$HOME/.dart-sdks/3.8.0/bin:\$PATH\"" >> $GITHUB_ENV
+          dart --version
+
       - name: Get dependencies
         run: flutter pub get
 
