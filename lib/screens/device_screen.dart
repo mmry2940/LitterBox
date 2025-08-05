@@ -32,8 +32,8 @@ class _DeviceScreenState extends State<DeviceScreen> {
   }
 
   Future<void> _connectSSH() async {
-  if (!mounted) return;
-  setState(() {
+    if (!mounted) return;
+    setState(() {
       _connecting = true;
       _sshError = null;
     });
@@ -47,14 +47,14 @@ class _DeviceScreenState extends State<DeviceScreen> {
         username: widget.device['username']!,
         onPasswordRequest: () => _password,
       );
-  if (!mounted) return;
-  setState(() {
+      if (!mounted) return;
+      setState(() {
         _sshClient = client;
         _connecting = false;
       });
     } catch (e) {
-  if (!mounted) return;
-  setState(() {
+      if (!mounted) return;
+      setState(() {
         _sshError = e.toString();
         _connecting = false;
       });
@@ -67,44 +67,45 @@ class _DeviceScreenState extends State<DeviceScreen> {
   final int _packagesScreenReloadKey = 0;
 
   List<Widget> get _pages => [
-    DeviceInfoScreen(
-      key: ValueKey(_infoScreenReloadKey),
-      sshClient: _sshClient,
-      error: _sshError,
-      loading: _connecting,
-    ),
-    DeviceTerminalScreen(
-      sshClient: _sshClient,
-      error: _sshError,
-      loading: _connecting,
-    ),
-    DeviceFilesScreen(
-      key: ValueKey(_filesScreenReloadKey),
-      sshClient: _sshClient,
-      error: _sshError,
-      loading: _connecting,
-    ),
-    DeviceProcessesScreen(
-      key: ValueKey(_processesScreenReloadKey),
-      sshClient: _sshClient,
-      error: _sshError,
-      loading: _connecting,
-    ),
-    DevicePackagesScreen(
-      key: ValueKey(_packagesScreenReloadKey),
-      sshClient: _sshClient,
-      error: _sshError,
-      loading: _connecting,
-    ),
-    DeviceMiscScreen(
-      onCardTap: (tab) {
-        if (!mounted) return;
-        setState(() {
-          _selectedIndex = tab;
-        });
-      },
-    ),
-  ];
+        DeviceInfoScreen(
+          key: ValueKey(_infoScreenReloadKey),
+          sshClient: _sshClient,
+          error: _sshError,
+          loading: _connecting,
+        ),
+        DeviceTerminalScreen(
+          sshClient: _sshClient,
+          error: _sshError,
+          loading: _connecting,
+        ),
+        DeviceFilesScreen(
+          key: ValueKey(_filesScreenReloadKey),
+          sshClient: _sshClient,
+          error: _sshError,
+          loading: _connecting,
+        ),
+        DeviceProcessesScreen(
+          key: ValueKey(_processesScreenReloadKey),
+          sshClient: _sshClient,
+          error: _sshError,
+          loading: _connecting,
+        ),
+        DevicePackagesScreen(
+          key: ValueKey(_packagesScreenReloadKey),
+          sshClient: _sshClient,
+          error: _sshError,
+          loading: _connecting,
+        ),
+        DeviceMiscScreen(
+          device: widget.device, // Pass the required device parameter
+          onCardTap: (tab) {
+            if (!mounted) return;
+            setState(() {
+              _selectedIndex = tab;
+            });
+          },
+        ),
+      ];
 
   void _onItemTapped(int index) {
     if (!mounted) return;

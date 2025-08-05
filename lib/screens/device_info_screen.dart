@@ -48,10 +48,8 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
       final session = await widget.sshClient!.execute(
         'uname -a && lscpu && free -h',
       );
-      final output = await session.stdout
-          .cast<List<int>>()
-          .transform(utf8.decoder)
-          .join();
+      final output =
+          await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
       setState(() {
         _info = output;
         _loading = false;
@@ -108,12 +106,9 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (kernel.isNotEmpty)
-              _buildInfoCard('Kernel', kernel),
-            if (cpu.isNotEmpty)
-              _buildInfoCard('CPU Info', cpu),
-            if (mem.isNotEmpty)
-              _buildInfoCard('Memory', mem),
+            if (kernel.isNotEmpty) _buildInfoCard('Kernel', kernel),
+            if (cpu.isNotEmpty) _buildInfoCard('CPU Info', cpu),
+            if (mem.isNotEmpty) _buildInfoCard('Memory', mem),
           ],
         ),
       );

@@ -3,7 +3,13 @@ import 'misc_details_screen.dart';
 
 class DeviceMiscScreen extends StatelessWidget {
   final void Function(int tabIndex)? onCardTap;
-  const DeviceMiscScreen({super.key, this.onCardTap});
+  final Map<String, dynamic> device; // Add device parameter
+
+  const DeviceMiscScreen({
+    super.key,
+    this.onCardTap,
+    required this.device, // Mark device as required
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -15,23 +21,25 @@ class DeviceMiscScreen extends StatelessWidget {
       _OverviewCardData('Packages', Icons.list, 4),
       _OverviewCardData('Misc', Icons.dashboard_customize, 5),
     ];
+
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: GridView.count(
         crossAxisCount: 2,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
         children: cards
             .map(
               (card) => _OverviewCard(
-                title: card.title,
-                icon: card.icon,
+                title: card.title, // Provide required title parameter
+                icon: card.icon, // Provide required icon parameter
                 onTap: () {
                   if (card.tabIndex == 5) {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => const MiscDetailsScreen(),
+                        builder: (context) => MiscDetailsScreen(
+                          device: device.map((key, value) => MapEntry(
+                              key, value.toString())), // Ensure type matches
+                        ),
                       ),
                     );
                   } else if (onCardTap != null) {
