@@ -5,10 +5,14 @@
 import FlutterMacOS
 import Foundation
 
+import network_info_plus
+import path_provider_foundation
 import shared_preferences_foundation
 import system_monitor
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
+  NetworkInfoPlusPlugin.register(with: registry.registrar(forPlugin: "NetworkInfoPlusPlugin"))
+  PathProviderPlugin.register(with: registry.registrar(forPlugin: "PathProviderPlugin"))
   SharedPreferencesPlugin.register(with: registry.registrar(forPlugin: "SharedPreferencesPlugin"))
   SystemMonitorMacos.register(with: registry.registrar(forPlugin: "SystemMonitorMacos"))
 }

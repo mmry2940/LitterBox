@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_gauges/gauges.dart';
 import 'package:dartssh2/dartssh2.dart';
+import 'package:flutter_breakpoints/flutter_breakpoints.dart';
 
 class MiscDetailsScreen extends StatefulWidget {
   final Map<String, String> device;
@@ -120,98 +121,204 @@ class _MiscDetailsScreenState extends State<MiscDetailsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isTablet = Breakpoints.tablet.isBreakpoint(context);
+    final isDesktop = Breakpoints.desktop.isBreakpoint(context);
+    final isWide = isTablet || isDesktop;
+    final gaugeSize = isWide ? 250.0 : 180.0;
+    final cpuTextStyle =
+        TextStyle(fontSize: isWide ? 24 : 18, fontWeight: FontWeight.bold);
+    final indexTextStyle =
+        TextStyle(fontSize: isWide ? 18 : 14, fontWeight: FontWeight.w500);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Misc Details'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            Expanded(
-              child: Column(
-                children: [
-                  SfRadialGauge(
-                    axes: <RadialAxis>[
-                      RadialAxis(
-                        minimum: 0,
-                        maximum: 100,
-                        ranges: <GaugeRange>[
-                          GaugeRange(
-                              startValue: 0, endValue: 50, color: Colors.green),
-                          GaugeRange(
-                              startValue: 50,
-                              endValue: 80,
-                              color: Colors.orange),
-                          GaugeRange(
-                              startValue: 80, endValue: 100, color: Colors.red),
-                        ],
-                        pointers: <GaugePointer>[
-                          NeedlePointer(value: _cpuUsage),
-                        ],
-                        annotations: <GaugeAnnotation>[
-                          GaugeAnnotation(
-                            widget: Text(
-                              'CPU: ${_cpuUsage.toStringAsFixed(1)}%',
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: isWide
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        children: [
+                          SizedBox(
+                            height: gaugeSize,
+                            child: SfRadialGauge(
+                              axes: <RadialAxis>[
+                                RadialAxis(
+                                  minimum: 0,
+                                  maximum: 100,
+                                  ranges: <GaugeRange>[
+                                    GaugeRange(
+                                        startValue: 0,
+                                        endValue: 50,
+                                        color: Colors.green),
+                                    GaugeRange(
+                                        startValue: 50,
+                                        endValue: 80,
+                                        color: Colors.orange),
+                                    GaugeRange(
+                                        startValue: 80,
+                                        endValue: 100,
+                                        color: Colors.red),
+                                  ],
+                                  pointers: <GaugePointer>[
+                                    NeedlePointer(value: _cpuUsage),
+                                  ],
+                                  annotations: <GaugeAnnotation>[
+                                    GaugeAnnotation(
+                                      widget: Text(
+                                        'CPU: ${_cpuUsage.toStringAsFixed(1)}%',
+                                        style: cpuTextStyle,
+                                      ),
+                                      angle: 90,
+                                      positionFactor: 0.5,
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
-                            angle: 90,
-                            positionFactor: 0.5,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Additional CPU Index: ${(_cpuUsage * 1.5).toStringAsFixed(1)}%',
+                            style: indexTextStyle,
                           ),
                         ],
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Additional CPU Index: ${(_cpuUsage * 1.5).toStringAsFixed(1)}%', // Example additional index
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
                     ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: SfRadialGauge(
-                axes: <RadialAxis>[
-                  RadialAxis(
-                    minimum: 0,
-                    maximum: 100,
-                    ranges: <GaugeRange>[
-                      GaugeRange(
-                          startValue: 0, endValue: 50, color: Colors.green),
-                      GaugeRange(
-                          startValue: 50, endValue: 80, color: Colors.orange),
-                      GaugeRange(
-                          startValue: 80, endValue: 100, color: Colors.red),
-                    ],
-                    pointers: <GaugePointer>[
-                      NeedlePointer(value: _ramUsage),
-                    ],
-                    annotations: <GaugeAnnotation>[
-                      GaugeAnnotation(
-                        widget: Text(
-                          'RAM: ${_ramUsage.toStringAsFixed(1)}%',
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
+                    const SizedBox(width: 32),
+                    Expanded(
+                      child: SizedBox(
+                        height: gaugeSize,
+                        child: SfRadialGauge(
+                          axes: <RadialAxis>[
+                            RadialAxis(
+                              minimum: 0,
+                              maximum: 100,
+                              ranges: <GaugeRange>[
+                                GaugeRange(
+                                    startValue: 0,
+                                    endValue: 50,
+                                    color: Colors.green),
+                                GaugeRange(
+                                    startValue: 50,
+                                    endValue: 80,
+                                    color: Colors.orange),
+                                GaugeRange(
+                                    startValue: 80,
+                                    endValue: 100,
+                                    color: Colors.red),
+                              ],
+                              pointers: <GaugePointer>[
+                                NeedlePointer(value: _ramUsage),
+                              ],
+                              annotations: <GaugeAnnotation>[
+                                GaugeAnnotation(
+                                  widget: Text(
+                                    'RAM: ${_ramUsage.toStringAsFixed(1)}%',
+                                    style: cpuTextStyle,
+                                  ),
+                                  angle: 90,
+                                  positionFactor: 0.5,
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-                        angle: 90,
-                        positionFactor: 0.5,
                       ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
+                    ),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(
+                      height: gaugeSize,
+                      child: SfRadialGauge(
+                        axes: <RadialAxis>[
+                          RadialAxis(
+                            minimum: 0,
+                            maximum: 100,
+                            ranges: <GaugeRange>[
+                              GaugeRange(
+                                  startValue: 0,
+                                  endValue: 50,
+                                  color: Colors.green),
+                              GaugeRange(
+                                  startValue: 50,
+                                  endValue: 80,
+                                  color: Colors.orange),
+                              GaugeRange(
+                                  startValue: 80,
+                                  endValue: 100,
+                                  color: Colors.red),
+                            ],
+                            pointers: <GaugePointer>[
+                              NeedlePointer(value: _cpuUsage),
+                            ],
+                            annotations: <GaugeAnnotation>[
+                              GaugeAnnotation(
+                                widget: Text(
+                                  'CPU: ${_cpuUsage.toStringAsFixed(1)}%',
+                                  style: cpuTextStyle,
+                                ),
+                                angle: 90,
+                                positionFactor: 0.5,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Additional CPU Index: ${(_cpuUsage * 1.5).toStringAsFixed(1)}%',
+                      style: indexTextStyle,
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      height: gaugeSize,
+                      child: SfRadialGauge(
+                        axes: <RadialAxis>[
+                          RadialAxis(
+                            minimum: 0,
+                            maximum: 100,
+                            ranges: <GaugeRange>[
+                              GaugeRange(
+                                  startValue: 0,
+                                  endValue: 50,
+                                  color: Colors.green),
+                              GaugeRange(
+                                  startValue: 50,
+                                  endValue: 80,
+                                  color: Colors.orange),
+                              GaugeRange(
+                                  startValue: 80,
+                                  endValue: 100,
+                                  color: Colors.red),
+                            ],
+                            pointers: <GaugePointer>[
+                              NeedlePointer(value: _ramUsage),
+                            ],
+                            annotations: <GaugeAnnotation>[
+                              GaugeAnnotation(
+                                widget: Text(
+                                  'RAM: ${_ramUsage.toStringAsFixed(1)}%',
+                                  style: cpuTextStyle,
+                                ),
+                                angle: 90,
+                                positionFactor: 0.5,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
         ),
       ),
     );
