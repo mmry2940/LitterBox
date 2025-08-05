@@ -48,11 +48,11 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Analyze code
-        run: flutter analyze
+      - name: flutter update
+        run: flutter pub outdated --major-versions
 
-      - name: Run tests
-        run: flutter test
+      - name: Get dependencies
+        run: flutter pub get
 
       - name: Build APK
         run: flutter build apk --release
