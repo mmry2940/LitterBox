@@ -1,4 +1,4 @@
-package com.example.sshuttle_flutter
+package lit.terssh.box
 
 import io.flutter.embedding.android.FlutterActivity
 

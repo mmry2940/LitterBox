@@ -36,7 +36,7 @@ class MyApp extends StatelessWidget {
         return FlutterBreakpointProvider.builder(
           context: context,
           child: MaterialApp(
-            title: 'SSHuttle',
+            title: 'LitterBox',
             theme: ThemeData(
               colorScheme: ColorScheme.fromSeed(
                   seedColor: Colors.deepPurple, brightness: Brightness.light),
@@ -54,5 +54,3 @@ class MyApp extends StatelessWidget {
     );
   }
 }
-
-// ...existing code...
