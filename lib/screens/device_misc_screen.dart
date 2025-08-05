@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'misc_details_screen.dart';
 
 class DeviceMiscScreen extends StatelessWidget {
   final void Function(int tabIndex)? onCardTap;
@@ -26,7 +27,14 @@ class DeviceMiscScreen extends StatelessWidget {
                 title: card.title,
                 icon: card.icon,
                 onTap: () {
-                  if (onCardTap != null) {
+                  if (card.tabIndex == 5) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const MiscDetailsScreen(),
+                      ),
+                    );
+                  } else if (onCardTap != null) {
                     onCardTap!(card.tabIndex);
                   }
                 },

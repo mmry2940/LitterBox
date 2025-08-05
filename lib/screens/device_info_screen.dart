@@ -104,76 +104,16 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
         mem = lines.sublist(freeStart).join('\n');
       }
       return SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (kernel.isNotEmpty)
-              Card(
-                shape: RoundedRectangleBorder(
-                  side: BorderSide(color: Colors.blueGrey.shade100),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                margin: const EdgeInsets.only(bottom: 16),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Kernel',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(kernel),
-                    ],
-                  ),
-                ),
-              ),
+              _buildInfoCard('Kernel', kernel),
             if (cpu.isNotEmpty)
-              Card(
-                shape: RoundedRectangleBorder(
-                  side: BorderSide(color: Colors.blueGrey.shade100),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                margin: const EdgeInsets.only(bottom: 16),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'CPU Info',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(cpu),
-                    ],
-                  ),
-                ),
-              ),
+              _buildInfoCard('CPU Info', cpu),
             if (mem.isNotEmpty)
-              Card(
-                shape: RoundedRectangleBorder(
-                  side: BorderSide(color: Colors.blueGrey.shade100),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                margin: const EdgeInsets.only(bottom: 16),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Memory',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(mem),
-                    ],
-                  ),
-                ),
-              ),
+              _buildInfoCard('Memory', mem),
           ],
         ),
       );
@@ -182,5 +122,40 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
       return const Center(child: Text('Waiting for SSH connection...'));
     }
     return const Center(child: Text('No device info loaded.'));
+  }
+
+  Widget _buildInfoCard(String title, String content) {
+    return Card(
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      margin: const EdgeInsets.only(bottom: 24),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 20,
+                color: Colors.white70,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              content,
+              style: const TextStyle(
+                fontSize: 16,
+                height: 1.6,
+                color: Colors.white70,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
