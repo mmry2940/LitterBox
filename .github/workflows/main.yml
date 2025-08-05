@@ -55,7 +55,7 @@ jobs:
         run: flutter pub get
 
       - name: flutter update
-        run: flutter pub outdated --major-versions
+        run: flutter pub outdated
 
       - name: Get dependencies
         run: flutter pub get
