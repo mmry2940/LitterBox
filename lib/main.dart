@@ -14,10 +14,12 @@ Future<void> main() async {
   // Configure network tools - required for network_tools package
   try {
     final appDocDirectory = await getApplicationDocumentsDirectory();
-    await configureNetworkTools(appDocDirectory.path, enableDebugging: false);
+    await configureNetworkTools(appDocDirectory.path, enableDebugging: true);
+    print('Network tools configured with path: ${appDocDirectory.path}');
   } catch (e) {
+    print('Failed to get app directory, using fallback: $e');
     // Fallback configuration if path_provider fails
-    await configureNetworkTools('', enableDebugging: false);
+    await configureNetworkTools('', enableDebugging: true);
   }
 
   runApp(const MyApp());

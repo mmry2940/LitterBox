@@ -3,9 +3,11 @@ import 'package:dartssh2/dartssh2.dart';
 import '../main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'dart:async';
 import 'device_screen.dart';
 import 'package:network_tools/network_tools.dart';
 import 'package:network_info_plus/network_info_plus.dart';
+import 'package:sshuttle_flutter/screens/_host_tile_with_retry.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -49,31 +51,13 @@ class _HomeScreenState extends State<HomeScreen> {
     await _saveDevices();
   }
 
-  void _scanForDevices(BuildContext context) async {
-    final info = NetworkInfo();
-    String? ip = await info.getWifiIP();
-    if (ip == null || !ip.contains('.')) {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Error'),
-          content: const Text('Could not determine local IP address.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
-    final subnet = ip.substring(0, ip.lastIndexOf('.'));
+  void _scanForDevices(BuildContext context) {
     showDialog(
       context: context,
       builder: (ctx) {
         return _ScanDialog(
-            subnet: subnet, onDeviceSelected: _addDeviceFromScan);
+          onDeviceSelected: _addDeviceFromScan,
+        );
       },
     );
   }
@@ -410,10 +394,8 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _ScanDialog extends StatefulWidget {
-  final String subnet;
   final Function(String) onDeviceSelected;
-
-  const _ScanDialog({required this.subnet, required this.onDeviceSelected});
+  const _ScanDialog({required this.onDeviceSelected});
 
   @override
   State<_ScanDialog> createState() => _ScanDialogState();
@@ -422,75 +404,282 @@ class _ScanDialog extends StatefulWidget {
 class _ScanDialogState extends State<_ScanDialog> {
   final Set<ActiveHost> _foundHosts = <ActiveHost>{};
   bool _scanning = false;
+  String _errorMessage = '';
+  StreamSubscription<ActiveHost>? _scanSubscription;
+  String? _subnet;
+  String? _networkInfo;
+  bool _fetchingNetworkInfo = true;
 
   @override
   void initState() {
     super.initState();
+    _fetchNetworkInfoAndStartScan();
+  }
+
+  Future<void> _fetchNetworkInfoAndStartScan() async {
+    setState(() {
+      _fetchingNetworkInfo = true;
+    });
+    final info = NetworkInfo();
+    String? ip = await info.getWifiIP();
+    String? wifiName = await info.getWifiName();
+    String? wifiBSSID = await info.getWifiBSSID();
+    print('Detected IP: $ip');
+    print('WiFi Name: $wifiName');
+    print('WiFi BSSID: $wifiBSSID');
+    if (ip == null || !ip.contains('.')) {
+      setState(() {
+        _fetchingNetworkInfo = false;
+        _errorMessage =
+            'Could not determine local IP address.\nDetected IP: ${ip ?? 'null'}\nWiFi: ${wifiName ?? 'null'}\nBSSID: ${wifiBSSID ?? 'null'}\nPlease ensure you are connected to WiFi and have granted location permissions.';
+      });
+      return;
+    }
+    final subnet = ip.substring(0, ip.lastIndexOf('.'));
+    setState(() {
+      _subnet = subnet;
+      _networkInfo = 'IP: $ip\nWiFi: ${wifiName ?? 'Unknown'}';
+      _fetchingNetworkInfo = false;
+    });
+    // Wait 3 seconds before starting scan
+    await Future.delayed(const Duration(milliseconds: 1500));
     _startScan();
   }
 
+  @override
+  void dispose() {
+    _scanSubscription?.cancel();
+    super.dispose();
+  }
+
   void _startScan() {
+    if (!mounted || _subnet == null) return;
     setState(() {
       _scanning = true;
       _foundHosts.clear();
+      _errorMessage = '';
     });
+    print('Starting scan for subnet: $_subnet');
+    try {
+      final stream = HostScannerService.instance.getAllPingableDevices(
+        _subnet!,
+        firstHostId: 1,
+        lastHostId: 254,
+        progressCallback: (progress) {
+          print('Scan progress: $progress');
+        },
+      );
+      _scanSubscription = stream.listen(
+        (host) async {
+          print('Found host: ${host.address}');
+          try {
+            print('Host details: ${host.toString()}');
+            final hostname = await host.hostName;
+            print('Hostname: $hostname');
+          } catch (e) {
+            print('Error accessing host properties: $e');
+          }
+          if (mounted) {
+            setState(() {
+              _foundHosts.add(host);
+            });
+          }
+        },
+        onDone: () {
+          print('Scan completed. Found ${_foundHosts.length} hosts');
+          if (mounted) {
+            setState(() {
+              _scanning = false;
+            });
+          }
+        },
+        onError: (error) {
+          print('Scan error: $error');
+          if (mounted) {
+            if (error.toString().contains('RangeError') &&
+                error.toString().contains('Invalid value')) {
+              print('Range limit reached - ending scan normally');
+              setState(() {
+                _scanning = false;
+              });
+            } else {
+              setState(() {
+                _scanning = false;
+                _errorMessage = 'Scan error: $error';
+              });
+            }
+          }
+        },
+      );
+    } catch (e) {
+      print('Failed to start scan: $e');
+      if (mounted) {
+        if (e.toString().contains('RangeError') &&
+            e.toString().contains('Invalid value')) {
+          print('Range limit reached during scan setup - ending scan normally');
+          setState(() {
+            _scanning = false;
+          });
+        } else {
+          setState(() {
+            _scanning = false;
+            _errorMessage = 'Failed to start scan: $e';
+          });
+        }
+      }
+    }
+  }
 
-    final stream = HostScannerService.instance.getAllPingableDevices(
-      widget.subnet,
-      firstHostId: 1,
-      lastHostId: 254,
-    );
+  void _testNetworkConnectivity() async {
+    print('=== Network Connectivity Test ===');
+    final info = NetworkInfo();
+    String? ip = await info.getWifiIP();
+    String? wifiName = await info.getWifiName();
+    String? wifiBSSID = await info.getWifiBSSID();
 
-    stream.listen(
-      (host) {
-        setState(() {
-          _foundHosts.add(host);
-        });
-      },
-      onDone: () {
-        setState(() {
-          _scanning = false;
-        });
-      },
-      onError: (error) {
-        setState(() {
-          _scanning = false;
-        });
-      },
+    print('IP: $ip');
+    print('WiFi Name: $wifiName');
+    print('WiFi BSSID: $wifiBSSID');
+    print('Subnet: [${_subnet}');
+    print('================================');
+
+    // Show the results in a dialog
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Network Test Results'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('IP Address: ${ip ?? 'Not detected'}'),
+              Text('WiFi Name: ${wifiName ?? 'Not detected'}'),
+              Text('WiFi BSSID: ${wifiBSSID ?? 'Not detected'}'),
+              Text('Scan Subnet: ${_subnet ?? 'Unknown'}'),
+              const SizedBox(height: 16),
+              const Text(
+                'Check the debug console for detailed logs.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(_scanning
-          ? 'Scanning for devices...'
-          : 'Found ${_foundHosts.length} devices'),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_fetchingNetworkInfo)
+            Row(
+              children: [
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 12),
+                const Text('Preparing scan...'),
+              ],
+            )
+          else if (_subnet != null)
+            Text(_scanning
+                ? 'Scanning $_subnet.1-254...'
+                : 'Found ${_foundHosts.length} devices'),
+          if (_networkInfo != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _networkInfo!,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ),
+        ],
+      ),
       content: SizedBox(
         width: 300,
         height: 300,
-        child: _foundHosts.isEmpty && !_scanning
-            ? const Center(child: Text('No devices found.'))
-            : ListView.builder(
-                itemCount: _foundHosts.length,
-                itemBuilder: (context, index) {
-                  final host = _foundHosts.elementAt(index);
-                  return ListTile(
-                    title: Text(host.address),
-                    onTap: () {
-                      Navigator.pop(context);
-                      widget.onDeviceSelected(host.address);
-                    },
-                  );
-                },
-              ),
+        child: _fetchingNetworkInfo
+            ? const Center(child: CircularProgressIndicator())
+            : _errorMessage.isNotEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error, color: Colors.red, size: 48),
+                        const SizedBox(height: 16),
+                        Text(_errorMessage, textAlign: TextAlign.center),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: _fetchNetworkInfoAndStartScan,
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  )
+                : _foundHosts.isEmpty && !_scanning
+                    ? const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.wifi_off, size: 48, color: Colors.grey),
+                            SizedBox(height: 16),
+                            Text('No devices found on this network.'),
+                            SizedBox(height: 8),
+                            Text(
+                              'Make sure devices are connected and responsive to ping.',
+                              style:
+                                  TextStyle(fontSize: 12, color: Colors.grey),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: _foundHosts.length,
+                        itemBuilder: (context, index) {
+                          final host = _foundHosts.elementAt(index);
+                          return HostTileWithRetry(
+                            host: host,
+                            onDeviceSelected: widget.onDeviceSelected,
+                          );
+                        },
+                      ),
       ),
       actions: [
+        if (_fetchingNetworkInfo) const SizedBox.shrink(),
+        if (!_scanning &&
+            _foundHosts.isEmpty &&
+            _errorMessage.isEmpty &&
+            !_fetchingNetworkInfo)
+          TextButton(
+            onPressed: _testNetworkConnectivity,
+            child: const Text('Test Network'),
+          ),
         if (_scanning)
-          const SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
+          const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(width: 8),
+              Text('Scanning...'),
+            ],
           ),
         TextButton(
           onPressed: () => Navigator.pop(context),

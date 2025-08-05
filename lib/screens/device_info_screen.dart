@@ -77,8 +77,8 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
       // Split info into sections: kernel, lscpu, free -h
       final lines = _info!.split('\n');
       String kernel = '';
-      String cpu = '';
-      String mem = '';
+      List<List<String>> cpuRows = [];
+      List<List<String>> memRows = [];
       int lscpuStart = -1, lscpuEnd = -1, freeStart = -1;
       for (int i = 0; i < lines.length; i++) {
         if (lines[i].contains('Linux') && kernel.isEmpty) {
@@ -95,20 +95,147 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
         }
       }
       if (lscpuStart != -1 && lscpuEnd == -1) lscpuEnd = lines.length;
+      // Parse CPU info into table rows
       if (lscpuStart != -1 && lscpuEnd != -1) {
-        cpu = lines.sublist(lscpuStart, lscpuEnd).join('\n');
+        for (var line in lines.sublist(lscpuStart, lscpuEnd)) {
+          final parts = line.split(':');
+          if (parts.length == 2) {
+            cpuRows.add([parts[0].trim(), parts[1].trim()]);
+          } else if (parts.length == 1 && parts[0].trim().isNotEmpty) {
+            cpuRows.add([parts[0].trim(), '']);
+          }
+        }
       }
+      // Pad all CPU rows to 2 columns
+      for (var i = 0; i < cpuRows.length; i++) {
+        while (cpuRows[i].length < 2) {
+          cpuRows[i].add('');
+        }
+      }
+      // Parse Memory info into table rows
+      int memMaxCols = 0;
       if (freeStart != -1) {
-        mem = lines.sublist(freeStart).join('\n');
+        final memLines = lines.sublist(freeStart);
+        for (var i = 0; i < memLines.length; i++) {
+          final row = memLines[i]
+              .split(RegExp(r'\\s+'))
+              .where((e) => e.isNotEmpty)
+              .toList();
+          if (row.isNotEmpty) {
+            memRows.add(row);
+            if (row.length > memMaxCols) memMaxCols = row.length;
+          }
+        }
+        // Pad all memory rows to the same length
+        for (var i = 0; i < memRows.length; i++) {
+          while (memRows[i].length < memMaxCols) {
+            memRows[i].add('');
+          }
+        }
       }
       return SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (kernel.isNotEmpty) _buildInfoCard('Kernel', kernel),
-            if (cpu.isNotEmpty) _buildInfoCard('CPU Info', cpu),
-            if (mem.isNotEmpty) _buildInfoCard('Memory', mem),
+            if (kernel.isNotEmpty)
+              Card(
+                margin: const EdgeInsets.only(bottom: 16),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Kernel',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Text(kernel,
+                          style: Theme.of(context).textTheme.bodyMedium),
+                    ],
+                  ),
+                ),
+              ),
+            if (cpuRows.isNotEmpty)
+              Card(
+                margin: const EdgeInsets.only(bottom: 16),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('CPU Info',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Table(
+                        columnWidths: const {
+                          0: IntrinsicColumnWidth(),
+                          1: FlexColumnWidth()
+                        },
+                        defaultVerticalAlignment:
+                            TableCellVerticalAlignment.middle,
+                        children: cpuRows
+                            .map((row) => TableRow(
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 4),
+                                      child: Text(row[0],
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w500)),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 4),
+                                      child: Text(row[1]),
+                                    ),
+                                  ],
+                                ))
+                            .toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            if (memRows.isNotEmpty)
+              Card(
+                margin: const EdgeInsets.only(bottom: 16),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Memory',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Table(
+                        defaultVerticalAlignment:
+                            TableCellVerticalAlignment.middle,
+                        children: memRows
+                            .map((row) => TableRow(
+                                  children: row
+                                      .map((cell) => Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 4, horizontal: 4),
+                                            child: Text(cell,
+                                                textAlign: TextAlign.center),
+                                          ))
+                                      .toList(),
+                                ))
+                            .toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       );
@@ -117,40 +244,5 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
       return const Center(child: Text('Waiting for SSH connection...'));
     }
     return const Center(child: Text('No device info loaded.'));
-  }
-
-  Widget _buildInfoCard(String title, String content) {
-    return Card(
-      shape: RoundedRectangleBorder(
-        side: BorderSide(color: Colors.grey.shade300, width: 1.5),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      margin: const EdgeInsets.only(bottom: 24),
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 20,
-                color: Colors.white70,
-              ),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              content,
-              style: const TextStyle(
-                fontSize: 16,
-                height: 1.6,
-                color: Colors.white70,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }

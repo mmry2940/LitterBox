@@ -2,6 +2,59 @@ import 'package:flutter/material.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'dart:convert';
 
+// Widget to display a process info chip
+class ProcessInfoChip extends StatelessWidget {
+  final String label;
+  final String? value;
+  const ProcessInfoChip({required this.label, required this.value, Key? key})
+      : super(key: key);
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child:
+          Text('$label: ${value ?? ''}', style: const TextStyle(fontSize: 12)),
+    );
+  }
+}
+
+// Widget to display process details in a bottom sheet
+class ProcessDetailSheet extends StatelessWidget {
+  final Map<String, String> proc;
+  const ProcessDetailSheet({required this.proc, Key? key}) : super(key: key);
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            proc['COMMAND'] ?? '',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
+          const SizedBox(height: 10),
+          ...proc.entries.map((e) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    Text('${e.key}: ',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    Expanded(child: Text(e.value)),
+                  ],
+                ),
+              )),
+        ],
+      ),
+    );
+  }
+}
+
 class DeviceProcessesScreen extends StatefulWidget {
   final SSHClient? sshClient;
   final String? error;
@@ -57,14 +110,10 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
     });
     try {
       final session = await widget.sshClient!.execute('ps aux');
-      final output = await session.stdout
-          .cast<List<int>>()
-          .transform(utf8.decoder)
-          .join();
-      final lines = output
-          .split('\n')
-          .where((l) => l.trim().isNotEmpty)
-          .toList();
+      final output =
+          await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
+      final lines =
+          output.split('\n').where((l) => l.trim().isNotEmpty).toList();
       if (lines.isEmpty) throw Exception('No process data');
       final header = lines.first.split(RegExp(r'\s+'));
       final data = lines
@@ -131,18 +180,6 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
     });
   }
 
-  void _onSort(String column) {
-    setState(() {
-      if (_sortColumn == column) {
-        _sortAsc = !_sortAsc;
-      } else {
-        _sortColumn = column;
-        _sortAsc = true;
-      }
-      _applyFilterSort();
-    });
-  }
-
   void _onKill(Map<String, String> process) async {
     final pid = process['PID'];
     if (pid == null) return;
@@ -200,42 +237,39 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     if (widget.error != null) {
-      return Center(child: Text('SSH Error: \\${widget.error}'));
+      return Center(child: Text('SSH Error: ${widget.error}'));
     }
     if (_error != null) {
-      return Center(child: Text('Error: \\$_error'));
+      return Center(child: Text('Error: $_error'));
     }
     if (_filteredProcesses != null) {
-      final columns = [
-        'USER',
-        'PID',
-        '%CPU',
-        '%MEM',
-        'VSZ',
-        'RSS',
-        'STAT',
-        'TIME',
-        'COMMAND',
-      ];
       return Column(
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(
               children: [
                 Expanded(
                   child: TextField(
                     controller: _searchController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       hintText: 'Search processes...',
-                      prefixIcon: Icon(Icons.search),
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                          vertical: 0, horizontal: 12),
                     ),
                     onChanged: (_) => _onSearchChanged(),
                   ),
                 ),
+                const SizedBox(width: 8),
                 IconButton(
-                  icon: Icon(_autoRefresh ? Icons.pause : Icons.refresh),
-                  tooltip: _autoRefresh ? 'Pause Auto-Refresh' : 'Auto-Refresh',
+                  icon: Icon(_autoRefresh ? Icons.pause : Icons.play_arrow),
+                  tooltip: _autoRefresh
+                      ? 'Pause Auto-Refresh'
+                      : 'Start Auto-Refresh',
                   onPressed: _toggleAutoRefresh,
                 ),
                 IconButton(
@@ -247,45 +281,89 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
             ),
           ),
           Expanded(
-            child: SingleChildScrollView(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  sortColumnIndex: columns.indexOf(_sortColumn),
-                  sortAscending: _sortAsc,
-                  columns: [
-                    ...columns.map(
-                      (col) => DataColumn(
-                        label: Text(col),
-                        onSort: (i, _) => _onSort(col),
-                      ),
-                    ),
-                    const DataColumn(label: Text('Actions')),
-                  ],
-                  rows: _filteredProcesses!
-                      .map(
-                        (proc) => DataRow(
-                          cells: [
-                            ...columns.map(
-                              (col) => DataCell(Text(proc[col] ?? '')),
-                            ),
-                            DataCell(
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.cancel,
-                                  color: Colors.red,
-                                ),
-                                tooltip: 'Kill',
-                                onPressed: () => _onKill(proc),
-                              ),
-                            ),
-                          ],
+            child: _filteredProcesses!.isEmpty
+                ? const Center(child: Text('No processes found.'))
+                : ListView.separated(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    itemCount: _filteredProcesses!.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, idx) {
+                      final proc = _filteredProcesses![idx];
+                      return Card(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
                         ),
-                      )
-                      .toList(),
-                ),
-              ),
-            ),
+                        elevation: 2,
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 10),
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: Text(
+                                    proc['COMMAND'] ?? '',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  'PID: ${proc['PID'] ?? ''}',
+                                  style: const TextStyle(
+                                      fontSize: 13, color: Colors.blue),
+                                ),
+                              ),
+                            ],
+                          ),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Row(
+                              children: [
+                                ProcessInfoChip(
+                                    label: 'CPU', value: proc['%CPU']),
+                                const SizedBox(width: 8),
+                                ProcessInfoChip(
+                                    label: 'MEM', value: proc['%MEM']),
+                                const SizedBox(width: 8),
+                                ProcessInfoChip(
+                                    label: 'USER', value: proc['USER']),
+                                const SizedBox(width: 8),
+                                ProcessInfoChip(
+                                    label: 'STAT', value: proc['STAT']),
+                              ],
+                            ),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.cancel, color: Colors.red),
+                            tooltip: 'Kill',
+                            onPressed: () => _onKill(proc),
+                          ),
+                          onTap: () {
+                            showModalBottomSheet(
+                              context: context,
+                              shape: const RoundedRectangleBorder(
+                                borderRadius: BorderRadius.vertical(
+                                    top: Radius.circular(18)),
+                              ),
+                              builder: (ctx) => ProcessDetailSheet(proc: proc),
+                            );
+                          },
+                        ),
+                      );
+                    },
+                  ),
           ),
         ],
       );
