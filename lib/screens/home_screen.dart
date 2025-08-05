@@ -486,7 +486,7 @@ class _ScanDialogState extends State<_ScanDialog> {
           }
         },
         onDone: () {
-          print('Scan completed. Found ${_foundHosts.length} hosts');
+          print('Scan completed. Found \\${_foundHosts.length} hosts');
           if (mounted) {
             setState(() {
               _scanning = false;

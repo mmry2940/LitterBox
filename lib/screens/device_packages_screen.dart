@@ -58,14 +58,10 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
     });
     try {
       final session = await widget.sshClient!.execute('dpkg -l');
-      final output = await session.stdout
-          .cast<List<int>>()
-          .transform(utf8.decoder)
-          .join();
-      final lines = output
-          .split('\n')
-          .where((l) => l.trim().isNotEmpty)
-          .toList();
+      final output =
+          await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
+      final lines =
+          output.split('\n').where((l) => l.trim().isNotEmpty).toList();
       // dpkg -l output: header lines start with '||/ Name', skip first lines
       int headerIdx = lines.indexWhere((l) => l.startsWith('||/'));
       if (headerIdx == -1 || headerIdx + 1 >= lines.length) {
@@ -205,9 +201,8 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
     if (confirmed == true && widget.sshClient != null) {
       try {
         String command;
-        final joined = names
-            .map((n) => "'${n.replaceAll("'", "'\\''")}'")
-            .join(' ');
+        final joined =
+            names.map((n) => "'${n.replaceAll("'", "'\\''")}'").join(' ');
         if (sudoPassword != null && sudoPassword!.isNotEmpty) {
           command =
               "echo '${sudoPassword!.replaceAll("'", "'\\''")}' | sudo -S apt-get remove -y $joined";
@@ -254,120 +249,128 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     if (widget.error != null) {
-      return Center(child: Text('SSH Error: \\${widget.error}'));
+      return Center(child: Text('SSH Error: ${widget.error}'));
     }
     if (_error != null) {
-      return Center(child: Text('Error: \\$_error'));
+      return Center(child: Text('Error: $_error'));
     }
     if (_filteredPackages != null) {
-      final columns = ['Status', 'Name'];
-      return Column(
+      return Stack(
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: TextField(
-              controller: _searchController,
-              decoration: const InputDecoration(
-                hintText: 'Search packages...',
-                prefixIcon: Icon(Icons.search),
-              ),
-              onChanged: (_) => _onSearchChanged(),
-            ),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  sortColumnIndex: columns.contains(_sortColumn)
-                      ? columns.indexOf(_sortColumn)
-                      : null,
-                  sortAscending: _sortAsc,
-                  columns: [
-                    ...columns.map(
-                      (col) => DataColumn(
-                        label: Text(col),
-                        onSort: (i, _) => _onSort(col),
-                      ),
-                    ),
-                  ],
-                  rows: List.generate(_filteredPackages!.length, (i) {
-                    final pkg = _filteredPackages![i];
-                    final selected = _selectedRows.contains(i);
-                    return DataRow(
-                      selected: selected,
-                      color: WidgetStateProperty.resolveWith<Color?>((
-                        states,
-                      ) {
-                        if (selected) {
-                          return Theme.of(
-                            context,
-                          ).colorScheme.primary.withOpacity(0.2);
-                        }
-                        return null;
-                      }),
-                      onSelectChanged: (val) {
-                        setState(() {
-                          if (val == true) {
-                            _selectedRows.add(i);
-                          } else {
-                            _selectedRows.remove(i);
-                          }
-                        });
-                      },
-                      cells: [
-                        ...columns.map((col) => DataCell(Text(pkg[col] ?? ''))),
-                      ],
-                    );
-                  }),
+          Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: const InputDecoration(
+                    hintText: 'Search packages...',
+                    prefixIcon: Icon(Icons.search),
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (_) => _onSearchChanged(),
                 ),
               ),
-            ),
-          ),
-          if (_selectedRows.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-              child: Row(
-                children: [
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.delete),
-                    label: Text('Uninstall (${_selectedRows.length})'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                    ),
-                    onPressed: _onUninstallSelected,
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: _selectedRows.map((i) {
-                          final pkg = _filteredPackages![i];
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 24.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  pkg['Name'] ?? '',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
+              Expanded(
+                child: _filteredPackages!.isEmpty
+                    ? const Center(child: Text('No packages found.'))
+                    : ListView.separated(
+                        itemCount: _filteredPackages!.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (context, idx) {
+                          final pkg = _filteredPackages![idx];
+                          final selected = _selectedRows.contains(idx);
+                          return Card(
+                            color:
+                                selected ? Colors.blue.shade50 : Colors.white,
+                            elevation: selected ? 2 : 0,
+                            margin: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              side: selected
+                                  ? BorderSide(
+                                      color: Colors.blue.shade200, width: 1.5)
+                                  : BorderSide(
+                                      color: Colors.grey.shade200, width: 1),
+                            ),
+                            child: ListTile(
+                              leading: Icon(Icons.apps,
+                                  color: Colors.blueGrey, size: 32),
+                              title: Text(
+                                pkg['Name'] ?? '',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (pkg['Description'] != null &&
+                                      pkg['Description']!.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                          top: 2, bottom: 2),
+                                      child: Text(
+                                        pkg['Description']!,
+                                        style: const TextStyle(
+                                            fontSize: 13,
+                                            color: Colors.black87),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  Row(
+                                    children: [
+                                      Icon(Icons.verified,
+                                          size: 14, color: Colors.green),
+                                      const SizedBox(width: 4),
+                                      Text(pkg['Status'] ?? '',
+                                          style: const TextStyle(fontSize: 12)),
+                                      const SizedBox(width: 12),
+                                      Icon(Icons.memory,
+                                          size: 14, color: Colors.deepPurple),
+                                      const SizedBox(width: 4),
+                                      Text(pkg['Version'] ?? '',
+                                          style: const TextStyle(fontSize: 12)),
+                                      const SizedBox(width: 12),
+                                      Icon(Icons.architecture,
+                                          size: 14, color: Colors.teal),
+                                      const SizedBox(width: 4),
+                                      Text(pkg['Arch'] ?? '',
+                                          style: const TextStyle(fontSize: 12)),
+                                    ],
                                   ),
-                                ),
-                                Text('Version: ${pkg['Version'] ?? ''}'),
-                                Text('Arch: ${pkg['Arch'] ?? ''}'),
-                                Text(
-                                  'Description: ${pkg['Description'] ?? ''}',
-                                ),
-                              ],
+                                ],
+                              ),
+                              selected: selected,
+                              onTap: () {
+                                setState(() {
+                                  if (selected) {
+                                    _selectedRows.remove(idx);
+                                  } else {
+                                    _selectedRows.add(idx);
+                                  }
+                                });
+                              },
                             ),
                           );
-                        }).toList(),
+                        },
                       ),
-                    ),
-                  ),
-                ],
+              ),
+            ],
+          ),
+          if (_selectedRows.isNotEmpty)
+            Positioned(
+              bottom: 24,
+              right: 24,
+              child: FloatingActionButton.extended(
+                icon: const Icon(Icons.delete),
+                label: Text('Uninstall (${_selectedRows.length})'),
+                backgroundColor: Colors.red,
+                onPressed: _onUninstallSelected,
               ),
             ),
         ],
