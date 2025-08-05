@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:xterm/xterm.dart';
+import 'package:flutter/services.dart';
 
 class DeviceTerminalScreen extends StatefulWidget {
   final SSHClient? sshClient;
@@ -52,8 +52,8 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
         _terminal.write(String.fromCharCodes(data));
       });
 
-      _terminal.onInput = (input) {
-        session.write(utf8.encode(input));
+      _terminal.onOutput = (output) {
+        session.write(utf8.encode(output));
       };
     } catch (e) {
       _terminal.write('Shell error: $e\n');
@@ -72,6 +72,17 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
       return const Center(child: Text('Waiting for SSH connection...'));
     }
 
-    return TerminalView(_terminal);
+    return RawKeyboardListener(
+      focusNode: FocusNode(),
+      onKey: (RawKeyEvent event) {
+        if (event is RawKeyDownEvent) {
+          final key = event.character ?? '';
+          if (key.isNotEmpty) {
+            _terminal.write(key);
+          }
+        }
+      },
+      child: TerminalView(_terminal),
+    );
   }
 }
