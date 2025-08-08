@@ -45,6 +45,8 @@ dependencies:
   network_tools: ^5.0.6
   network_info_plus: ^6.1.4
   webview_flutter: ^4.4.2
+  crypto: ^3.0.3
+  pointycastle: ^3.7.3
 
 
 dev_dependencies:

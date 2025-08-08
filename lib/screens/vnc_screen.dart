@@ -276,6 +276,50 @@ class _VNCScreenState extends State<VNCScreen> {
     }
   }
 
+  // Debug VNC handshake
+  void _debugVNCHandshake() async {
+    final host = _hostController.text.trim();
+    final vncPort = int.tryParse(_vncPortController.text.trim()) ?? 5900;
+    final password = _passwordController.text;
+
+    if (host.isEmpty) {
+      setState(() {
+        _connectionError = 'Host cannot be empty';
+      });
+      return;
+    }
+
+    setState(() {
+      _isConnecting = true;
+      _connectionError = null;
+    });
+
+    final debugClient = VNCClient();
+
+    // Listen to logs for debugging
+    debugClient.logs.listen((log) {
+      print('Debug VNC Log: $log');
+    });
+
+    try {
+      final success = await debugClient.debugHandshake(host, vncPort,
+          password: password.isNotEmpty ? password : null);
+      setState(() {
+        _isConnecting = false;
+        if (success) {
+          _connectionError = 'Debug handshake successful! VNC protocol works.';
+        } else {
+          _connectionError = 'Debug handshake failed. Check logs for details.';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _isConnecting = false;
+        _connectionError = 'Debug handshake error: $e';
+      });
+    }
+  }
+
   // Test VNC connection
   void _testVNCConnection() async {
     final host = _hostController.text.trim();
@@ -352,7 +396,8 @@ class _VNCScreenState extends State<VNCScreen> {
             _showConnectionForm = false;
             break;
           case VNCConnectionState.failed:
-            _connectionError = 'Failed to connect to VNC server';
+            _connectionError =
+                'Failed to connect to VNC server. If you see "Too many security failures", wait 5-10 minutes before retrying.';
             _isConnecting = false;
             break;
           case VNCConnectionState.disconnected:
@@ -366,19 +411,24 @@ class _VNCScreenState extends State<VNCScreen> {
       });
     });
 
-    _vncClient!
-        .connect(host, vncPort, password: password.isNotEmpty ? password : null)
-        .then((success) {
-      if (!success) {
+    // Add delay to avoid triggering VNC server security lockout
+    Future.delayed(const Duration(seconds: 2), () {
+      _vncClient!
+          .connect(host, vncPort,
+              password: password.isNotEmpty ? password : null)
+          .then((success) {
+        if (!success) {
+          setState(() {
+            _connectionError =
+                'Failed to connect to VNC server. Check logs for details. If "Too many security failures", wait before retrying.';
+            _isConnecting = false;
+          });
+        }
+      }).catchError((error) {
         setState(() {
-          _connectionError = 'Failed to connect to VNC server';
+          _connectionError = 'Connection error: $error';
           _isConnecting = false;
         });
-      }
-    }).catchError((error) {
-      setState(() {
-        _connectionError = 'Connection error: $error';
-        _isConnecting = false;
       });
     });
   }
@@ -946,6 +996,14 @@ class _VNCScreenState extends State<VNCScreen> {
                     onPressed: _isConnecting ? null : _testVNCConnection,
                     icon: const Icon(Icons.network_check),
                     label: const Text('Test Connection'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _isConnecting ? null : _debugVNCHandshake,
+                    icon: const Icon(Icons.bug_report),
+                    label: const Text('Debug Handshake'),
                   ),
                 ),
               ],
