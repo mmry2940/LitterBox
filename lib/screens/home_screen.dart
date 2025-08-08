@@ -9,6 +9,7 @@ import 'package:network_tools/network_tools.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:LitterBox/screens/_host_tile_with_retry.dart';
 import 'android_screen.dart';
+import 'vnc_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -421,7 +422,12 @@ class _HomeScreenState extends State<HomeScreen> {
               leading: const Icon(Icons.desktop_windows),
               title: const Text('VNC'),
               onTap: () {
-                // Navigate to the VNC screen (to be implemented)
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const VNCScreen(),
+                  ),
+                );
               },
             ),
             ListTile(
@@ -602,7 +608,7 @@ class _ScanDialogState extends State<_ScanDialog> {
     print('IP: $ip');
     print('WiFi Name: $wifiName');
     print('WiFi BSSID: $wifiBSSID');
-    print('Subnet: [${_subnet}');
+    print('Subnet: [$_subnet');
     print('================================');
 
     // Show the results in a dialog

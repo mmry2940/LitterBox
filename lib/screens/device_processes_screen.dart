@@ -6,8 +6,7 @@ import 'dart:convert';
 class ProcessInfoChip extends StatelessWidget {
   final String label;
   final String? value;
-  const ProcessInfoChip({required this.label, required this.value, Key? key})
-      : super(key: key);
+  const ProcessInfoChip({required this.label, required this.value, super.key});
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -25,7 +24,7 @@ class ProcessInfoChip extends StatelessWidget {
 // Widget to display process details in a bottom sheet
 class ProcessDetailSheet extends StatelessWidget {
   final Map<String, String> proc;
-  const ProcessDetailSheet({required this.proc, Key? key}) : super(key: key);
+  const ProcessDetailSheet({required this.proc, super.key});
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -76,8 +75,8 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
   String? _error;
   bool _loading = false;
   String _search = '';
-  String _sortColumn = 'PID';
-  bool _sortAsc = true;
+  final String _sortColumn = 'PID';
+  final bool _sortAsc = true;
   bool _autoRefresh = false;
   late final TextEditingController _searchController;
   @override

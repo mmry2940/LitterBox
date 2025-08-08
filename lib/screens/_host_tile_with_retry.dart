@@ -4,8 +4,7 @@ class HostTileWithRetry extends StatefulWidget {
   final dynamic host;
   final Function(String) onDeviceSelected;
   const HostTileWithRetry(
-      {Key? key, required this.host, required this.onDeviceSelected})
-      : super(key: key);
+      {super.key, required this.host, required this.onDeviceSelected});
 
   @override
   State<HostTileWithRetry> createState() => _HostTileWithRetryState();

@@ -12,7 +12,7 @@ const double gaugeSize = 150.0;
 class MiscDetailsScreen extends StatefulWidget {
   final Map<String, dynamic>? device; // Added device parameter
 
-  const MiscDetailsScreen({Key? key, this.device}) : super(key: key);
+  const MiscDetailsScreen({super.key, this.device});
 
   @override
   _MiscDetailsScreenState createState() => _MiscDetailsScreenState();
@@ -23,11 +23,11 @@ class _MiscDetailsScreenState extends State<MiscDetailsScreen> {
   SSHClient? _sshClient;
 
   // State fields
-  List<Map<String, String>> _sensors = [];
-  bool _sensorsLoading = true;
+  final List<Map<String, String>> _sensors = [];
+  final bool _sensorsLoading = true;
   String? _sensorsError;
 
-  double _ramUsage = 0;
+  final double _ramUsage = 0;
   bool _ramExpanded = false;
   bool _uptimeExpanded = false;
   bool _sensorsExpanded = false;

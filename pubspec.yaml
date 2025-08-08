@@ -44,6 +44,8 @@ dependencies:
   flutter_breakpoints: ^1.0.0
   network_tools: ^5.0.6
   network_info_plus: ^6.1.4
+  dart_rfb: any
+  flutter_rfb: any
 
 
 dev_dependencies:

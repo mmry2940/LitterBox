@@ -399,7 +399,6 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
             right: 24,
             child: Builder(
               builder: (context) => FloatingActionButton(
-                child: const Icon(Icons.menu),
                 tooltip: 'Actions',
                 onPressed: () async {
                   final RenderBox button =
@@ -515,6 +514,7 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
                     }
                   }
                 },
+                child: const Icon(Icons.menu),
               ),
             ),
           ),
