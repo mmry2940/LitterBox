@@ -1,5 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import '../vnc_client.dart';
+
+enum VNCConnectionMode {
+  demo,
+  webview, // noVNC via WebView
+  native, // Native VNC client
+}
 
 class VNCScreen extends StatefulWidget {
   final String? host;
@@ -34,6 +41,8 @@ class _VNCScreenState extends State<VNCScreen> {
 
   WebViewController? _webViewController;
   bool _showControls = false;
+  VNCConnectionMode _connectionMode = VNCConnectionMode.demo;
+  VNCClient? _vncClient;
 
   @override
   void initState() {
@@ -79,8 +88,25 @@ class _VNCScreenState extends State<VNCScreen> {
             });
           },
           onWebResourceError: (WebResourceError error) {
+            String errorMessage = 'Failed to load noVNC: ${error.description}';
+
+            // Provide specific help for common errors
+            if (error.description.contains('CLEARTEXT_NOT_PERMITTED')) {
+              errorMessage =
+                  'HTTP connections blocked. Check Android network security config.';
+            } else if (error.description.contains('ERR_CONNECTION_REFUSED')) {
+              errorMessage =
+                  'Connection refused. Check if noVNC server is running on the specified port.';
+            } else if (error.description.contains('ERR_NAME_NOT_RESOLVED')) {
+              errorMessage =
+                  'Cannot resolve hostname. Check your host address.';
+            } else if (error.description
+                .contains('ERR_NETWORK_ACCESS_DENIED')) {
+              errorMessage = 'Network access denied. Check app permissions.';
+            }
+
             setState(() {
-              _connectionError = 'Failed to load noVNC: ${error.description}';
+              _connectionError = errorMessage;
               _isConnecting = false;
               _isConnected = false;
               _showConnectionForm = true;
@@ -184,8 +210,177 @@ class _VNCScreenState extends State<VNCScreen> {
       _showConnectionForm = true;
       _isConnecting = false;
     });
+
+    // Disconnect WebView
     _webViewController
         ?.loadHtmlString('<html><body><h1>Disconnected</h1></body></html>');
+
+    // Disconnect native VNC client
+    _vncClient?.disconnect();
+    _vncClient = null;
+  }
+
+  // Helper methods for connection mode UI
+  String _getConnectionModeDescription() {
+    switch (_connectionMode) {
+      case VNCConnectionMode.demo:
+        return 'Interactive demo - no real server required';
+      case VNCConnectionMode.webview:
+        return 'Connect to noVNC server via WebView';
+      case VNCConnectionMode.native:
+        return 'Native VNC client with direct socket connection';
+    }
+  }
+
+  VoidCallback? _getConnectFunction() {
+    switch (_connectionMode) {
+      case VNCConnectionMode.demo:
+        return _connectWithEmbeddedNoVNC;
+      case VNCConnectionMode.webview:
+        return _connect;
+      case VNCConnectionMode.native:
+        return _connectWithNativeVNC;
+    }
+  }
+
+  IconData _getConnectIcon() {
+    switch (_connectionMode) {
+      case VNCConnectionMode.demo:
+        return Icons.play_arrow;
+      case VNCConnectionMode.webview:
+        return Icons.web;
+      case VNCConnectionMode.native:
+        return Icons.cast_connected;
+    }
+  }
+
+  String _getConnectButtonText() {
+    switch (_connectionMode) {
+      case VNCConnectionMode.demo:
+        return 'Start Demo';
+      case VNCConnectionMode.webview:
+        return 'Connect via noVNC';
+      case VNCConnectionMode.native:
+        return 'Connect via Native VNC';
+    }
+  }
+
+  Color? _getConnectButtonColor() {
+    switch (_connectionMode) {
+      case VNCConnectionMode.demo:
+        return Colors.green;
+      case VNCConnectionMode.webview:
+        return null;
+      case VNCConnectionMode.native:
+        return Colors.blue;
+    }
+  }
+
+  // Test VNC connection
+  void _testVNCConnection() async {
+    final host = _hostController.text.trim();
+    final vncPort = int.tryParse(_vncPortController.text.trim()) ?? 5900;
+
+    if (host.isEmpty) {
+      setState(() {
+        _connectionError = 'Host cannot be empty';
+      });
+      return;
+    }
+
+    setState(() {
+      _isConnecting = true;
+      _connectionError = null;
+    });
+
+    final testClient = VNCClient();
+
+    // Listen to logs for debugging
+    testClient.logs.listen((log) {
+      print('Test VNC Log: $log');
+    });
+
+    try {
+      final success = await testClient.testConnection(host, vncPort);
+      setState(() {
+        _isConnecting = false;
+        if (success) {
+          _connectionError = 'Test connection successful! Server is reachable.';
+        } else {
+          _connectionError = 'Test connection failed. Check host and port.';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _isConnecting = false;
+        _connectionError = 'Test connection error: $e';
+      });
+    }
+  }
+
+  // Native VNC connection
+  void _connectWithNativeVNC() {
+    final host = _hostController.text.trim();
+    final vncPort = int.tryParse(_vncPortController.text.trim()) ?? 5900;
+    final password = _passwordController.text;
+
+    if (host.isEmpty) {
+      setState(() {
+        _connectionError = 'Host cannot be empty';
+      });
+      return;
+    }
+
+    setState(() {
+      _isConnecting = true;
+      _connectionError = null;
+    });
+
+    _vncClient = VNCClient();
+
+    // Listen to logs for debugging
+    _vncClient!.logs.listen((log) {
+      print('VNC Log: $log');
+    });
+
+    _vncClient!.connectionState.listen((state) {
+      setState(() {
+        switch (state) {
+          case VNCConnectionState.connected:
+            _isConnected = true;
+            _isConnecting = false;
+            _showConnectionForm = false;
+            break;
+          case VNCConnectionState.failed:
+            _connectionError = 'Failed to connect to VNC server';
+            _isConnecting = false;
+            break;
+          case VNCConnectionState.disconnected:
+            _isConnected = false;
+            _isConnecting = false;
+            _showConnectionForm = true;
+            break;
+          default:
+            break;
+        }
+      });
+    });
+
+    _vncClient!
+        .connect(host, vncPort, password: password.isNotEmpty ? password : null)
+        .then((success) {
+      if (!success) {
+        setState(() {
+          _connectionError = 'Failed to connect to VNC server';
+          _isConnecting = false;
+        });
+      }
+    }).catchError((error) {
+      setState(() {
+        _connectionError = 'Connection error: $error';
+        _isConnecting = false;
+      });
+    });
   }
 
   String _generateNoVNCHtml(String host, int vncPort, String password) {
@@ -281,12 +476,14 @@ class _VNCScreenState extends State<VNCScreen> {
 
     <script>
         let isConnected = false;
+        const connectionHost = '$host';
+        const connectionPort = '$vncPort';
         
         function simulateConnect() {
             const statusDiv = document.getElementById('status');
             const form = document.getElementById('connect-form');
             
-            statusDiv.textContent = 'Connecting to $host:$vncPort...';
+            statusDiv.textContent = 'Connecting to ' + connectionHost + ':' + connectionPort + '...';
             statusDiv.className = '';
             
             // Simulate connection process
@@ -298,24 +495,244 @@ class _VNCScreenState extends State<VNCScreen> {
                     
                     setTimeout(() => {
                         form.innerHTML = `
-                            <div style="background: #2d2d2d; border: 2px solid #444; border-radius: 8px; padding: 20px;">
-                                <h3 style="color: #51cf66; margin-top: 0;">VNC Connected</h3>
-                                <p>Host: $host</p>
-                                <p>Port: $vncPort</p>
-                                <p style="font-size: 12px; color: #aaa; margin-top: 15px;">
-                                    This is a demo noVNC interface. In a real implementation, 
-                                    you would see the remote desktop here.
-                                </p>
-                                <div style="background: #000; height: 200px; margin: 15px 0; border: 1px solid #666; display: flex; align-items: center; justify-content: center;">
-                                    <span style="color: #666;">Remote Desktop Display Area</span>
+                            <div style="background: #2d2d2d; border: 2px solid #444; border-radius: 8px; padding: 20px; width: 100%; height: 100vh; box-sizing: border-box; display: flex; flex-direction: column;">
+                                <div style="background: #1a1a1a; padding: 10px; border-radius: 4px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <span style="color: #51cf66; font-weight: bold;">● Connected</span>
+                                        <span style="color: #aaa; margin-left: 10px;">\${connectionHost}:\${connectionPort}</span>
+                                    </div>
+                                    <button onclick="disconnect()" style="background: #dc3545; border: none; color: white; padding: 5px 10px; border-radius: 3px; cursor: pointer;">Disconnect</button>
                                 </div>
-                                <button onclick="disconnect()" style="background: #dc3545;">Disconnect</button>
+                                
+                                <div style="flex: 1; background: #000; border: 1px solid #666; border-radius: 4px; position: relative; overflow: hidden;">
+                                    <div id="desktop-simulation" style="width: 100%; height: 100%; position: relative;">
+                                        <!-- Simulated Desktop Environment -->
+                                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); width: 100%; height: 100%; position: relative;">
+                                            <!-- Taskbar -->
+                                            <div style="position: absolute; bottom: 0; left: 0; right: 0; height: 40px; background: rgba(0,0,0,0.8); display: flex; align-items: center; padding: 0 10px;">
+                                                <div style="background: #0078d4; color: white; padding: 5px 10px; border-radius: 3px; margin-right: 10px; cursor: pointer;" onclick="openApp('Terminal')">Terminal</div>
+                                                <div style="background: #ff6b35; color: white; padding: 5px 10px; border-radius: 3px; margin-right: 10px; cursor: pointer;" onclick="openApp('Browser')">Browser</div>
+                                                <div style="background: #28a745; color: white; padding: 5px 10px; border-radius: 3px; margin-right: 10px; cursor: pointer;" onclick="openApp('Files')">Files</div>
+                                                <div style="flex: 1;"></div>
+                                                <div style="color: #fff; font-size: 12px;" id="clock"></div>
+                                            </div>
+                                            
+                                            <!-- Desktop Icons -->
+                                            <div style="position: absolute; top: 20px; left: 20px;">
+                                                <div style="text-align: center; margin-bottom: 20px; cursor: pointer;" onclick="openApp('Computer')">
+                                                    <div style="width: 48px; height: 48px; background: #f39c12; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px;">🖥️</div>
+                                                    <div style="color: white; font-size: 12px; margin-top: 5px;">Computer</div>
+                                                </div>
+                                                <div style="text-align: center; margin-bottom: 20px; cursor: pointer;" onclick="openApp('Documents')">
+                                                    <div style="width: 48px; height: 48px; background: #3498db; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px;">📁</div>
+                                                    <div style="color: white; font-size: 12px; margin-top: 5px;">Documents</div>
+                                                </div>
+                                            </div>
+                                            
+                                            <!-- Window simulation area -->
+                                            <div id="windows-container" style="position: absolute; top: 0; left: 0; right: 0; bottom: 40px;"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div style="margin-top: 10px; font-size: 11px; color: #888; text-align: center;">
+                                    🎮 Interactive Demo - Click desktop icons and taskbar items | Real noVNC connection available via "Connect to noVNC Server"
+                                </div>
                             </div>
                         `;
                         isConnected = true;
+                        startClock();
+                        addMouseInteraction();
                     }, 1000);
                 }, 1000);
             }, 1000);
+        }
+        
+        function startClock() {
+            function updateClock() {
+                const now = new Date();
+                const timeString = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const clockElement = document.getElementById('clock');
+                if (clockElement) {
+                    clockElement.textContent = timeString;
+                }
+            }
+            updateClock();
+            setInterval(updateClock, 1000);
+        }
+        
+        function openApp(appName) {
+            const container = document.getElementById('windows-container');
+            if (!container) return;
+            
+            // Remove existing windows
+            container.innerHTML = '';
+            
+            // Create window
+            const window = document.createElement('div');
+            window.style.cssText = `
+                position: absolute;
+                top: 50px;
+                left: 50px;
+                width: 300px;
+                height: 200px;
+                background: white;
+                border: 1px solid #ccc;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                overflow: hidden;
+            `;
+            
+            const titleBar = document.createElement('div');
+            titleBar.style.cssText = `
+                background: #f0f0f0;
+                padding: 8px 12px;
+                border-bottom: 1px solid #ccc;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                cursor: move;
+            `;
+            titleBar.innerHTML = `
+                <span style="font-weight: bold; color: #333;">' + appName + '</span>
+                <span style="color: #666; cursor: pointer;" onclick="closeWindow()">[×]</span>
+            `;
+            
+            const content = document.createElement('div');
+            content.style.cssText = `
+                padding: 15px;
+                height: calc(100% - 40px);
+                color: #333;
+                font-size: 14px;
+            `;
+            
+            switch(appName) {
+                case 'Terminal':
+                    content.innerHTML = `
+                        <div style="background: #000; color: #0f0; padding: 10px; font-family: monospace; height: 100%; overflow: auto;">
+                            \$ whoami<br>
+                            vnc-user<br>
+                            \$ ls -la<br>
+                            total 24<br>
+                            drwxr-xr-x 5 vnc-user vnc-user 4096 Aug  8 10:30 .<br>
+                            drwxr-xr-x 3 root     root     4096 Aug  8 10:25 ..<br>
+                            -rw-r--r-- 1 vnc-user vnc-user  220 Aug  8 10:25 .bash_logout<br>
+                            drwxr-xr-x 2 vnc-user vnc-user 4096 Aug  8 10:30 Desktop<br>
+                            drwxr-xr-x 2 vnc-user vnc-user 4096 Aug  8 10:30 Documents<br>
+                            \$ <span style="animation: blink 1s infinite;">_</span>
+                        </div>
+                    `;
+                    break;
+                case 'Browser':
+                    content.innerHTML = `
+                        <div style="border: 1px solid #ddd; height: 100%;">
+                            <div style="background: #f8f9fa; padding: 5px; border-bottom: 1px solid #ddd;">
+                                <input type="text" value="https://example.com" style="width: 100%; padding: 4px; border: 1px solid #ccc;">
+                            </div>
+                            <div style="padding: 20px; text-align: center;">
+                                <h3>Example Website</h3>
+                                <p>This is a simulated web browser showing a remote desktop.</p>
+                            </div>
+                        </div>
+                    `;
+                    break;
+                case 'Files':
+                    content.innerHTML = `
+                        <div style="height: 100%; display: flex; flex-direction: column;">
+                            <div style="background: #f8f9fa; padding: 5px; border-bottom: 1px solid #ddd; font-size: 12px;">/home/vnc-user</div>
+                            <div style="flex: 1; padding: 10px;">
+                                📁 Desktop<br>
+                                📁 Documents<br>
+                                📁 Downloads<br>
+                                📄 README.txt<br>
+                                📄 notes.txt<br>
+                            </div>
+                        </div>
+                    `;
+                    break;
+                default:
+                    content.innerHTML = '<p>Opening ' + appName + '...</p>';
+            }
+            
+            window.appendChild(titleBar);
+            window.appendChild(content);
+            container.appendChild(window);
+            
+            // Make window draggable
+            makeDraggable(window, titleBar);
+        }
+        
+        function closeWindow() {
+            const container = document.getElementById('windows-container');
+            if (container) {
+                container.innerHTML = '';
+            }
+        }
+        
+        function makeDraggable(window, titleBar) {
+            let isDragging = false;
+            let offset = {x: 0, y: 0};
+            
+            titleBar.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                offset.x = e.clientX - window.offsetLeft;
+                offset.y = e.clientY - window.offsetTop;
+            });
+            
+            document.addEventListener('mousemove', (e) => {
+                if (isDragging) {
+                    window.style.left = (e.clientX - offset.x) + 'px';
+                    window.style.top = (e.clientY - offset.y) + 'px';
+                }
+            });
+            
+            document.addEventListener('mouseup', () => {
+                isDragging = false;
+            });
+        }
+        
+        function addMouseInteraction() {
+            const desktop = document.getElementById('desktop-simulation');
+            if (!desktop) return;
+            
+            desktop.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                showContextMenu(e.clientX, e.clientY);
+            });
+        }
+        
+        function showContextMenu(x, y) {
+            const existing = document.getElementById('context-menu');
+            if (existing) existing.remove();
+            
+            const menu = document.createElement('div');
+            menu.id = 'context-menu';
+            menu.style.cssText = `
+                position: fixed;
+                left: ' + x + 'px;
+                top: ' + y + 'px;
+                background: white;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+                z-index: 1000;
+                min-width: 120px;
+            `;
+            menu.innerHTML = `
+                <div style="padding: 8px 12px; cursor: pointer; color: #333;" onclick="openApp('Terminal'); removeContextMenu();">Open Terminal</div>
+                <div style="padding: 8px 12px; cursor: pointer; color: #333;" onclick="openApp('Files'); removeContextMenu();">Open Files</div>
+                <div style="padding: 8px 12px; cursor: pointer; color: #333; border-top: 1px solid #eee;" onclick="removeContextMenu();">Cancel</div>
+            `;
+            document.body.appendChild(menu);
+            
+            setTimeout(() => {
+                document.addEventListener('click', removeContextMenu, {once: true});
+            }, 100);
+        }
+        
+        function removeContextMenu() {
+            const menu = document.getElementById('context-menu');
+            if (menu) menu.remove();
         }
         
         function disconnect() {
@@ -365,13 +782,65 @@ class _VNCScreenState extends State<VNCScreen> {
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
+
+                  // Connection Mode Dropdown
+                  DropdownButtonFormField<VNCConnectionMode>(
+                    value: _connectionMode,
+                    decoration: const InputDecoration(
+                      labelText: 'VNC Client Type',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.settings_display),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: VNCConnectionMode.demo,
+                        child: Text('Demo Mode (Simulation)'),
+                      ),
+                      DropdownMenuItem(
+                        value: VNCConnectionMode.webview,
+                        child: Text('noVNC (WebView)'),
+                      ),
+                      DropdownMenuItem(
+                        value: VNCConnectionMode.native,
+                        child: Text('Native VNC Client'),
+                      ),
+                    ],
+                    onChanged: (VNCConnectionMode? value) {
+                      if (value != null) {
+                        setState(() {
+                          _connectionMode = value;
+                          if (_connectionMode == VNCConnectionMode.demo) {
+                            _hostController.text = 'demo.local';
+                            _vncPortController.text = '5900';
+                          } else if (_connectionMode ==
+                              VNCConnectionMode.native) {
+                            _hostController.text = '';
+                            _vncPortController.text = '5900';
+                          } else {
+                            _hostController.text = '';
+                            _vncPortController.text = '5900';
+                          }
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _getConnectionModeDescription(),
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+
                   TextField(
                     controller: _hostController,
-                    decoration: const InputDecoration(
+                    enabled: _connectionMode != VNCConnectionMode.demo,
+                    decoration: InputDecoration(
                       labelText: 'Host/IP Address',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.computer),
-                      helperText: 'VNC server hostname or IP address',
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.computer),
+                      helperText: _connectionMode == VNCConnectionMode.demo
+                          ? 'Demo mode - server not required'
+                          : 'VNC server hostname or IP address',
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -456,32 +925,46 @@ class _VNCScreenState extends State<VNCScreen> {
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: _isConnecting ? null : _connect,
-                  icon: const Icon(Icons.web),
+                  onPressed: _isConnecting ? null : _getConnectFunction(),
+                  icon: Icon(_getConnectIcon()),
                   label: _isConnecting
                       ? const Text('Connecting...')
-                      : const Text('Connect to noVNC Server'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _isConnecting ? null : _connectWithEmbeddedNoVNC,
-                  icon: const Icon(Icons.integration_instructions),
-                  label: _isConnecting
-                      ? const Text('Connecting...')
-                      : const Text('Use Embedded noVNC'),
+                      : Text(_getConnectButtonText()),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
+                    backgroundColor: _getConnectButtonColor(),
                   ),
                 ),
               ),
             ],
           ),
+          if (_connectionMode == VNCConnectionMode.native) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _isConnecting ? null : _testVNCConnection,
+                    icon: const Icon(Icons.network_check),
+                    label: const Text('Test Connection'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (_connectionMode != VNCConnectionMode.demo) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _isConnecting ? null : _connectWithEmbeddedNoVNC,
+                    icon: const Icon(Icons.integration_instructions),
+                    label: const Text('Use Embedded Demo'),
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 24),
           ExpansionTile(
             title: const Text('Setup Instructions'),
@@ -523,24 +1006,15 @@ class _VNCScreenState extends State<VNCScreen> {
   Widget _buildVNCDisplay() {
     return Stack(
       children: [
-        // WebView displaying noVNC
+        // Main display based on connection mode
         Positioned.fill(
-          child: _webViewController != null
-              ? WebViewWidget(controller: _webViewController!)
-              : const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 16),
-                      Text('Initializing noVNC...'),
-                    ],
-                  ),
-                ),
+          child: _buildConnectionModeWidget(),
         ),
 
-        // Control Panel (overlay)
-        if (_showControls)
+        // Control Panel (overlay) - only for WebView modes
+        if (_showControls &&
+            (_connectionMode == VNCConnectionMode.demo ||
+                _connectionMode == VNCConnectionMode.webview))
           Positioned(
             top: 16,
             right: 16,
@@ -579,18 +1053,50 @@ class _VNCScreenState extends State<VNCScreen> {
             ),
           ),
 
-        // Toggle controls button
+        // Toggle controls button - only for WebView modes
+        if (_connectionMode == VNCConnectionMode.demo ||
+            _connectionMode == VNCConnectionMode.webview)
+          Positioned(
+            top: 16,
+            left: 16,
+            child: FloatingActionButton.small(
+              onPressed: () {
+                setState(() {
+                  _showControls = !_showControls;
+                });
+              },
+              child:
+                  Icon(_showControls ? Icons.visibility_off : Icons.visibility),
+            ),
+          ),
+
+        // Connection mode indicator
         Positioned(
-          top: 16,
+          bottom: 16,
           left: 16,
-          child: FloatingActionButton.small(
-            onPressed: () {
-              setState(() {
-                _showControls = !_showControls;
-              });
-            },
-            child:
-                Icon(_showControls ? Icons.visibility_off : Icons.visibility),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _connectionMode == VNCConnectionMode.demo
+                        ? Icons.play_arrow
+                        : _connectionMode == VNCConnectionMode.webview
+                            ? Icons.web
+                            : Icons.cast_connected,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _connectionMode.toString().split('.').last.toUpperCase(),
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
 
@@ -616,6 +1122,38 @@ class _VNCScreenState extends State<VNCScreen> {
           ),
       ],
     );
+  }
+
+  Widget _buildConnectionModeWidget() {
+    switch (_connectionMode) {
+      case VNCConnectionMode.demo:
+      case VNCConnectionMode.webview:
+        return _webViewController != null
+            ? WebViewWidget(controller: _webViewController!)
+            : const Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('Initializing noVNC...'),
+                  ],
+                ),
+              );
+      case VNCConnectionMode.native:
+        return _vncClient != null
+            ? VNCClientWidget(client: _vncClient!)
+            : const Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('Initializing Native VNC Client...'),
+                  ],
+                ),
+              );
+    }
   }
 
   @override
