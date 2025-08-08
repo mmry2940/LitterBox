@@ -1,4 +1,4 @@
-# sshuttle_flutter
+# LitterBox
 
 A new Flutter project.
 

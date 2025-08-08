@@ -7,7 +7,8 @@ import 'dart:async';
 import 'device_screen.dart';
 import 'package:network_tools/network_tools.dart';
 import 'package:network_info_plus/network_info_plus.dart';
-import 'package:sshuttle_flutter/screens/_host_tile_with_retry.dart';
+import 'package:LitterBox/screens/_host_tile_with_retry.dart';
+import 'android_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -37,6 +38,17 @@ class _HomeScreenState extends State<HomeScreen> {
             .toList();
       });
     }
+
+    // Add a test localhost device as a reference
+    setState(() {
+      _devices.add({
+        'name': 'Localhost',
+        'host': '127.0.0.1',
+        'port': '22',
+        'username': 'user',
+        'password': 'password',
+      });
+    });
   }
 
   Future<void> _saveDevices() async {
@@ -368,7 +380,57 @@ class _HomeScreenState extends State<HomeScreen> {
       drawer: Drawer(
         child: ListView(
           children: [
-            const DrawerHeader(child: Text('sshuttle')),
+            DrawerHeader(
+              child: Column(
+                children: [
+                  const Text('LitterBox'),
+                  const SizedBox(height: 10),
+                  Image.asset(
+                    'assets/splash_2.jpg',
+                    height: 100,
+                    fit: BoxFit.contain,
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.devices),
+              title: const Text('Devices List'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const HomeScreen(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.android),
+              title: const Text('Android'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AndroidScreen(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.desktop_windows),
+              title: const Text('VNC'),
+              onTap: () {
+                // Navigate to the VNC screen (to be implemented)
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.more_horiz),
+              title: const Text('Other'),
+              onTap: () {
+                // Navigate to the Other screen (to be implemented)
+              },
+            ),
             SwitchListTile(
               title: const Text('Dark Mode'),
               value: themeModeNotifier.value == ThemeMode.dark,
