@@ -35,13 +35,10 @@ class _VNCScreenState extends State<VNCScreen> {
   final TextEditingController _pathController =
       TextEditingController(text: '/vnc.html');
 
-  bool _showConnectionForm = true;
-  String? _connectionError;
-  bool _isConnected = false;
   bool _isConnecting = false;
+  String? _connectionError;
 
   WebViewController? _webViewController;
-  bool _showControls = false;
   VNCConnectionMode _connectionMode = VNCConnectionMode.demo;
   VNCClient? _vncClient;
 
@@ -109,8 +106,6 @@ class _VNCScreenState extends State<VNCScreen> {
             setState(() {
               _connectionError = errorMessage;
               _isConnecting = false;
-              _isConnected = false;
-              _showConnectionForm = true;
             });
           },
         ),
@@ -141,13 +136,28 @@ class _VNCScreenState extends State<VNCScreen> {
 
     _webViewController?.loadHtmlString(noVncHtml).then((_) {
       setState(() {
-        _showConnectionForm = false;
-        _isConnected = true;
         _connectionError = null;
+        _isConnecting = false;
       });
-      print('DEBUG: About to navigate to VNC viewer for webview mode');
-      // Navigate to VNC viewer screen for embedded noVNC
-      _navigateToVNCViewer(VNCViewerMode.webview);
+      print('DEBUG: WebView VNC connected, navigating to webview viewer screen');
+      
+      // Navigate to webview viewer screen
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => VNCViewerScreen(
+            host: host,
+            port: vncPort,
+            password: password.isNotEmpty ? password : null,
+            mode: VNCViewerMode.webview,
+            webViewController: _webViewController,
+          ),
+        ),
+      ).then((_) {
+        // When returning from viewer screen, reset state
+        setState(() {
+          _isConnecting = false;
+        });
+      });
     }).catchError((error) {
       setState(() {
         _connectionError = 'Failed to load embedded noVNC: $error';
@@ -169,84 +179,27 @@ class _VNCScreenState extends State<VNCScreen> {
     Future.delayed(const Duration(seconds: 1), () {
       print('DEBUG: Delayed callback executing');
       setState(() {
-        _showConnectionForm = false;
-        _isConnected = true;
         _isConnecting = false;
       });
-      print('DEBUG: About to navigate to VNC viewer');
-      // Navigate to VNC viewer screen for demo
-      _navigateToVNCViewer(VNCViewerMode.demo);
-    });
-  }
-
-  void _disconnect() {
-    setState(() {
-      _isConnected = false;
-      _showConnectionForm = true;
-      _isConnecting = false;
-    });
-
-    // Disconnect WebView
-    _webViewController
-        ?.loadHtmlString('<html><body><h1>Disconnected</h1></body></html>');
-
-    // Disconnect native VNC client
-    _vncClient?.disconnect();
-    _vncClient = null;
-  }
-
-  void _navigateToVNCViewer(VNCViewerMode mode) {
-    print('DEBUG: _navigateToVNCViewer called with mode: $mode');
-    final host = _hostController.text.trim();
-    final port = mode == VNCViewerMode.webview
-        ? (int.tryParse(_portController.text.trim()) ?? 6080)
-        : (int.tryParse(_vncPortController.text.trim()) ?? 5900);
-    final password = _passwordController.text.trim();
-
-    // For demo mode, use default values if host is empty
-    final effectiveHost =
-        (mode == VNCViewerMode.demo && host.isEmpty) ? 'demo.local' : host;
-
-    print(
-        'DEBUG: About to navigate to VNCViewerScreen with host: $effectiveHost, port: $port');
-
-    try {
-      Navigator.of(context)
-          .push(
+      print('DEBUG: Demo VNC connected, navigating to demo viewer screen');
+      
+      // Navigate to demo viewer screen
+      Navigator.of(context).push(
         MaterialPageRoute(
           builder: (context) => VNCViewerScreen(
-            host: effectiveHost,
-            port: port,
-            password: password.isEmpty ? null : password,
-            mode: mode,
-            vncClient: mode == VNCViewerMode.native ? _vncClient : null,
-            webViewController:
-                mode == VNCViewerMode.webview ? _webViewController : null,
+            host: _hostController.text.isNotEmpty ? _hostController.text : 'demo.local',
+            port: int.tryParse(_vncPortController.text) ?? 5900,
+            password: _passwordController.text.isNotEmpty ? _passwordController.text : null,
+            mode: VNCViewerMode.demo,
           ),
         ),
-      )
-          .then((_) {
-        print('DEBUG: Returned from VNC viewer');
-        // When returning from VNC viewer, reset the connection state
+      ).then((_) {
+        // When returning from viewer screen, reset state
         setState(() {
-          _isConnected = false;
-          _showConnectionForm = true;
           _isConnecting = false;
         });
-
-        // Clean up connections
-        _vncClient?.disconnect();
-        _vncClient = null;
-        _webViewController
-            ?.loadHtmlString('<html><body><h1>Disconnected</h1></body></html>');
       });
-    } catch (e) {
-      print('DEBUG: Error navigating to VNC viewer: $e');
-      setState(() {
-        _connectionError = 'Navigation error: $e';
-        _isConnecting = false;
-      });
-    }
+    });
   }
 
   // Helper methods for connection mode UI
@@ -422,12 +375,26 @@ class _VNCScreenState extends State<VNCScreen> {
       setState(() {
         switch (state) {
           case VNCConnectionState.connected:
-            print('DEBUG: Connection state is CONNECTED, navigating to viewer');
-            _isConnected = true;
+            print('DEBUG: Connection state is CONNECTED, navigating to VNC viewer screen');
             _isConnecting = false;
-            _showConnectionForm = false;
-            // Navigate to VNC viewer screen
-            _navigateToVNCViewer(VNCViewerMode.native);
+            
+            // Navigate to dedicated VNC viewer screen
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => VNCViewerScreen(
+                  host: host,
+                  port: vncPort,
+                  password: password.isNotEmpty ? password : null,
+                  mode: VNCViewerMode.native,
+                  vncClient: _vncClient,
+                ),
+              ),
+            ).then((_) {
+              // When returning from viewer screen, reset state
+              setState(() {
+                _isConnecting = false;
+              });
+            });
             break;
           case VNCConnectionState.failed:
             print('DEBUG: Connection state is FAILED');
@@ -437,9 +404,7 @@ class _VNCScreenState extends State<VNCScreen> {
             break;
           case VNCConnectionState.disconnected:
             print('DEBUG: Connection state is DISCONNECTED');
-            _isConnected = false;
             _isConnecting = false;
-            _showConnectionForm = true;
             break;
           default:
             print('DEBUG: Connection state is: $state');
@@ -1106,251 +1071,52 @@ class _VNCScreenState extends State<VNCScreen> {
     );
   }
 
-  Widget _buildVNCDisplay() {
-    return Stack(
-      children: [
-        // Main display based on connection mode
-        Positioned.fill(
-          child: _buildConnectionModeWidget(),
-        ),
-
-        // Control Panel (overlay) - only for WebView modes
-        if (_showControls &&
-            (_connectionMode == VNCConnectionMode.demo ||
-                _connectionMode == VNCConnectionMode.webview))
-          Positioned(
-            top: 16,
-            right: 16,
-            child: Card(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.refresh),
-                    onPressed: () {
-                      _webViewController?.reload();
-                    },
-                    tooltip: 'Refresh',
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.fullscreen),
-                    onPressed: () {
-                      // Toggle fullscreen in WebView
-                      _webViewController?.runJavaScript('''
-                        if (document.fullscreenElement) {
-                          document.exitFullscreen();
-                        } else {
-                          document.documentElement.requestFullscreen();
-                        }
-                      ''');
-                    },
-                    tooltip: 'Toggle Fullscreen',
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: _disconnect,
-                    tooltip: 'Disconnect',
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-        // Toggle controls button - only for WebView modes
-        if (_connectionMode == VNCConnectionMode.demo ||
-            _connectionMode == VNCConnectionMode.webview)
-          Positioned(
-            top: 16,
-            left: 16,
-            child: FloatingActionButton.small(
-              onPressed: () {
-                setState(() {
-                  _showControls = !_showControls;
-                });
-              },
-              child:
-                  Icon(_showControls ? Icons.visibility_off : Icons.visibility),
-            ),
-          ),
-
-        // Connection mode indicator
-        Positioned(
-          bottom: 16,
-          left: 16,
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _connectionMode == VNCConnectionMode.demo
-                        ? Icons.play_arrow
-                        : _connectionMode == VNCConnectionMode.webview
-                            ? Icons.web
-                            : Icons.cast_connected,
-                    size: 16,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    _connectionMode.toString().split('.').last.toUpperCase(),
-                    style: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-
-        // Connection indicator
-        if (_isConnecting)
-          Positioned.fill(
-            child: Container(
-              color: Colors.black.withValues(alpha: 0.5),
-              child: const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircularProgressIndicator(color: Colors.white),
-                    SizedBox(height: 16),
-                    Text(
-                      'Connecting to VNC...',
-                      style: TextStyle(color: Colors.white, fontSize: 16),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildConnectionModeWidget() {
-    switch (_connectionMode) {
-      case VNCConnectionMode.demo:
-      case VNCConnectionMode.webview:
-        return _webViewController != null
-            ? WebViewWidget(controller: _webViewController!)
-            : const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 16),
-                    Text('Initializing noVNC...'),
-                  ],
-                ),
-              );
-      case VNCConnectionMode.native:
-        return _vncClient != null
-            ? VNCClientWidget(client: _vncClient!)
-            : const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 16),
-                    Text('Initializing Native VNC Client...'),
-                  ],
-                ),
-              );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isConnected
-            ? 'noVNC - ${_hostController.text}'
-            : 'noVNC Connection'),
-        backgroundColor: _isConnected ? Colors.green : null,
+        title: const Text('VNC Connection'),
         actions: [
-          if (_isConnected)
-            IconButton(
-              icon: const Icon(Icons.info_outline),
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Connection Info'),
-                    content: Column(
+          IconButton(
+            icon: const Icon(Icons.help_outline),
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('VNC Help'),
+                  content: const SingleChildScrollView(
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Host: ${_hostController.text}'),
-                        Text('VNC Port: ${_vncPortController.text}'),
-                        Text('Web Port: ${_portController.text}'),
-                        Text('Path: ${_pathController.text}'),
-                        const SizedBox(height: 8),
-                        const Text('noVNC Features:'),
-                        const Text('• Web-based VNC client'),
-                        const Text('• Cross-platform compatibility'),
-                        const Text('• Touch-friendly interface'),
-                        const Text('• No plugins required'),
+                        Text('VNC (Virtual Network Computing) allows you to remotely control another computer.'),
+                        SizedBox(height: 8),
+                        Text('Connection Modes:'),
+                        SizedBox(height: 4),
+                        Text('• Demo Mode: Interactive simulation'),
+                        Text('• WebView Mode: noVNC web client'),
+                        Text('• Native Mode: Direct VNC protocol'),
+                        SizedBox(height: 8),
+                        Text('For real connections, you need:'),
+                        Text('• VNC server running on target machine'),
+                        Text('• Correct host/IP and port'),
+                        Text('• Password (if required)'),
                       ],
                     ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('OK'),
-                      ),
-                    ],
                   ),
-                );
-              },
-            ),
-          if (!_isConnected)
-            IconButton(
-              icon: const Icon(Icons.help_outline),
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('noVNC Help'),
-                    content: const SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                              'noVNC is a web-based VNC client that runs in browsers.'),
-                          SizedBox(height: 8),
-                          Text('Setup Options:'),
-                          SizedBox(height: 4),
-                          Text('1. External noVNC Server:'),
-                          Text('   • Requires noVNC + websockify on server'),
-                          Text('   • Full VNC functionality'),
-                          SizedBox(height: 8),
-                          Text('2. Embedded noVNC (Demo):'),
-                          Text('   • Built-in simulation'),
-                          Text('   • No server setup required'),
-                          Text('   • Good for testing'),
-                          SizedBox(height: 8),
-                          Text('Installation:'),
-                          Text('git clone https://github.com/novnc/noVNC.git'),
-                          Text(
-                              'git clone https://github.com/novnc/websockify.git'),
-                          Text(
-                              './websockify/run --web noVNC/ 6080 localhost:5900'),
-                        ],
-                      ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('OK'),
                     ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('OK'),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+                  ],
+                ),
+              );
+            },
+          ),
         ],
       ),
-      body: _showConnectionForm ? _buildConnectionForm() : _buildVNCDisplay(),
+      body: _buildConnectionForm(),
     );
   }
 }

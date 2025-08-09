@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../vnc_client.dart';
 
@@ -35,7 +36,25 @@ class _VNCViewerScreenState extends State<VNCViewerScreen> {
   bool _isFullscreen = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Force landscape orientation for VNC viewer
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  }
+
+  @override
   void dispose() {
+    // Restore all orientations when leaving VNC viewer
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    
     // Note: We don't automatically disconnect here because the user might want
     // to keep the connection when navigating back. Disconnection is handled
     // explicitly in _disconnect() when the user chooses to disconnect.
@@ -72,16 +91,32 @@ class _VNCViewerScreenState extends State<VNCViewerScreen> {
               Text('Host: ${widget.host}'),
               Text('Port: ${widget.port}'),
               Text('Mode: ${widget.mode.name}'),
-              if (widget.vncClient?.currentState ==
-                  VNCConnectionState.connected) ...[
+              if (widget.vncClient != null) ...[
                 const SizedBox(height: 10),
-                const Text('Status: Connected',
-                    style: TextStyle(color: Colors.green)),
+                StreamBuilder<VNCConnectionState>(
+                  stream: widget.vncClient!.connectionState,
+                  builder: (context, snapshot) {
+                    // Since we navigate here when connected, default to connected if no data yet
+                    final state = snapshot.data ?? VNCConnectionState.connected;
+                    Color statusColor = Colors.grey;
+                    if (state == VNCConnectionState.connected) statusColor = Colors.green;
+                    if (state == VNCConnectionState.connecting) statusColor = Colors.orange;
+                    if (state == VNCConnectionState.failed) statusColor = Colors.red;
+                    
+                    return Text('Status: ${state.name}',
+                        style: TextStyle(color: statusColor, fontWeight: FontWeight.bold));
+                  },
+                ),
                 if (widget.vncClient?.frameBuffer != null) ...[
                   Text(
                       'Resolution: ${widget.vncClient!.frameBuffer!.width}x${widget.vncClient!.frameBuffer!.height}'),
                   Text(
                       'Pixel Format: ${widget.vncClient!.frameBuffer!.pixelFormat.bitsPerPixel}bpp'),
+                  Text(
+                      'Server: ${widget.vncClient!.frameBuffer!.serverName}'),
+                  if (widget.vncClient!.frameBuffer!.pixels != null)
+                    Text(
+                        'Frame Data: ${widget.vncClient!.frameBuffer!.pixels!.length} bytes'),
                 ],
               ],
             ],
@@ -258,7 +293,58 @@ class _VNCViewerScreenState extends State<VNCViewerScreen> {
       );
     }
 
-    return VNCClientWidget(client: widget.vncClient!);
+    // Since we only navigate here when connected, always show VNC content
+    // Only monitor for disconnections that happen after navigation
+    return StreamBuilder<VNCConnectionState>(
+      stream: widget.vncClient!.connectionState,
+      builder: (context, snapshot) {
+        // Always render the VNC client widget since we know we're connected when we get here
+        return Stack(
+          children: [
+            // VNC content is always rendered
+            VNCClientWidget(client: widget.vncClient!),
+            
+            // Only show overlay if we have received a disconnected/failed state via the stream
+            // (not on initial build or if no snapshot data yet)
+            if (snapshot.hasData && 
+                (snapshot.data == VNCConnectionState.disconnected || 
+                 snapshot.data == VNCConnectionState.failed))
+              Container(
+                color: Colors.black.withValues(alpha: 0.8),
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        snapshot.data == VNCConnectionState.failed ? Icons.error : Icons.link_off,
+                        color: snapshot.data == VNCConnectionState.failed ? Colors.red : Colors.grey,
+                        size: 48,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        snapshot.data == VNCConnectionState.failed 
+                            ? 'Connection failed' 
+                            : 'Disconnected from VNC server',
+                        style: const TextStyle(color: Colors.white, fontSize: 16),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Host: ${widget.host}:${widget.port}',
+                        style: const TextStyle(color: Colors.grey, fontSize: 14),
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Back to Connection'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
   }
 
   @override

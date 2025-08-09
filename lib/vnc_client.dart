@@ -1400,6 +1400,15 @@ class VNCClient {
           _log(
               'Buffer first 16 bytes: ${_buffer.take(16).map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}').join(' ')}');
           _log('Buffer length: ${_buffer.length}');
+          
+          // If we have a small buffer with unknown message types, it might be leftover pixel data
+          // Clear the buffer and wait for the next proper message
+          if (_buffer.length <= 32) {
+            _log('Small buffer with unknown message type, clearing buffer to resync');
+            _buffer.clear();
+            return;
+          }
+          
           // Skip this byte and try to resync
           _buffer.removeAt(0);
           continue;
@@ -1413,6 +1422,8 @@ class VNCClient {
       final messageData =
           Uint8List.fromList(_buffer.take(messageLength).toList());
       _buffer.removeRange(0, messageLength);
+
+      _log('Processing message type $messageType, length $messageLength, remaining buffer: ${_buffer.length}');
 
       _handleServerMessage(messageData);
     }
@@ -1773,28 +1784,77 @@ class VNCClientWidget extends StatefulWidget {
   const VNCClientWidget({super.key, required this.client});
 
   @override
-  State<VNCClientWidget> createState() => _VNCClientWidgetState();
+  State<VNCClientWidget> createState() {
+    print('[VNCClientWidget] Creating new state instance');
+    return _VNCClientWidgetState();
+  }
 }
 
 class _VNCClientWidgetState extends State<VNCClientWidget> {
   VNCConnectionState _connectionState = VNCConnectionState.disconnected;
   VNCFrameBuffer? _frameBuffer;
+  StreamSubscription<VNCConnectionState>? _connectionStateSubscription;
+  StreamSubscription<VNCFrameUpdate>? _frameUpdateSubscription;
 
   @override
   void initState() {
     super.initState();
+    print('[VNCClientWidget] initState called - Widget ${widget.hashCode}');
 
-    widget.client.connectionState.listen((state) {
-      setState(() {
-        _connectionState = state;
-      });
+    _connectionStateSubscription = widget.client.connectionState.listen((state) {
+      print('[VNCClientWidget] State change: $state');
+      if (mounted) {  // Check if widget is still mounted
+        setState(() {
+          _connectionState = state;
+        });
+      }
     });
 
-    widget.client.frameUpdates.listen((update) {
-      setState(() {
-        _frameBuffer = widget.client.frameBuffer;
-      });
+    _frameUpdateSubscription = widget.client.frameUpdates.listen((update) {
+      print('[VNCClientWidget] Frame update received');
+      if (mounted) {  // Check if widget is still mounted
+        setState(() {
+          _frameBuffer = widget.client.frameBuffer;
+        });
+      }
     });
+  }
+
+  @override
+  void dispose() {
+    print('[VNCClientWidget] dispose called - Widget ${widget.hashCode}');
+    _connectionStateSubscription?.cancel();
+    _frameUpdateSubscription?.cancel();
+    super.dispose();
+  }
+
+  /// Maps touch coordinates from the widget space to VNC coordinates
+  Offset _mapTouchCoordinates(Offset touchPosition, BuildContext context) {
+    if (_frameBuffer == null) return touchPosition;
+    
+    // Get the render box to calculate the actual display size
+    final RenderBox? renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) return touchPosition;
+    
+    final size = renderBox.size;
+    final width = _frameBuffer!.width.toDouble();
+    final height = _frameBuffer!.height.toDouble();
+    
+    // Calculate the same scaling factors used in VNCFramePainter
+    final scaleX = size.width / width;
+    final scaleY = size.height / height;
+    final scale = scaleX < scaleY ? scaleX : scaleY;
+    
+    final scaledWidth = width * scale;
+    final scaledHeight = height * scale;
+    final offsetX = (size.width - scaledWidth) / 2;
+    final offsetY = (size.height - scaledHeight) / 2;
+    
+    // Map touch coordinates to VNC coordinates
+    final vncX = ((touchPosition.dx - offsetX) / scale).clamp(0.0, width - 1);
+    final vncY = ((touchPosition.dy - offsetY) / scale).clamp(0.0, height - 1);
+    
+    return Offset(vncX, vncY);
   }
 
   @override
@@ -1803,18 +1863,30 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
       color: Colors.black,
       child: Stack(
         children: [
+          // Always show the frame buffer if available, regardless of connection state
+          // The viewer screen handles its own overlays when needed
           if (_frameBuffer != null)
             Positioned.fill(
               child: GestureDetector(
                 onTapDown: (details) {
-                  final x = details.localPosition.dx.round();
-                  final y = details.localPosition.dy.round();
-                  widget.client.sendPointerEvent(x, y, 1); // Left click
+                  // Map touch coordinates to VNC coordinates
+                  final mappedCoords = _mapTouchCoordinates(details.localPosition, context);
+                  widget.client.sendPointerEvent(mappedCoords.dx.round(), mappedCoords.dy.round(), 1); // Left click
                 },
                 onTapUp: (details) {
-                  final x = details.localPosition.dx.round();
-                  final y = details.localPosition.dy.round();
-                  widget.client.sendPointerEvent(x, y, 0); // Release
+                  // Map touch coordinates to VNC coordinates  
+                  final mappedCoords = _mapTouchCoordinates(details.localPosition, context);
+                  widget.client.sendPointerEvent(mappedCoords.dx.round(), mappedCoords.dy.round(), 0); // Release
+                },
+                onPanUpdate: (details) {
+                  // Handle drag events
+                  final mappedCoords = _mapTouchCoordinates(details.localPosition, context);
+                  widget.client.sendPointerEvent(mappedCoords.dx.round(), mappedCoords.dy.round(), 1); // Drag
+                },
+                onPanEnd: (details) {
+                  // End drag
+                  final mappedCoords = _mapTouchCoordinates(details.localPosition, context);
+                  widget.client.sendPointerEvent(mappedCoords.dx.round(), mappedCoords.dy.round(), 0); // Release
                 },
                 child: CustomPaint(
                   painter: VNCFramePainter(_frameBuffer!),
@@ -1823,8 +1895,9 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
               ),
             ),
 
-          // Connection status overlay
-          if (_connectionState != VNCConnectionState.connected)
+          // Only show connection status overlay when no frame buffer is available
+          // This prevents overlay from showing over the remote display
+          if (_frameBuffer == null && _connectionState != VNCConnectionState.connected)
             Container(
               color: Colors.black.withValues(alpha: 0.8),
               child: Center(
@@ -1867,18 +1940,19 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
 
 class VNCFramePainter extends CustomPainter {
   final VNCFrameBuffer frameBuffer;
+  static int _paintCallCount = 0;
 
   VNCFramePainter(this.frameBuffer);
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Debug info
-    print(
-        '[VNCFramePainter] Paint called - Canvas size: ${size.width}x${size.height}');
-    print(
-        '[VNCFramePainter] Frame buffer: ${frameBuffer.width}x${frameBuffer.height}');
-    print(
-        '[VNCFramePainter] Has pixels: ${frameBuffer.pixels != null}, Length: ${frameBuffer.pixels?.length ?? 0}');
+    _paintCallCount++;
+    
+    // Reduced debug output - only log every 10th paint call to avoid spam
+    if (_paintCallCount % 10 == 1) {
+      print(
+          '[VNCFramePainter] Paint #$_paintCallCount - Canvas: ${size.width.toInt()}x${size.height.toInt()}, FB: ${frameBuffer.width}x${frameBuffer.height}');
+    }
 
     if (frameBuffer.pixels != null && frameBuffer.pixels!.isNotEmpty) {
       // Draw the actual VNC frame buffer using manual pixel drawing
@@ -1916,50 +1990,71 @@ class VNCFramePainter extends CustomPainter {
   }
 
   void _drawPixelData(Canvas canvas, Size size) {
+    final width = frameBuffer.width;
+    final height = frameBuffer.height;
+
+    // Calculate scaling factors to fit screen
+    final scaleX = size.width / width;
+    final scaleY = size.height / height;
+    
+    // Use the smaller scale to maintain aspect ratio and fit within screen
+    final scale = scaleX < scaleY ? scaleX : scaleY;
+
+    final scaledWidth = width * scale;
+    final scaledHeight = height * scale;
+    final offsetX = (size.width - scaledWidth) / 2;
+    final offsetY = (size.height - scaledHeight) / 2;
+
+    // Only log detailed info every 10th paint call
+    if (_paintCallCount % 10 == 1) {
+      print('[VNCFramePainter] Scale: ${scale.toStringAsFixed(3)}, Scaled: ${scaledWidth.toInt()}x${scaledHeight.toInt()}, Offset: ${offsetX.toInt()},${offsetY.toInt()}');
+    }
+
+    try {
+      // Use pixel-by-pixel for better quality at any scale
+      _drawPixelByPixel(canvas, size, offsetX, offsetY, scale);
+    } catch (e) {
+      print('[VNCFramePainter] Error drawing pixels: $e');
+      // Fallback to simple drawing
+      _drawPixelByPixel(canvas, size, offsetX, offsetY, scale);
+    }
+  }
+
+  void _drawPixelByPixel(Canvas canvas, Size size, double offsetX, double offsetY, double scale) {
     final pixels = frameBuffer.pixels!;
     final width = frameBuffer.width;
     final height = frameBuffer.height;
 
-    print(
-        '[VNCFramePainter] Drawing pixels - FB: ${width}x${height}, Canvas: ${size.width}x${size.height}');
-
-    // Calculate scaling factors
-    final scaleX = size.width / width;
-    final scaleY = size.height / height;
-    final scale = scaleX < scaleY ? scaleX : scaleY; // Maintain aspect ratio
-
-    final offsetX = (size.width - width * scale) / 2;
-    final offsetY = (size.height - height * scale) / 2;
-
-    print('[VNCFramePainter] Scale: $scale, Offset: ($offsetX, $offsetY)');
-
-    // Draw pixels - sample every few pixels for performance when scaled down
-    final sampleRate = (scale < 0.5) ? (1 / scale).ceil() : 1;
-
-    print('[VNCFramePainter] Sample rate: $sampleRate');
+    // Optimize sample rate based on scale for better performance and quality
+    int sampleRate = 1;
+    if (scale < 0.7) sampleRate = 2;
+    if (scale < 0.4) sampleRate = 3;
+    if (scale < 0.25) sampleRate = 4;
 
     int pixelsDrawn = 0;
+    
     for (int y = 0; y < height; y += sampleRate) {
       for (int x = 0; x < width; x += sampleRate) {
-        final pixelOffset = (y * width + x) * 4; // RGBA format
+        final pixelOffset = (y * width + x) * 4; // BGRA format from server
 
         if (pixelOffset + 3 < pixels.length) {
-          final r = pixels[pixelOffset]; // Red
+          // VNC servers typically send BGRA format, but let's check both orders
+          final b = pixels[pixelOffset];     // Blue (first byte)
           final g = pixels[pixelOffset + 1]; // Green
-          final b = pixels[pixelOffset + 2]; // Blue
-          // final a = pixels[pixelOffset + 3]; // Alpha - not used, forcing full opacity
+          final r = pixels[pixelOffset + 2]; // Red  
+          // final a = pixels[pixelOffset + 3]; // Alpha - forcing full opacity
 
-          // Don't skip any pixels - draw everything for debugging
-          final color = Color.fromARGB(255, r, g, b); // Force alpha to 255
+          // Create color - try both RGB and BGR ordering
+          final color = Color.fromARGB(255, r, g, b); // RGB order
           final paint = Paint()..color = color;
 
-          // Draw scaled pixel
+          // Draw scaled pixel with better scaling for screen fit
           final pixelSize = scale * sampleRate;
           final rect = Rect.fromLTWH(
             offsetX + x * scale,
             offsetY + y * scale,
-            pixelSize < 1.0 ? 1.0 : pixelSize,
-            pixelSize < 1.0 ? 1.0 : pixelSize,
+            pixelSize.clamp(0.5, double.infinity), // Allow smaller pixels for better scaling
+            pixelSize.clamp(0.5, double.infinity),
           );
 
           canvas.drawRect(rect, paint);
@@ -1968,9 +2063,19 @@ class VNCFramePainter extends CustomPainter {
       }
     }
 
-    print('[VNCFramePainter] Drew $pixelsDrawn pixels');
+    // Only log pixel count every 10th paint call
+    if (_paintCallCount % 10 == 1) {
+      print('[VNCFramePainter] Drew $pixelsDrawn pixels (sample rate: $sampleRate)');
+    }
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    if (oldDelegate is VNCFramePainter) {
+      // Only repaint if the frame buffer actually changed
+      return oldDelegate.frameBuffer != frameBuffer ||
+             oldDelegate.frameBuffer.pixels != frameBuffer.pixels;
+    }
+    return true;
+  }
 }
