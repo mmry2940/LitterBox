@@ -1,8 +1,53 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'dart:convert';
+
+enum VNCConnectionState {
+  disconnected,
+  connecting,
+  connected,
+  disconnecting,
+  failed,
+}
+
+enum VNCScalingMode {
+  // Auto-fit modes (best for mobile)
+  autoFitWidth, // Automatically fit desktop width to screen width (scroll vertically if needed)
+  autoFitHeight, // Automatically fit desktop height to screen height (scroll horizontally if needed)
+  autoFitBest, // Automatically choose best fit between width/height (maintains aspect ratio)
+
+  // Traditional scaling modes
+  fitToScreen, // Fit entire desktop in screen with borders if needed
+  centerCrop, // Center desktop and crop excess (no black borders)
+  actualSize, // 1:1 pixel mapping (scrollable, may be too large)
+  stretchFit, // Stretch to fill screen (may distort aspect ratio)
+
+  // Zoom levels for high-DPI and accessibility
+  zoom50, // 1:2 pixel mapping (50% size, good for high DPI displays)
+  zoom75, // 3:4 pixel mapping (75% size, smaller but readable)
+  zoom125, // 5:4 pixel mapping (125% size, larger for readability)
+  zoom150, // 3:2 pixel mapping (150% size, larger for accessibility)
+  zoom200, // 2:1 pixel mapping (200% size, double size)
+
+  // Smart scaling modes for Android
+  smartFitLandscape, // Optimized for landscape tablets (fit width, crop height)
+  smartFitPortrait, // Optimized for portrait phones (fit height, crop width)
+  remoteResize, // Request server to resize to match client (if supported)
+}
+
+enum VNCInputMode {
+  directTouch, // Touch directly where you tap (like native touch screen)
+  trackpadMode, // Finger moves cursor, tap to click (like laptop trackpad)
+  directTouchWithZoom, // Direct touch with pinch-to-zoom support
+}
+
+enum VNCResolutionMode {
+  fixed, // Use server's fixed resolution
+  dynamic, // Request resolution changes to fit client window
+}
 
 /// A basic VNC client implementing the RFB protocol
 /// This is a simplified implementation inspired by dart_vnc
@@ -1269,8 +1314,8 @@ class VNCClient {
       _updateState(VNCConnectionState.connected);
       _log('DEBUG: Connection state set to connected, state is now: $_state');
 
-      // Set up pixel format (use 16-bit RGB565 for performance)
-      await _setPixelFormat();
+      // Set up pixel format (comment out to use server's default)
+      // await _setPixelFormat();
 
       // Set encodings
       await _setEncodings();
@@ -1284,30 +1329,6 @@ class VNCClient {
       _state = VNCConnectionState.failed;
       _stateController.add(_state);
     }
-  }
-
-  // Set pixel format to 16-bit RGB565
-  Future<void> _setPixelFormat() async {
-    final setPixelFormat = Uint8List(20);
-    setPixelFormat[0] = 0; // SetPixelFormat message type
-
-    // Pixel format (16-bit RGB565)
-    setPixelFormat[4] = 16; // bits-per-pixel
-    setPixelFormat[5] = 16; // depth
-    setPixelFormat[6] = 0; // big-endian-flag
-    setPixelFormat[7] = 1; // true-color-flag
-    setPixelFormat[8] = 0; // red-max high byte
-    setPixelFormat[9] = 31; // red-max low byte (31)
-    setPixelFormat[10] = 0; // green-max high byte
-    setPixelFormat[11] = 63; // green-max low byte (63)
-    setPixelFormat[12] = 0; // blue-max high byte
-    setPixelFormat[13] = 31; // blue-max low byte (31)
-    setPixelFormat[14] = 11; // red-shift
-    setPixelFormat[15] = 5; // green-shift
-    setPixelFormat[16] = 0; // blue-shift
-
-    _socket!.add(setPixelFormat);
-    _log('Set pixel format to 16-bit RGB565');
   }
 
   // Set supported encodings
@@ -1366,7 +1387,13 @@ class VNCClient {
 
   void _processServerMessages() {
     // Process all complete messages in the buffer
-    while (_buffer.isNotEmpty) {
+    int iterations = 0;
+    while (_buffer.isNotEmpty && iterations < 5) {
+      // Add safety limit
+      iterations++;
+      _log(
+          'Processing iteration $iterations, buffer length: ${_buffer.length}');
+
       if (_buffer.isEmpty) return;
 
       final messageType = _buffer[0];
@@ -1374,7 +1401,10 @@ class VNCClient {
 
       switch (messageType) {
         case 0: // FramebufferUpdate
-          if (_buffer.length < 4) return; // Need at least header
+          if (_buffer.length < 4) {
+            _log('Insufficient data for FramebufferUpdate header, waiting...');
+            return; // Need at least header
+          }
           final numberOfRectangles = (_buffer[2] << 8) | _buffer[3];
           messageLength = _calculateFramebufferUpdateLength(numberOfRectangles);
           break;
@@ -1400,32 +1430,54 @@ class VNCClient {
           _log(
               'Buffer first 16 bytes: ${_buffer.take(16).map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}').join(' ')}');
           _log('Buffer length: ${_buffer.length}');
-          
+
           // If we have a small buffer with unknown message types, it might be leftover pixel data
           // Clear the buffer and wait for the next proper message
-          if (_buffer.length <= 32) {
-            _log('Small buffer with unknown message type, clearing buffer to resync');
+          if (_buffer.length <= 128) {
+            // Increased threshold for safety
+            _log(
+                'Small buffer with unknown message type, clearing buffer to resync');
             _buffer.clear();
             return;
           }
-          
-          // Skip this byte and try to resync
+
+          // Skip this byte and try to resync, but if we skip too many bytes, clear the buffer
           _buffer.removeAt(0);
+          if (iterations > 3) {
+            _log('Too many unknown bytes, clearing buffer completely');
+            _buffer.clear();
+            return;
+          }
           continue;
       }
 
-      if (messageLength == 0 || _buffer.length < messageLength) {
+      if (messageLength == 0) {
+        _log('Message length calculation returned 0, insufficient data');
+        return; // Wait for more data
+      }
+
+      if (_buffer.length < messageLength) {
+        _log(
+            'Insufficient buffer data: have ${_buffer.length}, need $messageLength');
         return; // Wait for more data
       }
 
       // Extract and process the complete message
+      _log('Extracting message: type=$messageType, length=$messageLength');
       final messageData =
           Uint8List.fromList(_buffer.take(messageLength).toList());
       _buffer.removeRange(0, messageLength);
 
-      _log('Processing message type $messageType, length $messageLength, remaining buffer: ${_buffer.length}');
+      _log(
+          'Processing message type $messageType, length $messageLength, remaining buffer: ${_buffer.length}');
 
       _handleServerMessage(messageData);
+
+      _log('Message processed, buffer length now: ${_buffer.length}');
+    }
+
+    if (iterations >= 5) {
+      _log('Warning: Processing loop hit iteration limit, may be stuck');
     }
   }
 
@@ -1460,9 +1512,11 @@ class VNCClient {
       offset += 12;
 
       if (encoding == 0) {
-        // Raw encoding - calculate pixel data size
-        final pixelDataSize = width * height * 4; // Server sends 32bpp
-        _log('Adding $pixelDataSize bytes of pixel data for rectangle $i');
+        // Raw encoding - calculate pixel data size based on actual server format
+        final bytesPerPixel = _frameBuffer?.pixelFormat.bitsPerPixel ?? 32;
+        final pixelDataSize = width * height * (bytesPerPixel ~/ 8);
+        _log(
+            'Adding $pixelDataSize bytes of pixel data for rectangle $i (${bytesPerPixel}bpp)');
         length += pixelDataSize;
         offset += pixelDataSize;
       } else {
@@ -1566,6 +1620,15 @@ class VNCClient {
 
           // Update frame buffer with this rectangle
           _updateFrameBufferRectangle(x, y, width, height, pixels);
+
+          // Validate we consumed all the expected data for this rectangle
+          if (i == 0) {
+            // Only log for first rectangle to avoid spam
+            _log(
+                'Server pixel format: ${_frameBuffer?.pixelFormat.bitsPerPixel ?? 0}bpp, ${(_frameBuffer?.pixelFormat.bitsPerPixel ?? 32) ~/ 8} bytes per pixel');
+            _log(
+                'Expected pixel data: ${width * height * ((_frameBuffer?.pixelFormat.bitsPerPixel ?? 32) ~/ 8)} bytes, got: ${pixels.length} bytes');
+          }
 
           // Notify UI of update
           final update = VNCFrameUpdate(
@@ -1717,14 +1780,6 @@ class VNCClient {
   }
 }
 
-enum VNCConnectionState {
-  disconnected,
-  connecting,
-  connected,
-  disconnecting,
-  failed,
-}
-
 class VNCFrameBuffer {
   final int width;
   final int height;
@@ -1780,13 +1835,40 @@ class VNCFrameUpdate {
 /// Widget for displaying VNC client content
 class VNCClientWidget extends StatefulWidget {
   final VNCClient client;
+  final VNCScalingMode scalingMode;
+  final VNCInputMode inputMode;
+  final VNCResolutionMode resolutionMode;
+  final VoidCallback?
+      onDisconnectRequest; // Callback when user wants to disconnect
+  static int _instanceCount = 0; // Track active instances
+  static _VNCClientWidgetState?
+      _activeInstance; // Track the currently active instance
 
-  const VNCClientWidget({super.key, required this.client});
+  const VNCClientWidget({
+    super.key,
+    required this.client,
+    this.scalingMode = VNCScalingMode.fitToScreen,
+    this.inputMode = VNCInputMode.directTouch,
+    this.resolutionMode = VNCResolutionMode.fixed,
+    this.onDisconnectRequest,
+  });
 
   @override
   State<VNCClientWidget> createState() {
-    print('[VNCClientWidget] Creating new state instance');
-    return _VNCClientWidgetState();
+    _instanceCount++;
+    print(
+        '[VNCClientWidget] Creating new state instance (#$_instanceCount total)');
+    final state = _VNCClientWidgetState();
+
+    // If there's already an active instance, dispose it first
+    if (_activeInstance != null) {
+      print(
+          '[VNCClientWidget] Warning: Disposing previous active instance to prevent multiple widgets');
+      _activeInstance!._disposeStreams();
+    }
+
+    _activeInstance = state;
+    return state;
   }
 }
 
@@ -1796,14 +1878,22 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
   StreamSubscription<VNCConnectionState>? _connectionStateSubscription;
   StreamSubscription<VNCFrameUpdate>? _frameUpdateSubscription;
 
+  // Input mode and zoom state
+  double _zoomLevel = 1.0;
+  Offset _panOffset = Offset.zero;
+  Offset? _cursorPosition; // For trackpad mode
+  bool _showToolbar = false;
+
   @override
   void initState() {
     super.initState();
     print('[VNCClientWidget] initState called - Widget ${widget.hashCode}');
 
-    _connectionStateSubscription = widget.client.connectionState.listen((state) {
+    _connectionStateSubscription =
+        widget.client.connectionState.listen((state) {
       print('[VNCClientWidget] State change: $state');
-      if (mounted) {  // Check if widget is still mounted
+      if (mounted) {
+        // Check if widget is still mounted
         setState(() {
           _connectionState = state;
         });
@@ -1811,8 +1901,8 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
     });
 
     _frameUpdateSubscription = widget.client.frameUpdates.listen((update) {
-      print('[VNCClientWidget] Frame update received');
-      if (mounted) {  // Check if widget is still mounted
+      if (mounted) {
+        // Check if widget is still mounted
         setState(() {
           _frameBuffer = widget.client.frameBuffer;
         });
@@ -1820,118 +1910,511 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
     });
   }
 
-  @override
-  void dispose() {
-    print('[VNCClientWidget] dispose called - Widget ${widget.hashCode}');
+  /// Helper method to dispose streams without calling super.dispose()
+  void _disposeStreams() {
+    print(
+        '[VNCClientWidget] _disposeStreams called - cleaning up subscriptions');
     _connectionStateSubscription?.cancel();
     _frameUpdateSubscription?.cancel();
+    _connectionStateSubscription = null;
+    _frameUpdateSubscription = null;
+  }
+
+  @override
+  void dispose() {
+    VNCClientWidget._instanceCount--;
+    print(
+        '[VNCClientWidget] dispose called - Widget ${widget.hashCode}, remaining instances: ${VNCClientWidget._instanceCount}');
+
+    // Clear the active instance reference if this is the active one
+    if (VNCClientWidget._activeInstance == this) {
+      VNCClientWidget._activeInstance = null;
+    }
+
+    _disposeStreams();
     super.dispose();
   }
 
   /// Maps touch coordinates from the widget space to VNC coordinates
-  Offset _mapTouchCoordinates(Offset touchPosition, BuildContext context) {
+  Offset _mapTouchCoordinates(
+      Offset touchPosition, BuildContext context, Size size) {
     if (_frameBuffer == null) return touchPosition;
-    
-    // Get the render box to calculate the actual display size
-    final RenderBox? renderBox = context.findRenderObject() as RenderBox?;
-    if (renderBox == null) return touchPosition;
-    
-    final size = renderBox.size;
+
     final width = _frameBuffer!.width.toDouble();
     final height = _frameBuffer!.height.toDouble();
-    
+
     // Calculate the same scaling factors used in VNCFramePainter
-    final scaleX = size.width / width;
-    final scaleY = size.height / height;
-    final scale = scaleX < scaleY ? scaleX : scaleY;
-    
-    final scaledWidth = width * scale;
-    final scaledHeight = height * scale;
-    final offsetX = (size.width - scaledWidth) / 2;
-    final offsetY = (size.height - scaledHeight) / 2;
-    
+    double scaleX, scaleY, offsetX, offsetY;
+
+    switch (widget.scalingMode) {
+      case VNCScalingMode.fitToScreen:
+        // Fit entire desktop in screen with black borders if needed
+        final scale = (size.width / width) < (size.height / height)
+            ? size.width / width
+            : size.height / height;
+        final scaledWidth = width * scale;
+        final scaledHeight = height * scale;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        scaleX = scaleY = scale;
+        break;
+
+      case VNCScalingMode.centerCrop:
+        // Center desktop and crop excess
+        final scale = (size.width / width) > (size.height / height)
+            ? size.width / width
+            : size.height / height;
+        final scaledWidth = width * scale;
+        final scaledHeight = height * scale;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        scaleX = scaleY = scale;
+        break;
+
+      case VNCScalingMode.actualSize:
+        // 1:1 pixel mapping
+        offsetX = (size.width - width) / 2;
+        offsetY = (size.height - height) / 2;
+        scaleX = scaleY = 1.0;
+        break;
+
+      // Auto-fit modes
+      case VNCScalingMode.autoFitWidth:
+        // Fit width, maintain aspect ratio
+        scaleX = scaleY = size.width / width;
+        final scaledHeight = height * scaleY;
+        offsetX = 0;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.autoFitHeight:
+        // Fit height, maintain aspect ratio
+        scaleX = scaleY = size.height / height;
+        final scaledWidth = width * scaleX;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = 0;
+        break;
+
+      case VNCScalingMode.autoFitBest:
+        // Choose best fit dimension
+        final scaleW = size.width / width;
+        final scaleH = size.height / height;
+        scaleX = scaleY = math.min(scaleW, scaleH);
+        final scaledWidth = width * scaleX;
+        final scaledHeight = height * scaleY;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      // Zoom levels
+      case VNCScalingMode.zoom50:
+        // 50% zoom
+        final scaledWidth = width * 0.5;
+        final scaledHeight = height * 0.5;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        scaleX = scaleY = 0.5;
+        break;
+
+      case VNCScalingMode.zoom75:
+        // 75% zoom
+        final scaledWidth = width * 0.75;
+        final scaledHeight = height * 0.75;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        scaleX = scaleY = 0.75;
+        break;
+
+      case VNCScalingMode.zoom125:
+        // 125% zoom
+        final scaledWidth = width * 1.25;
+        final scaledHeight = height * 1.25;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        scaleX = scaleY = 1.25;
+        break;
+
+      case VNCScalingMode.zoom150:
+        // 150% zoom
+        final scaledWidth = width * 1.5;
+        final scaledHeight = height * 1.5;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        scaleX = scaleY = 1.5;
+        break;
+
+      case VNCScalingMode.zoom200:
+        // 200% zoom (double size, centered)
+        final scaledWidth = width * 2.0;
+        final scaledHeight = height * 2.0;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        scaleX = scaleY = 2.0;
+        break;
+
+      // Smart scaling modes for Android
+      case VNCScalingMode.smartFitLandscape:
+        // Fit width for landscape, crop height if needed
+        scaleX = scaleY = size.width / width;
+        final scaledHeight = height * scaleY;
+        offsetX = 0;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.smartFitPortrait:
+        // Fit height for portrait, crop width if needed
+        scaleX = scaleY = size.height / height;
+        final scaledWidth = width * scaleX;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = 0;
+        break;
+
+      case VNCScalingMode.remoteResize:
+        // Request server to resize (same as fit for display)
+        final scaleW = size.width / width;
+        final scaleH = size.height / height;
+        scaleX = scaleY = math.min(scaleW, scaleH);
+        final scaledWidth = width * scaleX;
+        final scaledHeight = height * scaleY;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.stretchFit:
+        // Stretch to fill entire display
+        scaleX = size.width / width;
+        scaleY = size.height / height;
+        offsetX = offsetY = 0;
+        break;
+    }
+
+    // Apply zoom level
+    scaleX *= _zoomLevel;
+    scaleY *= _zoomLevel;
+
+    // Apply pan offset
+    offsetX += _panOffset.dx;
+    offsetY += _panOffset.dy;
+
     // Map touch coordinates to VNC coordinates
-    final vncX = ((touchPosition.dx - offsetX) / scale).clamp(0.0, width - 1);
-    final vncY = ((touchPosition.dy - offsetY) / scale).clamp(0.0, height - 1);
-    
+    final vncX = ((touchPosition.dx - offsetX) / scaleX).clamp(0.0, width - 1);
+    final vncY = ((touchPosition.dy - offsetY) / scaleY).clamp(0.0, height - 1);
+
     return Offset(vncX, vncY);
+  }
+
+  Widget _buildInputHandler(Size size) {
+    switch (widget.inputMode) {
+      case VNCInputMode.directTouch:
+        return _buildDirectTouchHandler(size);
+      case VNCInputMode.trackpadMode:
+        return _buildTrackpadHandler(size);
+      case VNCInputMode.directTouchWithZoom:
+        return _buildDirectTouchWithZoomHandler(size);
+    }
+  }
+
+  Widget _buildDirectTouchHandler(Size size) {
+    return GestureDetector(
+      onTapDown: (details) {
+        final mappedCoords =
+            _mapTouchCoordinates(details.localPosition, context, size);
+        widget.client.sendPointerEvent(
+            mappedCoords.dx.round(), mappedCoords.dy.round(), 1); // Left click
+      },
+      onTapUp: (details) {
+        final mappedCoords =
+            _mapTouchCoordinates(details.localPosition, context, size);
+        widget.client.sendPointerEvent(
+            mappedCoords.dx.round(), mappedCoords.dy.round(), 0); // Release
+      },
+      onPanUpdate: (details) {
+        final mappedCoords =
+            _mapTouchCoordinates(details.localPosition, context, size);
+        widget.client.sendPointerEvent(
+            mappedCoords.dx.round(), mappedCoords.dy.round(), 1); // Drag
+      },
+      onPanEnd: (details) {
+        final mappedCoords =
+            _mapTouchCoordinates(details.localPosition, context, size);
+        widget.client.sendPointerEvent(
+            mappedCoords.dx.round(), mappedCoords.dy.round(), 0); // Release
+      },
+      child: Container(), // No CustomPaint here - will be handled by parent
+    );
+  }
+
+  Widget _buildTrackpadHandler(Size size) {
+    return GestureDetector(
+      onPanUpdate: (details) {
+        // In trackpad mode, pan moves the cursor
+        setState(() {
+          if (_cursorPosition == null) {
+            _cursorPosition = details.localPosition;
+          } else {
+            _cursorPosition = _cursorPosition! + details.delta;
+          }
+        });
+
+        // Send mouse move event
+        final mappedCoords =
+            _mapTouchCoordinates(_cursorPosition!, context, size);
+        widget.client.sendPointerEvent(
+            mappedCoords.dx.round(), mappedCoords.dy.round(), 0); // Move only
+      },
+      onTap: () {
+        // Tap to click at cursor position
+        if (_cursorPosition != null) {
+          final mappedCoords =
+              _mapTouchCoordinates(_cursorPosition!, context, size);
+          widget.client.sendPointerEvent(
+              mappedCoords.dx.round(), mappedCoords.dy.round(), 1); // Click
+
+          // Release after short delay
+          Future.delayed(const Duration(milliseconds: 50), () {
+            widget.client.sendPointerEvent(
+                mappedCoords.dx.round(), mappedCoords.dy.round(), 0); // Release
+          });
+        }
+      },
+      child: Stack(
+        children: [
+          Container(), // No CustomPaint here - will be handled by parent
+          // Draw cursor
+          if (_cursorPosition != null)
+            Positioned(
+              left: _cursorPosition!.dx - 8,
+              top: _cursorPosition!.dy - 8,
+              child: Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  border: Border.all(color: Colors.black, width: 1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.mouse, size: 12),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDirectTouchWithZoomHandler(Size size) {
+    return GestureDetector(
+      onScaleStart: (details) {
+        // Scale gesture started
+      },
+      onScaleUpdate: (details) {
+        setState(() {
+          // Handle zoom
+          _zoomLevel = (_zoomLevel * details.scale).clamp(0.5, 4.0);
+
+          // Handle pan
+          _panOffset += details.focalPointDelta;
+        });
+      },
+      onTapDown: (details) {
+        if (_zoomLevel == 1.0 && _panOffset == Offset.zero) {
+          // Normal direct touch when not zoomed
+          final mappedCoords =
+              _mapTouchCoordinates(details.localPosition, context, size);
+          widget.client.sendPointerEvent(mappedCoords.dx.round(),
+              mappedCoords.dy.round(), 1); // Left click
+        }
+      },
+      onTapUp: (details) {
+        if (_zoomLevel == 1.0 && _panOffset == Offset.zero) {
+          // Normal direct touch when not zoomed
+          final mappedCoords =
+              _mapTouchCoordinates(details.localPosition, context, size);
+          widget.client.sendPointerEvent(
+              mappedCoords.dx.round(), mappedCoords.dy.round(), 0); // Release
+        }
+      },
+      child: Transform(
+        transform: Matrix4.identity()
+          ..scale(_zoomLevel)
+          ..translate(_panOffset.dx / _zoomLevel, _panOffset.dy / _zoomLevel),
+        child: Container(), // No CustomPaint here - will be handled by parent
+      ),
+    );
+  }
+
+  Widget _buildConnectionStatusOverlay() {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.8),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (_connectionState == VNCConnectionState.connecting) ...[
+              const CircularProgressIndicator(color: Colors.white),
+              const SizedBox(height: 16),
+              const Text(
+                'Connecting to VNC server...',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ] else if (_connectionState == VNCConnectionState.failed) ...[
+              const Icon(Icons.error, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              const Text(
+                'Connection failed',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ] else if (_connectionState == VNCConnectionState.disconnected) ...[
+              const Icon(Icons.link_off, color: Colors.grey, size: 48),
+              const SizedBox(height: 16),
+              const Text(
+                'Disconnected',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVNCToolbar() {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        height: _showToolbar ? 60 : 30,
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.8),
+          borderRadius: const BorderRadius.only(
+            bottomLeft: Radius.circular(12),
+            bottomRight: Radius.circular(12),
+          ),
+        ),
+        child: Row(
+          children: [
+            // Toolbar toggle button
+            IconButton(
+              icon: Icon(
+                _showToolbar
+                    ? Icons.keyboard_arrow_up
+                    : Icons.keyboard_arrow_down,
+                color: Colors.white,
+              ),
+              onPressed: () {
+                setState(() {
+                  _showToolbar = !_showToolbar;
+                });
+              },
+            ),
+
+            if (_showToolbar) ...[
+              // 1:1 Resolution button for dynamic resolution
+              if (widget.resolutionMode == VNCResolutionMode.dynamic)
+                IconButton(
+                  icon: const Icon(Icons.aspect_ratio, color: Colors.white),
+                  onPressed: () {
+                    // TODO: Implement dynamic resolution request
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Dynamic resolution request sent')),
+                    );
+                  },
+                  tooltip: '1:1 Resolution',
+                ),
+
+              // Input mode indicator
+              IconButton(
+                icon: Icon(
+                  widget.inputMode == VNCInputMode.directTouch
+                      ? Icons.touch_app
+                      : widget.inputMode == VNCInputMode.trackpadMode
+                          ? Icons.mouse
+                          : Icons.zoom_in,
+                  color: Colors.white,
+                ),
+                onPressed: () {
+                  // TODO: Show input mode options
+                },
+                tooltip: widget.inputMode == VNCInputMode.directTouch
+                    ? 'Direct Touch'
+                    : widget.inputMode == VNCInputMode.trackpadMode
+                        ? 'Trackpad Mode'
+                        : 'Touch with Zoom',
+              ),
+
+              const Spacer(),
+
+              // Disconnect button
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: widget.onDisconnectRequest,
+                tooltip: 'Disconnect',
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return ColoredBox(
       color: Colors.black,
       child: Stack(
         children: [
-          // Always show the frame buffer if available, regardless of connection state
-          // The viewer screen handles its own overlays when needed
-          if (_frameBuffer != null)
-            Positioned.fill(
-              child: GestureDetector(
-                onTapDown: (details) {
-                  // Map touch coordinates to VNC coordinates
-                  final mappedCoords = _mapTouchCoordinates(details.localPosition, context);
-                  widget.client.sendPointerEvent(mappedCoords.dx.round(), mappedCoords.dy.round(), 1); // Left click
-                },
-                onTapUp: (details) {
-                  // Map touch coordinates to VNC coordinates  
-                  final mappedCoords = _mapTouchCoordinates(details.localPosition, context);
-                  widget.client.sendPointerEvent(mappedCoords.dx.round(), mappedCoords.dy.round(), 0); // Release
-                },
-                onPanUpdate: (details) {
-                  // Handle drag events
-                  final mappedCoords = _mapTouchCoordinates(details.localPosition, context);
-                  widget.client.sendPointerEvent(mappedCoords.dx.round(), mappedCoords.dy.round(), 1); // Drag
-                },
-                onPanEnd: (details) {
-                  // End drag
-                  final mappedCoords = _mapTouchCoordinates(details.localPosition, context);
-                  widget.client.sendPointerEvent(mappedCoords.dx.round(), mappedCoords.dy.round(), 0); // Release
-                },
-                child: CustomPaint(
-                  painter: VNCFramePainter(_frameBuffer!),
-                  child: Container(), // Ensure the painter fills the area
-                ),
-              ),
-            ),
+          // Main VNC display
+          LayoutBuilder(
+            builder: (context, constraints) {
+              // Handle Android screen constraints more robustly
+              final screenSize = MediaQuery.of(context).size;
+              final safeArea = MediaQuery.of(context).padding;
 
-          // Only show connection status overlay when no frame buffer is available
-          // This prevents overlay from showing over the remote display
-          if (_frameBuffer == null && _connectionState != VNCConnectionState.connected)
-            Container(
-              color: Colors.black.withValues(alpha: 0.8),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+              // Calculate available space considering safe areas (status bar, navigation bar)
+              final availableWidth = constraints.maxWidth.isFinite
+                  ? constraints.maxWidth
+                  : screenSize.width;
+              final availableHeight = constraints.maxHeight.isFinite
+                  ? constraints.maxHeight
+                  : screenSize.height - safeArea.top - safeArea.bottom;
+
+              final size = Size(
+                availableWidth.clamp(
+                    320.0, 2048.0), // Min 320px, max 2048px for Android
+                availableHeight.clamp(
+                    240.0, 2048.0), // Min 240px, max 2048px for Android
+              );
+
+              return SizedBox(
+                width: size.width,
+                height: size.height,
+                child: Stack(
                   children: [
-                    if (_connectionState == VNCConnectionState.connecting) ...[
-                      const CircularProgressIndicator(color: Colors.white),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Connecting to VNC server...',
-                        style: TextStyle(color: Colors.white, fontSize: 16),
+                    // Single VNC display painter - prevents multiple rendering
+                    if (_frameBuffer != null)
+                      CustomPaint(
+                        painter: VNCFramePainter(_frameBuffer!,
+                            scalingMode: widget.scalingMode),
+                        size: size,
                       ),
-                    ] else if (_connectionState ==
-                        VNCConnectionState.failed) ...[
-                      const Icon(Icons.error, color: Colors.red, size: 48),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Connection failed',
-                        style: TextStyle(color: Colors.white, fontSize: 16),
-                      ),
-                    ] else if (_connectionState ==
-                        VNCConnectionState.disconnected) ...[
-                      const Icon(Icons.link_off, color: Colors.grey, size: 48),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Disconnected',
-                        style: TextStyle(color: Colors.white, fontSize: 16),
-                      ),
-                    ],
+
+                    // Input handling overlay
+                    if (_frameBuffer != null) _buildInputHandler(size),
+
+                    // Connection status overlay (only when no frame buffer)
+                    if (_frameBuffer == null &&
+                        _connectionState != VNCConnectionState.connected)
+                      _buildConnectionStatusOverlay(),
                   ],
                 ),
-              ),
-            ),
+              );
+            },
+          ),
+
+          // VNC Toolbar
+          if (_frameBuffer != null) _buildVNCToolbar(),
         ],
       ),
     );
@@ -1940,18 +2423,21 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
 
 class VNCFramePainter extends CustomPainter {
   final VNCFrameBuffer frameBuffer;
+  final VNCScalingMode scalingMode;
   static int _paintCallCount = 0;
 
-  VNCFramePainter(this.frameBuffer);
+  VNCFramePainter(this.frameBuffer,
+      {this.scalingMode = VNCScalingMode.fitToScreen});
 
   @override
   void paint(Canvas canvas, Size size) {
     _paintCallCount++;
-    
-    // Reduced debug output - only log every 10th paint call to avoid spam
-    if (_paintCallCount % 10 == 1) {
-      print(
-          '[VNCFramePainter] Paint #$_paintCallCount - Canvas: ${size.width.toInt()}x${size.height.toInt()}, FB: ${frameBuffer.width}x${frameBuffer.height}');
+
+    // Ensure we have valid size constraints
+    if (!size.isFinite || size.isEmpty || size.width <= 0 || size.height <= 0) {
+      print('[VNCFramePainter] Invalid canvas size: $size, using fallback');
+      _drawFallbackDisplay(canvas, Size(800, 600)); // Use fallback size
+      return;
     }
 
     if (frameBuffer.pixels != null && frameBuffer.pixels!.isNotEmpty) {
@@ -1993,80 +2479,378 @@ class VNCFramePainter extends CustomPainter {
     final width = frameBuffer.width;
     final height = frameBuffer.height;
 
-    // Calculate scaling factors to fit screen
-    final scaleX = size.width / width;
-    final scaleY = size.height / height;
-    
-    // Use the smaller scale to maintain aspect ratio and fit within screen
-    final scale = scaleX < scaleY ? scaleX : scaleY;
+    // Fill the entire canvas with black background first to prevent artifacts
+    final backgroundPaint = Paint()..color = Colors.black;
+    canvas.drawRect(
+        Rect.fromLTWH(0, 0, size.width, size.height), backgroundPaint);
 
-    final scaledWidth = width * scale;
-    final scaledHeight = height * scale;
-    final offsetX = (size.width - scaledWidth) / 2;
-    final offsetY = (size.height - scaledHeight) / 2;
+    // Calculate scaling factors based on the selected scaling mode
+    double scale;
+    double scaledWidth, scaledHeight, offsetX, offsetY;
 
-    // Only log detailed info every 10th paint call
-    if (_paintCallCount % 10 == 1) {
-      print('[VNCFramePainter] Scale: ${scale.toStringAsFixed(3)}, Scaled: ${scaledWidth.toInt()}x${scaledHeight.toInt()}, Offset: ${offsetX.toInt()},${offsetY.toInt()}');
+    switch (scalingMode) {
+      case VNCScalingMode.fitToScreen:
+        // Fit entire desktop in screen with black borders if needed (best for Android)
+        final scaleX = size.width / width;
+        final scaleY = size.height / height;
+        scale = scaleX < scaleY
+            ? scaleX
+            : scaleY; // Use smaller scale to fit everything
+        scaledWidth = (width * scale).clamp(0.0, size.width);
+        scaledHeight = (height * scale).clamp(0.0, size.height);
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.centerCrop:
+        // Center desktop and crop excess (no black borders, optimized for mobile)
+        final scaleX = size.width / width;
+        final scaleY = size.height / height;
+        scale = scaleX > scaleY
+            ? scaleX
+            : scaleY; // Use larger scale to fill screen
+        scaledWidth = width * scale;
+        scaledHeight = height * scale;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.actualSize:
+        // Display at 100% scale (1:1 pixel mapping, may require scrolling)
+        scale = 1.0;
+        scaledWidth = width.toDouble();
+        scaledHeight = height.toDouble();
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      // Auto-fit modes
+      case VNCScalingMode.autoFitWidth:
+        // Fit width, maintain aspect ratio
+        scale = size.width / width;
+        scaledWidth = size.width;
+        scaledHeight = height * scale;
+        offsetX = 0;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.autoFitHeight:
+        // Fit height, maintain aspect ratio
+        scale = size.height / height;
+        scaledWidth = width * scale;
+        scaledHeight = size.height;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = 0;
+        break;
+
+      case VNCScalingMode.autoFitBest:
+        // Choose best fit dimension
+        final scaleW = size.width / width;
+        final scaleH = size.height / height;
+        scale = math.min(scaleW, scaleH);
+        scaledWidth = width * scale;
+        scaledHeight = height * scale;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      // Zoom levels
+      case VNCScalingMode.zoom50:
+        // Display at 50% scale
+        scale = 0.5;
+        scaledWidth = width * 0.5;
+        scaledHeight = height * 0.5;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.zoom75:
+        // Display at 75% scale
+        scale = 0.75;
+        scaledWidth = width * 0.75;
+        scaledHeight = height * 0.75;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.zoom125:
+        // Display at 125% scale
+        scale = 1.25;
+        scaledWidth = width * 1.25;
+        scaledHeight = height * 1.25;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.zoom150:
+        // Display at 150% scale
+        scale = 1.5;
+        scaledWidth = width * 1.5;
+        scaledHeight = height * 1.5;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.zoom200:
+        // Display at 200% scale (double size, centered)
+        scale = 2.0;
+        scaledWidth = width * 2.0;
+        scaledHeight = height * 2.0;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      // Smart scaling modes for Android
+      case VNCScalingMode.smartFitLandscape:
+        // Fit width for landscape, crop height if needed
+        scale = size.width / width;
+        scaledWidth = size.width;
+        scaledHeight = height * scale;
+        offsetX = 0;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.smartFitPortrait:
+        // Fit height for portrait, crop width if needed
+        scale = size.height / height;
+        scaledWidth = width * scale;
+        scaledHeight = size.height;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = 0;
+        break;
+
+      case VNCScalingMode.remoteResize:
+        // Request server to resize (same as fit for display)
+        final scaleW = size.width / width;
+        final scaleH = size.height / height;
+        scale = math.min(scaleW, scaleH);
+        scaledWidth = width * scale;
+        scaledHeight = height * scale;
+        offsetX = (size.width - scaledWidth) / 2;
+        offsetY = (size.height - scaledHeight) / 2;
+        break;
+
+      case VNCScalingMode.stretchFit:
+        // Stretch to fill entire display (may distort aspect ratio)
+        final scaleX = size.width / width;
+        final scaleY = size.height / height;
+        _drawStretchedFrameBuffer(canvas, size, scaleX, scaleY);
+        return; // Early return for stretch mode
     }
 
     try {
-      // Use pixel-by-pixel for better quality at any scale
-      _drawPixelByPixel(canvas, size, offsetX, offsetY, scale);
+      // Use improved scaling with bounds checking
+      _drawScaledFrameBuffer(
+          canvas, size, offsetX, offsetY, scale, scaledWidth, scaledHeight);
     } catch (e) {
       print('[VNCFramePainter] Error drawing pixels: $e');
-      // Fallback to simple drawing
-      _drawPixelByPixel(canvas, size, offsetX, offsetY, scale);
+      // Fallback to simple centered rectangle
+      _drawFallbackDisplay(canvas, size);
     }
   }
 
-  void _drawPixelByPixel(Canvas canvas, Size size, double offsetX, double offsetY, double scale) {
+  void _drawScaledFrameBuffer(Canvas canvas, Size size, double offsetX,
+      double offsetY, double scale, double scaledWidth, double scaledHeight) {
     final pixels = frameBuffer.pixels!;
     final width = frameBuffer.width;
     final height = frameBuffer.height;
 
-    // Optimize sample rate based on scale for better performance and quality
+    // Clear the entire canvas first to prevent any artifacts
+    final clearPaint = Paint()..color = Colors.black;
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), clearPaint);
+
+    // Strict bounds checking to prevent any drawing outside the intended area
+    final drawBounds = Rect.fromLTWH(
+      offsetX.clamp(0.0, size.width),
+      offsetY.clamp(0.0, size.height),
+      scaledWidth.clamp(0.0, size.width - offsetX.clamp(0.0, size.width)),
+      scaledHeight.clamp(0.0, size.height - offsetY.clamp(0.0, size.height)),
+    );
+
+    // Ensure we don't exceed the frame buffer dimensions
+    final maxDrawWidth = (drawBounds.width / scale).floor().clamp(0, width);
+    final maxDrawHeight = (drawBounds.height / scale).floor().clamp(0, height);
+
+    // Optimize sample rate for Android performance
     int sampleRate = 1;
-    if (scale < 0.7) sampleRate = 2;
-    if (scale < 0.4) sampleRate = 3;
-    if (scale < 0.25) sampleRate = 4;
+    if (scale < 0.8) sampleRate = 2; // < 80% scale
+    if (scale < 0.5) sampleRate = 3; // < 50% scale
+    if (scale < 0.3) sampleRate = 4; // < 30% scale
+    if (scale < 0.2) sampleRate = 6; // < 20% scale
 
     int pixelsDrawn = 0;
-    
-    for (int y = 0; y < height; y += sampleRate) {
-      for (int x = 0; x < width; x += sampleRate) {
-        final pixelOffset = (y * width + x) * 4; // BGRA format from server
+
+    // Draw pixels only within the calculated bounds - prevents tiling/repetition
+    // Use maxDrawWidth/Height to ensure we don't exceed the desktop dimensions
+    for (int y = 0; y < maxDrawHeight && y < height; y += sampleRate) {
+      final drawY = offsetY + y * scale;
+      if (drawY < drawBounds.top || drawY >= drawBounds.bottom) continue;
+
+      for (int x = 0; x < maxDrawWidth && x < width; x += sampleRate) {
+        final drawX = offsetX + x * scale;
+        if (drawX < drawBounds.left || drawX >= drawBounds.right) continue;
+
+        final pixelOffset = (y * width + x) * 4; // RGBA format in frame buffer
 
         if (pixelOffset + 3 < pixels.length) {
-          // VNC servers typically send BGRA format, but let's check both orders
-          final b = pixels[pixelOffset];     // Blue (first byte)
+          // Frame buffer is stored in RGBA format - read correctly
+          final r = pixels[pixelOffset]; // Red (first byte)
           final g = pixels[pixelOffset + 1]; // Green
-          final r = pixels[pixelOffset + 2]; // Red  
-          // final a = pixels[pixelOffset + 3]; // Alpha - forcing full opacity
+          final b = pixels[pixelOffset + 2]; // Blue
+          // Alpha ignored - force full opacity
 
-          // Create color - try both RGB and BGR ordering
-          final color = Color.fromARGB(255, r, g, b); // RGB order
+          final color = Color.fromARGB(255, r, g, b);
           final paint = Paint()..color = color;
 
-          // Draw scaled pixel with better scaling for screen fit
+          // Calculate pixel size with bounds checking
           final pixelSize = scale * sampleRate;
-          final rect = Rect.fromLTWH(
-            offsetX + x * scale,
-            offsetY + y * scale,
-            pixelSize.clamp(0.5, double.infinity), // Allow smaller pixels for better scaling
-            pixelSize.clamp(0.5, double.infinity),
-          );
+          final rectRight = (drawX + pixelSize).clamp(drawX, drawBounds.right);
+          final rectBottom =
+              (drawY + pixelSize).clamp(drawY, drawBounds.bottom);
+          final rectWidth = rectRight - drawX;
+          final rectHeight = rectBottom - drawY;
 
-          canvas.drawRect(rect, paint);
-          pixelsDrawn++;
+          if (rectWidth > 0.5 && rectHeight > 0.5) {
+            final rect = Rect.fromLTWH(drawX, drawY, rectWidth, rectHeight);
+            canvas.drawRect(rect, paint);
+            pixelsDrawn++;
+          }
         }
       }
     }
 
-    // Only log pixel count every 10th paint call
-    if (_paintCallCount % 10 == 1) {
-      print('[VNCFramePainter] Drew $pixelsDrawn pixels (sample rate: $sampleRate)');
+    // Only log pixel count every 30th paint call to reduce debug spam
+    if (_paintCallCount % 30 == 1) {
+      print(
+          '[VNCFramePainter] Drew $pixelsDrawn pixels (sample rate: $sampleRate, scale: ${scale.toStringAsFixed(2)}) within bounds ${drawBounds.width.toInt()}x${drawBounds.height.toInt()}');
     }
+  }
+
+  void _drawStretchedFrameBuffer(
+      Canvas canvas, Size size, double scaleX, double scaleY) {
+    final pixels = frameBuffer.pixels!;
+    final width = frameBuffer.width;
+    final height = frameBuffer.height;
+
+    // Optimize sample rate based on average scale for better performance
+    final avgScale = (scaleX + scaleY) / 2;
+    int sampleRate = 1;
+    if (avgScale < 0.7) sampleRate = 2;
+    if (avgScale < 0.4) sampleRate = 3;
+    if (avgScale < 0.25) sampleRate = 4;
+
+    int pixelsDrawn = 0;
+
+    // Draw with separate X and Y scaling (may distort aspect ratio)
+    for (int y = 0; y < height; y += sampleRate) {
+      final drawY = y * scaleY;
+      if (drawY >= size.height) break; // Stop if we exceed bounds
+
+      for (int x = 0; x < width; x += sampleRate) {
+        final drawX = x * scaleX;
+        if (drawX >= size.width) break; // Stop if we exceed bounds
+
+        final pixelOffset = (y * width + x) * 4; // RGBA format in frame buffer
+
+        if (pixelOffset + 3 < pixels.length) {
+          // Frame buffer is stored in RGBA format - read correctly
+          final r = pixels[pixelOffset]; // Red (first byte)
+          final g = pixels[pixelOffset + 1]; // Green
+          final b = pixels[pixelOffset + 2]; // Blue
+          // Alpha ignored - force full opacity
+
+          final color = Color.fromARGB(255, r, g, b);
+          final paint = Paint()..color = color;
+
+          // Calculate pixel size with separate scaling
+          final maxPixelWidth = math.max(0.5, size.width - drawX);
+          final maxPixelHeight = math.max(0.5, size.height - drawY);
+          final pixelWidth = (scaleX * sampleRate).clamp(0.5, maxPixelWidth);
+          final pixelHeight = (scaleY * sampleRate).clamp(0.5, maxPixelHeight);
+
+          if (pixelWidth > 0 &&
+              pixelHeight > 0 &&
+              drawX < size.width &&
+              drawY < size.height) {
+            final rect = Rect.fromLTWH(drawX, drawY, pixelWidth, pixelHeight);
+            canvas.drawRect(rect, paint);
+            pixelsDrawn++;
+          }
+        }
+      }
+    }
+
+    // Only log pixel count every 30th paint call
+    if (_paintCallCount % 30 == 1) {
+      print(
+          '[VNCFramePainter] Drew $pixelsDrawn pixels (sample rate: $sampleRate) with stretch scaling ${scaleX.toStringAsFixed(2)}x${scaleY.toStringAsFixed(2)}');
+    }
+  }
+
+  void _drawFallbackDisplay(Canvas canvas, Size size) {
+    // Draw a simple centered rectangle as fallback
+    final paint = Paint()
+      ..color = Colors.grey.shade800
+      ..style = PaintingStyle.fill;
+
+    final rect = Rect.fromCenter(
+      center: Offset(size.width / 2, size.height / 2),
+      width: size.width * 0.8,
+      height: size.height * 0.8,
+    );
+
+    canvas.drawRect(rect, paint);
+
+    // Draw error text
+    final textPainter = TextPainter(
+      text: const TextSpan(
+        text: 'VNC Display Error\nScaling Issue Detected',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    );
+
+    textPainter.layout();
+    textPainter.paint(
+        canvas,
+        Offset((size.width - textPainter.width) / 2,
+            (size.height - textPainter.height) / 2));
+  }
+
+  Size getSize(BoxConstraints constraints) {
+    // Return the intrinsic size of the frame buffer or use constraints
+    if (frameBuffer.width > 0 && frameBuffer.height > 0) {
+      final aspectRatio = frameBuffer.width / frameBuffer.height;
+      if (constraints.hasBoundedWidth && constraints.hasBoundedHeight) {
+        // Use available constraints and maintain aspect ratio
+        final width = constraints.maxWidth;
+        final height = constraints.maxHeight;
+        final constraintAspectRatio = width / height;
+
+        if (aspectRatio > constraintAspectRatio) {
+          // Frame buffer is wider
+          return Size(width, width / aspectRatio);
+        } else {
+          // Frame buffer is taller
+          return Size(height * aspectRatio, height);
+        }
+      } else if (constraints.hasBoundedWidth) {
+        return Size(constraints.maxWidth, constraints.maxWidth / aspectRatio);
+      } else if (constraints.hasBoundedHeight) {
+        return Size(constraints.maxHeight * aspectRatio, constraints.maxHeight);
+      }
+    }
+
+    // Fallback to constraint bounds or a reasonable default
+    return Size(
+      constraints.hasBoundedWidth ? constraints.maxWidth : 800,
+      constraints.hasBoundedHeight ? constraints.maxHeight : 600,
+    );
   }
 
   @override
@@ -2074,7 +2858,7 @@ class VNCFramePainter extends CustomPainter {
     if (oldDelegate is VNCFramePainter) {
       // Only repaint if the frame buffer actually changed
       return oldDelegate.frameBuffer != frameBuffer ||
-             oldDelegate.frameBuffer.pixels != frameBuffer.pixels;
+          oldDelegate.frameBuffer.pixels != frameBuffer.pixels;
     }
     return true;
   }

@@ -1,12 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import '../vnc_client.dart';
-import 'vnc_viewer_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+import '../vnc_client.dart'; // This includes VNCScalingMode, VNCInputMode, VNCResolutionMode
 
 enum VNCConnectionMode {
-  demo,
   webview, // noVNC via WebView
   native, // Native VNC client
+}
+
+class SavedVNCDevice {
+  final String name;
+  final String host;
+  final int port;
+  final String? password;
+
+  SavedVNCDevice({
+    required this.name,
+    required this.host,
+    required this.port,
+    this.password,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'host': host,
+        'port': port,
+        'password': password,
+      };
+
+  factory SavedVNCDevice.fromJson(Map<String, dynamic> json) => SavedVNCDevice(
+        name: json['name'],
+        host: json['host'],
+        port: json['port'],
+        password: json['password'],
+      );
 }
 
 class VNCScreen extends StatefulWidget {
@@ -37,9 +65,16 @@ class _VNCScreenState extends State<VNCScreen> {
 
   bool _isConnecting = false;
   String? _connectionError;
+  bool _showVncWidget = false;
+  VNCScalingMode _scalingMode = VNCScalingMode
+      .autoFitBest; // Auto-fit best dimension (recommended for Android)
+  VNCInputMode _inputMode = VNCInputMode.directTouch;
+  VNCResolutionMode _resolutionMode = VNCResolutionMode.fixed;
+  List<SavedVNCDevice> _savedDevices = [];
 
   WebViewController? _webViewController;
-  VNCConnectionMode _connectionMode = VNCConnectionMode.demo;
+  VNCConnectionMode _connectionMode =
+      VNCConnectionMode.native; // Set native as default
   VNCClient? _vncClient;
 
   @override
@@ -57,7 +92,125 @@ class _VNCScreenState extends State<VNCScreen> {
       _passwordController.text = widget.password!;
     }
 
+    _loadSavedDevices();
     _initializeWebView();
+  }
+
+  Future<void> _loadSavedDevices() async {
+    final prefs = await SharedPreferences.getInstance();
+    final devicesJson = prefs.getStringList('saved_vnc_devices') ?? [];
+    setState(() {
+      _savedDevices = devicesJson
+          .map((jsonStr) => SavedVNCDevice.fromJson(json.decode(jsonStr)))
+          .toList();
+    });
+  }
+
+  Future<void> _saveDevice(String name) async {
+    final host = _hostController.text.trim();
+    final port = int.tryParse(_vncPortController.text.trim()) ?? 5900;
+    final password = _passwordController.text;
+
+    if (host.isEmpty || name.isEmpty) return;
+
+    final device = SavedVNCDevice(
+      name: name,
+      host: host,
+      port: port,
+      password: password.isNotEmpty ? password : null,
+    );
+
+    // Remove existing device with same name
+    _savedDevices.removeWhere((d) => d.name == name);
+    // Add new device
+    _savedDevices.insert(0, device);
+
+    // Keep only last 10 devices
+    if (_savedDevices.length > 10) {
+      _savedDevices = _savedDevices.take(10).toList();
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final devicesJson =
+        _savedDevices.map((d) => json.encode(d.toJson())).toList();
+    await prefs.setStringList('saved_vnc_devices', devicesJson);
+
+    setState(() {});
+  }
+
+  Future<void> _loadDevice(SavedVNCDevice device) async {
+    setState(() {
+      _hostController.text = device.host;
+      _vncPortController.text = device.port.toString();
+      _passwordController.text = device.password ?? '';
+    });
+  }
+
+  Future<void> _deleteDevice(SavedVNCDevice device) async {
+    _savedDevices.remove(device);
+    final prefs = await SharedPreferences.getInstance();
+    final devicesJson =
+        _savedDevices.map((d) => json.encode(d.toJson())).toList();
+    await prefs.setStringList('saved_vnc_devices', devicesJson);
+    setState(() {});
+  }
+
+  void _disconnect() {
+    setState(() {
+      _showVncWidget = false;
+      _isConnecting = false;
+      _connectionError = null;
+    });
+    // Disconnect VNC client if connected
+    _vncClient?.disconnect();
+    _vncClient = null;
+  }
+
+  void _showSaveDeviceDialog() {
+    final nameController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Save VNC Device'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Device Name',
+                hintText: 'e.g., My Desktop, Office PC',
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Host: ${_hostController.text}\nPort: ${_vncPortController.text}',
+              style: const TextStyle(color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (nameController.text.trim().isNotEmpty) {
+                _saveDevice(nameController.text.trim());
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                      content: Text('Device "${nameController.text}" saved')),
+                );
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -138,66 +291,14 @@ class _VNCScreenState extends State<VNCScreen> {
       setState(() {
         _connectionError = null;
         _isConnecting = false;
+        _showVncWidget = true;
       });
-      print('DEBUG: WebView VNC connected, navigating to webview viewer screen');
-      
-      // Navigate to webview viewer screen
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => VNCViewerScreen(
-            host: host,
-            port: vncPort,
-            password: password.isNotEmpty ? password : null,
-            mode: VNCViewerMode.webview,
-            webViewController: _webViewController,
-          ),
-        ),
-      ).then((_) {
-        // When returning from viewer screen, reset state
-        setState(() {
-          _isConnecting = false;
-        });
-      });
+      print('DEBUG: WebView VNC connected, showing webview widget');
     }).catchError((error) {
       setState(() {
         _connectionError = 'Failed to load embedded noVNC: $error';
         _isConnecting = false;
-      });
-    });
-  }
-
-  // Demo mode connection - immediately navigates to demo viewer
-  void _connectWithDemo() {
-    print('DEBUG: _connectWithDemo called');
-    setState(() {
-      _isConnecting = true;
-      _connectionError = null;
-    });
-    print('DEBUG: Set _isConnecting to true');
-
-    // Simulate a brief connection delay
-    Future.delayed(const Duration(seconds: 1), () {
-      print('DEBUG: Delayed callback executing');
-      setState(() {
-        _isConnecting = false;
-      });
-      print('DEBUG: Demo VNC connected, navigating to demo viewer screen');
-      
-      // Navigate to demo viewer screen
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => VNCViewerScreen(
-            host: _hostController.text.isNotEmpty ? _hostController.text : 'demo.local',
-            port: int.tryParse(_vncPortController.text) ?? 5900,
-            password: _passwordController.text.isNotEmpty ? _passwordController.text : null,
-            mode: VNCViewerMode.demo,
-          ),
-        ),
-      ).then((_) {
-        // When returning from viewer screen, reset state
-        setState(() {
-          _isConnecting = false;
-        });
+        _showVncWidget = false;
       });
     });
   }
@@ -205,19 +306,77 @@ class _VNCScreenState extends State<VNCScreen> {
   // Helper methods for connection mode UI
   String _getConnectionModeDescription() {
     switch (_connectionMode) {
-      case VNCConnectionMode.demo:
-        return 'Interactive demo - no real server required';
       case VNCConnectionMode.webview:
         return 'Connect to noVNC server via WebView';
       case VNCConnectionMode.native:
-        return 'Native VNC client with direct socket connection';
+        return 'Native VNC client with direct socket connection (recommended)';
+    }
+  }
+
+  String _getScalingModeDescription() {
+    switch (_scalingMode) {
+      // Auto-fit modes (best for mobile)
+      case VNCScalingMode.autoFitWidth:
+        return 'Auto-fit width to screen (scroll vertically if needed) - Best for wide desktops';
+      case VNCScalingMode.autoFitHeight:
+        return 'Auto-fit height to screen (scroll horizontally if needed) - Best for tall content';
+      case VNCScalingMode.autoFitBest:
+        return 'Auto-fit best dimension (maintains aspect ratio) - Smart scaling for any content';
+
+      // Traditional scaling modes
+      case VNCScalingMode.fitToScreen:
+        return 'Fits entire remote desktop in screen with borders if needed';
+      case VNCScalingMode.centerCrop:
+        return 'Centers desktop and crops excess to fill screen completely';
+      case VNCScalingMode.actualSize:
+        return '1:1 pixel mapping - shows remote display at original size (may need scrolling)';
+      case VNCScalingMode.stretchFit:
+        return 'Stretches to fill entire screen (may distort aspect ratio)';
+
+      // Zoom levels for high-DPI and accessibility
+      case VNCScalingMode.zoom50:
+        return '50% zoom - Half size (good for high DPI displays)';
+      case VNCScalingMode.zoom75:
+        return '75% zoom - Three-quarter size (smaller but readable)';
+      case VNCScalingMode.zoom125:
+        return '125% zoom - Larger for better readability';
+      case VNCScalingMode.zoom150:
+        return '150% zoom - Much larger for accessibility';
+      case VNCScalingMode.zoom200:
+        return '200% zoom - Double size (centered)';
+
+      // Smart scaling modes for Android
+      case VNCScalingMode.smartFitLandscape:
+        return 'Smart fit for landscape tablets (fit width, crop height)';
+      case VNCScalingMode.smartFitPortrait:
+        return 'Smart fit for portrait phones (fit height, crop width)';
+      case VNCScalingMode.remoteResize:
+        return 'Request server to resize to match client (if server supports it)';
+    }
+  }
+
+  String _getInputModeDescription() {
+    switch (_inputMode) {
+      case VNCInputMode.directTouch:
+        return 'Touch directly where you want to click (like native touchscreen)';
+      case VNCInputMode.trackpadMode:
+        return 'Move cursor with finger, tap to click (like laptop trackpad)';
+      case VNCInputMode.directTouchWithZoom:
+        return 'Direct touch with pinch-to-zoom support';
+    }
+  }
+
+  String _getResolutionModeDescription() {
+    switch (_resolutionMode) {
+      case VNCResolutionMode.fixed:
+        return 'Use server\'s fixed resolution setting';
+      case VNCResolutionMode.dynamic:
+        return 'Request resolution changes to fit client window';
     }
   }
 
   VoidCallback? _getConnectFunction() {
     switch (_connectionMode) {
-      case VNCConnectionMode.demo:
-        return _connectWithDemo;
       case VNCConnectionMode.webview:
         return _connectWithEmbeddedNoVNC;
       case VNCConnectionMode.native:
@@ -227,8 +386,6 @@ class _VNCScreenState extends State<VNCScreen> {
 
   IconData _getConnectIcon() {
     switch (_connectionMode) {
-      case VNCConnectionMode.demo:
-        return Icons.play_arrow;
       case VNCConnectionMode.webview:
         return Icons.web;
       case VNCConnectionMode.native:
@@ -238,8 +395,6 @@ class _VNCScreenState extends State<VNCScreen> {
 
   String _getConnectButtonText() {
     switch (_connectionMode) {
-      case VNCConnectionMode.demo:
-        return 'Start Demo';
       case VNCConnectionMode.webview:
         return 'Connect via noVNC';
       case VNCConnectionMode.native:
@@ -249,8 +404,6 @@ class _VNCScreenState extends State<VNCScreen> {
 
   Color? _getConnectButtonColor() {
     switch (_connectionMode) {
-      case VNCConnectionMode.demo:
-        return Colors.green;
       case VNCConnectionMode.webview:
         return null;
       case VNCConnectionMode.native:
@@ -372,45 +525,32 @@ class _VNCScreenState extends State<VNCScreen> {
     // Set up connection state listener BEFORE connecting
     _vncClient!.connectionState.listen((state) {
       print('DEBUG: VNC connection state changed to: $state');
-      setState(() {
-        switch (state) {
-          case VNCConnectionState.connected:
-            print('DEBUG: Connection state is CONNECTED, navigating to VNC viewer screen');
-            _isConnecting = false;
-            
-            // Navigate to dedicated VNC viewer screen
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (context) => VNCViewerScreen(
-                  host: host,
-                  port: vncPort,
-                  password: password.isNotEmpty ? password : null,
-                  mode: VNCViewerMode.native,
-                  vncClient: _vncClient,
-                ),
-              ),
-            ).then((_) {
-              // When returning from viewer screen, reset state
-              setState(() {
-                _isConnecting = false;
-              });
-            });
-            break;
-          case VNCConnectionState.failed:
-            print('DEBUG: Connection state is FAILED');
-            _connectionError =
-                'Failed to connect to VNC server. If you see "Too many security failures", wait 5-10 minutes before retrying.';
-            _isConnecting = false;
-            break;
-          case VNCConnectionState.disconnected:
-            print('DEBUG: Connection state is DISCONNECTED');
-            _isConnecting = false;
-            break;
-          default:
-            print('DEBUG: Connection state is: $state');
-            break;
-        }
-      });
+      if (mounted) {
+        setState(() {
+          switch (state) {
+            case VNCConnectionState.connected:
+              print('DEBUG: Connection state is CONNECTED, showing VNC widget');
+              _isConnecting = false;
+              _showVncWidget = true;
+              break;
+            case VNCConnectionState.failed:
+              print('DEBUG: Connection state is FAILED');
+              _connectionError =
+                  'Failed to connect to VNC server. If you see "Too many security failures", wait 5-10 minutes before retrying.';
+              _isConnecting = false;
+              _showVncWidget = false;
+              break;
+            case VNCConnectionState.disconnected:
+              print('DEBUG: Connection state is DISCONNECTED');
+              _isConnecting = false;
+              _showVncWidget = false;
+              break;
+            default:
+              print('DEBUG: Connection state is: $state');
+              break;
+          }
+        });
+      }
     });
 
     // Add delay to avoid triggering VNC server security lockout
@@ -823,6 +963,47 @@ class _VNCScreenState extends State<VNCScreen> {
             style: TextStyle(color: Colors.grey),
           ),
           const SizedBox(height: 32),
+
+          // Saved Devices Section
+          if (_savedDevices.isNotEmpty) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Saved Devices',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    ..._savedDevices.map((device) => ListTile(
+                          leading: const Icon(Icons.devices),
+                          title: Text(device.name),
+                          subtitle: Text('${device.host}:${device.port}'),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit),
+                                onPressed: () => _loadDevice(device),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete),
+                                onPressed: () => _deleteDevice(device),
+                              ),
+                            ],
+                          ),
+                          onTap: () => _loadDevice(device),
+                        )),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
+
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16.0),
@@ -845,31 +1026,27 @@ class _VNCScreenState extends State<VNCScreen> {
                     ),
                     items: const [
                       DropdownMenuItem(
-                        value: VNCConnectionMode.demo,
-                        child: Text('Demo Mode (Simulation)'),
+                        value: VNCConnectionMode.native,
+                        child: Text('Native VNC Client (Recommended)'),
                       ),
                       DropdownMenuItem(
                         value: VNCConnectionMode.webview,
                         child: Text('noVNC (WebView)'),
-                      ),
-                      DropdownMenuItem(
-                        value: VNCConnectionMode.native,
-                        child: Text('Native VNC Client'),
                       ),
                     ],
                     onChanged: (VNCConnectionMode? value) {
                       if (value != null) {
                         setState(() {
                           _connectionMode = value;
-                          if (_connectionMode == VNCConnectionMode.demo) {
-                            _hostController.text = 'demo.local';
-                            _vncPortController.text = '5900';
-                          } else if (_connectionMode ==
-                              VNCConnectionMode.native) {
-                            _hostController.text = '';
+                          if (_connectionMode == VNCConnectionMode.native) {
+                            if (_hostController.text.isEmpty) {
+                              _hostController.text = '';
+                            }
                             _vncPortController.text = '5900';
                           } else {
-                            _hostController.text = '';
+                            if (_hostController.text.isEmpty) {
+                              _hostController.text = '';
+                            }
                             _vncPortController.text = '5900';
                           }
                         });
@@ -883,16 +1060,177 @@ class _VNCScreenState extends State<VNCScreen> {
                   ),
                   const SizedBox(height: 16),
 
+                  // Scaling Mode Dropdown (only show for native VNC)
+                  if (_connectionMode == VNCConnectionMode.native) ...[
+                    DropdownButtonFormField<VNCScalingMode>(
+                      value: _scalingMode,
+                      decoration: const InputDecoration(
+                        labelText: 'Display Scaling Mode',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.aspect_ratio),
+                      ),
+                      items: const [
+                        // Auto-fit modes (recommended for mobile)
+                        DropdownMenuItem(
+                          value: VNCScalingMode.autoFitBest,
+                          child: Text('Auto-fit Best (Recommended)'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCScalingMode.autoFitWidth,
+                          child: Text('Auto-fit Width'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCScalingMode.autoFitHeight,
+                          child: Text('Auto-fit Height'),
+                        ),
+
+                        // Traditional scaling modes
+                        DropdownMenuItem(
+                          value: VNCScalingMode.fitToScreen,
+                          child: Text('Fit to Screen'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCScalingMode.centerCrop,
+                          child: Text('Center Crop (No Borders)'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCScalingMode.actualSize,
+                          child: Text('Actual Size (100%)'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCScalingMode.stretchFit,
+                          child: Text('Stretch to Fill'),
+                        ),
+
+                        // Zoom levels
+                        DropdownMenuItem(
+                          value: VNCScalingMode.zoom50,
+                          child: Text('50% Zoom'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCScalingMode.zoom75,
+                          child: Text('75% Zoom'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCScalingMode.zoom125,
+                          child: Text('125% Zoom'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCScalingMode.zoom150,
+                          child: Text('150% Zoom'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCScalingMode.zoom200,
+                          child: Text('200% Zoom'),
+                        ),
+
+                        // Smart modes for Android
+                        DropdownMenuItem(
+                          value: VNCScalingMode.smartFitLandscape,
+                          child: Text('Smart Fit (Landscape)'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCScalingMode.smartFitPortrait,
+                          child: Text('Smart Fit (Portrait)'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCScalingMode.remoteResize,
+                          child: Text('Remote Resize (If Supported)'),
+                        ),
+                      ],
+                      onChanged: (VNCScalingMode? value) {
+                        if (value != null) {
+                          setState(() {
+                            _scalingMode = value;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _getScalingModeDescription(),
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Input Mode Dropdown
+                    DropdownButtonFormField<VNCInputMode>(
+                      value: _inputMode,
+                      decoration: const InputDecoration(
+                        labelText: 'Input Mode',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.touch_app),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: VNCInputMode.directTouch,
+                          child: Text('Direct Touch (Recommended)'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCInputMode.trackpadMode,
+                          child: Text('Trackpad Mode'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCInputMode.directTouchWithZoom,
+                          child: Text('Direct Touch with Zoom'),
+                        ),
+                      ],
+                      onChanged: (VNCInputMode? value) {
+                        if (value != null) {
+                          setState(() {
+                            _inputMode = value;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _getInputModeDescription(),
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Resolution Mode Dropdown
+                    DropdownButtonFormField<VNCResolutionMode>(
+                      value: _resolutionMode,
+                      decoration: const InputDecoration(
+                        labelText: 'Resolution Mode',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.display_settings),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: VNCResolutionMode.fixed,
+                          child: Text('Fixed Resolution'),
+                        ),
+                        DropdownMenuItem(
+                          value: VNCResolutionMode.dynamic,
+                          child: Text('Dynamic Resolution'),
+                        ),
+                      ],
+                      onChanged: (VNCResolutionMode? value) {
+                        if (value != null) {
+                          setState(() {
+                            _resolutionMode = value;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _getResolutionModeDescription(),
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
                   TextField(
                     controller: _hostController,
-                    enabled: _connectionMode != VNCConnectionMode.demo,
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       labelText: 'Host/IP Address',
-                      border: const OutlineInputBorder(),
-                      prefixIcon: const Icon(Icons.computer),
-                      helperText: _connectionMode == VNCConnectionMode.demo
-                          ? 'Demo mode - server not required'
-                          : 'VNC server hostname or IP address',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.computer),
+                      helperText: 'VNC server hostname or IP address',
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -995,6 +1333,12 @@ class _VNCScreenState extends State<VNCScreen> {
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                onPressed: _isConnecting ? null : () => _showSaveDeviceDialog(),
+                icon: const Icon(Icons.save),
+                tooltip: 'Save Device',
+              ),
             ],
           ),
           if (_connectionMode == VNCConnectionMode.native) ...[
@@ -1019,20 +1363,19 @@ class _VNCScreenState extends State<VNCScreen> {
               ],
             ),
           ],
-          if (_connectionMode != VNCConnectionMode.demo) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _isConnecting ? null : _connectWithEmbeddedNoVNC,
-                    icon: const Icon(Icons.integration_instructions),
-                    label: const Text('Use Embedded Demo'),
-                  ),
+          // Always show embedded demo option
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _isConnecting ? null : _connectWithEmbeddedNoVNC,
+                  icon: const Icon(Icons.integration_instructions),
+                  label: const Text('Use Embedded Demo'),
                 ),
-              ],
-            ),
-          ],
+              ),
+            ],
+          ),
           const SizedBox(height: 24),
           ExpansionTile(
             title: const Text('Setup Instructions'),
@@ -1073,50 +1416,95 @@ class _VNCScreenState extends State<VNCScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('VNC Connection'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.help_outline),
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('VNC Help'),
-                  content: const SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('VNC (Virtual Network Computing) allows you to remotely control another computer.'),
-                        SizedBox(height: 8),
-                        Text('Connection Modes:'),
-                        SizedBox(height: 4),
-                        Text('• Demo Mode: Interactive simulation'),
-                        Text('• WebView Mode: noVNC web client'),
-                        Text('• Native Mode: Direct VNC protocol'),
-                        SizedBox(height: 8),
-                        Text('For real connections, you need:'),
-                        Text('• VNC server running on target machine'),
-                        Text('• Correct host/IP and port'),
-                        Text('• Password (if required)'),
+    return WillPopScope(
+      onWillPop: () async {
+        if (_showVncWidget) {
+          // Handle back button when VNC widget is shown
+          _disconnect();
+          return false; // Don't pop the route, just go back to connection form
+        }
+        return true; // Allow normal back navigation
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(_showVncWidget ? 'VNC Viewer' : 'VNC Connection'),
+          actions: [
+            if (_showVncWidget) ...[
+              IconButton(
+                icon: const Icon(Icons.fullscreen_exit),
+                onPressed: _disconnect,
+                tooltip: 'Disconnect',
+              ),
+              IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: _disconnect,
+                tooltip: 'Close',
+              ),
+            ] else
+              IconButton(
+                icon: const Icon(Icons.help_outline),
+                onPressed: () {
+                  showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('VNC Help'),
+                      content: const SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                                'VNC (Virtual Network Computing) allows you to remotely control another computer.'),
+                            SizedBox(height: 8),
+                            Text('Connection Modes:'),
+                            SizedBox(height: 4),
+                            Text(
+                                '• Native Mode: Direct VNC protocol (recommended)'),
+                            Text('• WebView Mode: noVNC web client'),
+                            SizedBox(height: 8),
+                            Text('For real connections, you need:'),
+                            Text('• VNC server running on target machine'),
+                            Text('• Correct host/IP and port'),
+                            Text('• Password (if required)'),
+                            SizedBox(height: 8),
+                            Text(
+                                'You can save frequently used devices for quick access.'),
+                          ],
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('OK'),
+                        ),
                       ],
                     ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('OK'),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
+                  );
+                },
+              ),
+          ],
+        ),
+        body: _showVncWidget ? _buildVncWidget() : _buildConnectionForm(),
       ),
-      body: _buildConnectionForm(),
     );
+  }
+
+  Widget _buildVncWidget() {
+    switch (_connectionMode) {
+      case VNCConnectionMode.webview:
+        return _webViewController != null
+            ? WebViewWidget(controller: _webViewController!)
+            : const Center(child: CircularProgressIndicator());
+      case VNCConnectionMode.native:
+        return _vncClient != null
+            ? VNCClientWidget(
+                client: _vncClient!,
+                scalingMode: _scalingMode,
+                inputMode: _inputMode,
+                resolutionMode: _resolutionMode,
+                onDisconnectRequest: _disconnect,
+              )
+            : const Center(child: CircularProgressIndicator());
+    }
   }
 }
