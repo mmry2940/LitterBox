@@ -3,19 +3,16 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:crypto/crypto.dart';
 
 /// A basic VNC client implementing the RFB protocol
 /// This is a simplified implementation inspired by dart_vnc
 class VNCClient {
   Socket? _socket;
-  String? _host;
-  int? _port;
   String? _password;
 
-  StreamController<VNCFrameUpdate>? _frameUpdateController;
-  StreamController<VNCConnectionState>? _stateController;
-  StreamController<String>? _logController;
+  late final StreamController<VNCFrameUpdate> _frameUpdateController;
+  late final StreamController<VNCConnectionState> _stateController;
+  late final StreamController<String> _logController;
 
   // Buffer for incoming data
   final List<int> _buffer = [];
@@ -26,11 +23,16 @@ class VNCClient {
   VNCConnectionState _state = VNCConnectionState.disconnected;
   VNCFrameBuffer? _frameBuffer;
 
-  Stream<VNCFrameUpdate> get frameUpdates =>
-      _frameUpdateController?.stream ?? const Stream.empty();
-  Stream<VNCConnectionState> get connectionState =>
-      _stateController?.stream ?? const Stream.empty();
-  Stream<String> get logs => _logController?.stream ?? const Stream.empty();
+  // Initialize stream controllers in constructor
+  VNCClient() {
+    _frameUpdateController = StreamController<VNCFrameUpdate>.broadcast();
+    _stateController = StreamController<VNCConnectionState>.broadcast();
+    _logController = StreamController<String>.broadcast();
+  }
+
+  Stream<VNCFrameUpdate> get frameUpdates => _frameUpdateController.stream;
+  Stream<VNCConnectionState> get connectionState => _stateController.stream;
+  Stream<String> get logs => _logController.stream;
 
   VNCConnectionState get currentState => _state;
   VNCFrameBuffer? get frameBuffer => _frameBuffer;
@@ -39,7 +41,7 @@ class VNCClient {
     final timestamp = DateTime.now().toString().substring(11, 19);
     final logMessage = '[$timestamp] VNCClient: $message';
     print(logMessage);
-    _logController?.add(logMessage);
+    _logController.add(logMessage);
   }
 
   /// Test connection without full handshake (for debugging)
@@ -61,8 +63,6 @@ class VNCClient {
   Future<bool> debugHandshake(String host, int port, {String? password}) async {
     try {
       _log('=== DEBUG HANDSHAKE START ===');
-      _host = host;
-      _port = port;
       _password = password;
 
       _logController = StreamController<String>.broadcast();
@@ -133,13 +133,7 @@ class VNCClient {
   Future<bool> connect(String host, int port, {String? password}) async {
     try {
       _log('Connecting to VNC server at $host:$port');
-      _host = host;
-      _port = port;
       _password = password;
-
-      _frameUpdateController = StreamController<VNCFrameUpdate>.broadcast();
-      _stateController = StreamController<VNCConnectionState>.broadcast();
-      _logController = StreamController<String>.broadcast();
 
       _updateState(VNCConnectionState.connecting);
 
@@ -191,9 +185,9 @@ class VNCClient {
             'Received ${data.length} bytes, buffer now has ${_buffer.length} bytes');
         _processReadRequests();
 
-        // If we're connected and not actively reading handshake data, process VNC messages
+        // If we're connected and not actively reading handshake data, process VNC messages from buffer
         if (_state == VNCConnectionState.connected && _readCompleters.isEmpty) {
-          _handleServerMessage(Uint8List.fromList(data));
+          _processServerMessages();
         }
       },
       onError: (error) {
@@ -531,69 +525,11 @@ class VNCClient {
 
     _log('Authentication successful');
 
-    // Client and server initialization
-    await _sendClientInit();
-    await _readServerInit();
+    // Complete the VNC connection
+    await _completeConnection();
 
     _log('=== HANDSHAKE COMPLETED SUCCESSFULLY ===');
     return true;
-  }
-
-  /// Send client initialization message
-  Future<void> _sendClientInit() async {
-    _log('Sending client initialization');
-    const sharedDesktop = 1; // 1 = shared, 0 = exclusive
-    _socket!.add([sharedDesktop]);
-    _log('Client initialization sent');
-  }
-
-  /// Read server initialization message
-  Future<void> _readServerInit() async {
-    _log('Reading server initialization');
-
-    // Server initialization message structure:
-    // 2 bytes: framebuffer width
-    // 2 bytes: framebuffer height
-    // 16 bytes: pixel format
-    // 4 bytes: name length
-    // name-length bytes: desktop name
-    final initData = await _readBytes(20); // width + height + pixel format
-
-    final width = (initData[0] << 8) | initData[1];
-    final height = (initData[2] << 8) | initData[3];
-
-    _log('Framebuffer size: ${width}x$height');
-
-    // Parse pixel format (bytes 4-19)
-    final pixelFormat = VNCPixelFormat(
-      bitsPerPixel: initData[4],
-      depth: initData[5],
-      bigEndianFlag: initData[6] != 0,
-      trueColourFlag: initData[7] != 0,
-      redMax: (initData[8] << 8) | initData[9],
-      greenMax: (initData[10] << 8) | initData[11],
-      blueMax: (initData[12] << 8) | initData[13],
-      redShift: initData[14],
-      greenShift: initData[15],
-      blueShift: initData[16],
-    );
-
-    _log(
-        'Pixel format: ${pixelFormat.bitsPerPixel}bpp, depth ${pixelFormat.depth}');
-
-    // Read desktop name
-    final nameLength = (initData[16] << 24) |
-        (initData[17] << 16) |
-        (initData[18] << 8) |
-        initData[19];
-
-    final nameData = await _readBytes(nameLength);
-    final serverName = String.fromCharCodes(nameData);
-
-    _log('Server name: "$serverName"');
-
-    _frameBuffer = VNCFrameBuffer(width, height, pixelFormat, serverName);
-    _log('Framebuffer initialized successfully');
   }
 
   Future<Uint8List> _readBytes(int count) async {
@@ -717,22 +653,17 @@ class VNCClient {
   }
 
   Uint8List _desEncrypt(Uint8List data, Uint8List key) {
-    // Actual DES encryption for VNC authentication
-    // Based on the VNC specification and working implementations
-
+    // Real DES encryption for VNC authentication
     if (data.length != 8 || key.length != 8) {
       throw ArgumentError('DES requires 8-byte data and key');
     }
 
-    // DES S-boxes (simplified - VNC uses standard DES S-boxes)
-    final sBox = [
-      [14, 4, 13, 1, 2, 15, 11, 8, 3, 10, 6, 12, 5, 9, 0, 7],
-      [0, 15, 7, 4, 14, 2, 13, 1, 10, 6, 12, 11, 9, 5, 3, 8],
-      [4, 1, 14, 8, 13, 6, 2, 11, 15, 12, 9, 7, 3, 10, 5, 0],
-      [15, 12, 8, 2, 4, 9, 1, 7, 5, 11, 3, 14, 10, 0, 6, 13]
-    ];
+    // DES implementation based on the standard
+    return _performDES(data, key);
+  }
 
-    // Initial permutation
+  Uint8List _performDES(Uint8List plaintext, Uint8List key) {
+    // Initial permutation table
     final ip = [
       58,
       50,
@@ -800,93 +731,737 @@ class VNCClient {
       7
     ];
 
-    // Convert input to bits
-    List<int> dataBits = [];
-    for (int i = 0; i < 8; i++) {
-      for (int j = 7; j >= 0; j--) {
-        dataBits.add((data[i] >> j) & 1);
-      }
-    }
+    // Final permutation table
+    final fp = [
+      40,
+      8,
+      48,
+      16,
+      56,
+      24,
+      64,
+      32,
+      39,
+      7,
+      47,
+      15,
+      55,
+      23,
+      63,
+      31,
+      38,
+      6,
+      46,
+      14,
+      54,
+      22,
+      62,
+      30,
+      37,
+      5,
+      45,
+      13,
+      53,
+      21,
+      61,
+      29,
+      36,
+      4,
+      44,
+      12,
+      52,
+      20,
+      60,
+      28,
+      35,
+      3,
+      43,
+      11,
+      51,
+      19,
+      59,
+      27,
+      34,
+      2,
+      42,
+      10,
+      50,
+      18,
+      58,
+      26,
+      33,
+      1,
+      41,
+      9,
+      49,
+      17,
+      57,
+      25
+    ];
 
-    List<int> keyBits = [];
-    for (int i = 0; i < 8; i++) {
-      for (int j = 7; j >= 0; j--) {
-        keyBits.add((key[i] >> j) & 1);
-      }
-    }
+    // S-boxes
+    final sbox = [
+      // S1
+      [
+        [14, 4, 13, 1, 2, 15, 11, 8, 3, 10, 6, 12, 5, 9, 0, 7],
+        [0, 15, 7, 4, 14, 2, 13, 1, 10, 6, 12, 11, 9, 5, 3, 8],
+        [4, 1, 14, 8, 13, 6, 2, 11, 15, 12, 9, 7, 3, 10, 5, 0],
+        [15, 12, 8, 2, 4, 9, 1, 7, 5, 11, 3, 14, 10, 0, 6, 13]
+      ],
+      // S2
+      [
+        [15, 1, 8, 14, 6, 11, 3, 4, 9, 7, 2, 13, 12, 0, 5, 10],
+        [3, 13, 4, 7, 15, 2, 8, 14, 12, 0, 1, 10, 6, 9, 11, 5],
+        [0, 14, 7, 11, 10, 4, 13, 1, 5, 8, 12, 6, 9, 3, 2, 15],
+        [13, 8, 10, 1, 3, 15, 4, 2, 11, 6, 7, 12, 0, 5, 14, 9]
+      ],
+      // S3
+      [
+        [10, 0, 9, 14, 6, 3, 15, 5, 1, 13, 12, 7, 11, 4, 2, 8],
+        [13, 7, 0, 9, 3, 4, 6, 10, 2, 8, 5, 14, 12, 11, 15, 1],
+        [13, 6, 4, 9, 8, 15, 3, 0, 11, 1, 2, 12, 5, 10, 14, 7],
+        [1, 10, 13, 0, 6, 9, 8, 7, 4, 15, 14, 3, 11, 5, 2, 12]
+      ],
+      // S4
+      [
+        [7, 13, 14, 3, 0, 6, 9, 10, 1, 2, 8, 5, 11, 12, 4, 15],
+        [13, 8, 11, 5, 6, 15, 0, 3, 4, 7, 2, 12, 1, 10, 14, 9],
+        [10, 6, 9, 0, 12, 11, 7, 13, 15, 1, 3, 14, 5, 2, 8, 4],
+        [3, 15, 0, 6, 10, 1, 13, 8, 9, 4, 5, 11, 12, 7, 2, 14]
+      ],
+      // S5
+      [
+        [2, 12, 4, 1, 7, 10, 11, 6, 8, 5, 3, 15, 13, 0, 14, 9],
+        [14, 11, 2, 12, 4, 7, 13, 1, 5, 0, 15, 10, 3, 9, 8, 6],
+        [4, 2, 1, 11, 10, 13, 7, 8, 15, 9, 12, 5, 6, 3, 0, 14],
+        [11, 8, 12, 7, 1, 14, 2, 13, 6, 15, 0, 9, 10, 4, 5, 3]
+      ],
+      // S6
+      [
+        [12, 1, 10, 15, 9, 2, 6, 8, 0, 13, 3, 4, 14, 7, 5, 11],
+        [10, 15, 4, 2, 7, 12, 9, 5, 6, 1, 13, 14, 0, 11, 3, 8],
+        [9, 14, 15, 5, 2, 8, 12, 3, 7, 0, 4, 10, 1, 13, 11, 6],
+        [4, 3, 2, 12, 9, 5, 15, 10, 11, 14, 1, 7, 6, 0, 8, 13]
+      ],
+      // S7
+      [
+        [4, 11, 2, 14, 15, 0, 8, 13, 3, 12, 9, 7, 5, 10, 6, 1],
+        [13, 0, 11, 7, 4, 9, 1, 10, 14, 3, 5, 12, 2, 15, 8, 6],
+        [1, 4, 11, 13, 12, 3, 7, 14, 10, 15, 6, 8, 0, 5, 9, 2],
+        [6, 11, 13, 8, 1, 4, 10, 7, 9, 5, 0, 15, 14, 2, 3, 12]
+      ],
+      // S8
+      [
+        [13, 2, 8, 4, 6, 15, 11, 1, 10, 9, 3, 14, 5, 0, 12, 7],
+        [1, 15, 13, 8, 10, 3, 7, 4, 12, 5, 6, 11, 0, 14, 9, 2],
+        [7, 11, 4, 1, 9, 12, 14, 2, 0, 6, 10, 13, 15, 3, 5, 8],
+        [2, 1, 14, 7, 4, 10, 8, 13, 15, 12, 9, 0, 3, 5, 6, 11]
+      ]
+    ];
 
-    // Apply initial permutation
-    List<int> permuted = List.filled(64, 0);
+    // Expansion table
+    final expansionTable = [
+      32,
+      1,
+      2,
+      3,
+      4,
+      5,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      28,
+      29,
+      30,
+      31,
+      32,
+      1
+    ];
+
+    // P-box permutation
+    final pbox = [
+      16,
+      7,
+      20,
+      21,
+      29,
+      12,
+      28,
+      17,
+      1,
+      15,
+      23,
+      26,
+      5,
+      18,
+      31,
+      10,
+      2,
+      8,
+      24,
+      14,
+      32,
+      27,
+      3,
+      9,
+      19,
+      13,
+      30,
+      6,
+      22,
+      11,
+      4,
+      25
+    ];
+
+    // Generate round keys
+    final roundKeys = _generateRoundKeys(key);
+
+    // Convert to bit arrays
+    final plainBits = _bytesToBits(plaintext);
+
+    // Initial permutation
+    final ipResult = List<int>.filled(64, 0);
     for (int i = 0; i < 64; i++) {
-      permuted[i] = dataBits[ip[i] - 1];
+      ipResult[i] = plainBits[ip[i] - 1];
     }
 
     // Split into left and right halves
-    List<int> left = permuted.sublist(0, 32);
-    List<int> right = permuted.sublist(32);
+    var left = ipResult.sublist(0, 32);
+    var right = ipResult.sublist(32, 64);
 
-    // 16 rounds of Feistel network (simplified to 8 for this implementation)
-    for (int round = 0; round < 8; round++) {
-      List<int> newLeft = List.from(right);
+    // 16 rounds of encryption
+    for (int round = 0; round < 16; round++) {
+      final newLeft = List<int>.from(right);
 
-      // F function (simplified)
-      List<int> expanded = List.filled(48, 0);
-      for (int i = 0; i < 32; i++) {
-        expanded[i] = right[i % 32];
-        expanded[i + 16] = right[(i + 1) % 32];
-      }
-
-      // XOR with round key (simplified key schedule)
+      // Expansion
+      final expanded = List<int>.filled(48, 0);
       for (int i = 0; i < 48; i++) {
-        expanded[i] ^= keyBits[(i + round * 6) % 64];
+        expanded[i] = right[expansionTable[i] - 1];
       }
 
-      // S-box substitution (simplified)
-      List<int> substituted = List.filled(32, 0);
+      // XOR with round key
+      for (int i = 0; i < 48; i++) {
+        expanded[i] ^= roundKeys[round][i];
+      }
+
+      // S-box substitution
+      final sboxOutput = List<int>.filled(32, 0);
       for (int i = 0; i < 8; i++) {
-        int sInput = 0;
+        final chunk = expanded.sublist(i * 6, (i + 1) * 6);
+        final row = (chunk[0] << 1) | chunk[5];
+        final col =
+            (chunk[1] << 3) | (chunk[2] << 2) | (chunk[3] << 1) | chunk[4];
+        final sVal = sbox[i][row][col];
+
+        // Convert to 4 bits
         for (int j = 0; j < 4; j++) {
-          sInput |= (expanded[i * 6 + j] << (3 - j));
+          sboxOutput[i * 4 + j] = (sVal >> (3 - j)) & 1;
         }
-        int sOutput = sBox[i % 4][sInput % 16];
-        for (int j = 0; j < 4; j++) {
-          substituted[i * 4 + j] = (sOutput >> (3 - j)) & 1;
-        }
+      }
+
+      // P-box permutation
+      final pboxOutput = List<int>.filled(32, 0);
+      for (int i = 0; i < 32; i++) {
+        pboxOutput[i] = sboxOutput[pbox[i] - 1];
       }
 
       // XOR with left half
-      List<int> newRight = List.filled(32, 0);
       for (int i = 0; i < 32; i++) {
-        newRight[i] = left[i] ^ substituted[i];
+        pboxOutput[i] ^= left[i];
       }
 
       left = newLeft;
-      right = newRight;
+      right = pboxOutput;
     }
 
-    // Combine and convert back to bytes
-    List<int> combined = [
-      ...right,
-      ...left
-    ]; // Note: right-left order for final step
+    // Combine halves (note: right + left for final swap)
+    final combined = [...right, ...left];
 
-    Uint8List result = Uint8List(8);
-    for (int i = 0; i < 8; i++) {
+    // Final permutation
+    final fpResult = List<int>.filled(64, 0);
+    for (int i = 0; i < 64; i++) {
+      fpResult[i] = combined[fp[i] - 1];
+    }
+
+    // Convert back to bytes
+    return _bitsToBytes(fpResult);
+  }
+
+  List<List<int>> _generateRoundKeys(Uint8List key) {
+    // PC1 permutation
+    final pc1 = [
+      57,
+      49,
+      41,
+      33,
+      25,
+      17,
+      9,
+      1,
+      58,
+      50,
+      42,
+      34,
+      26,
+      18,
+      10,
+      2,
+      59,
+      51,
+      43,
+      35,
+      27,
+      19,
+      11,
+      3,
+      60,
+      52,
+      44,
+      36,
+      63,
+      55,
+      47,
+      39,
+      31,
+      23,
+      15,
+      7,
+      62,
+      54,
+      46,
+      38,
+      30,
+      22,
+      14,
+      6,
+      61,
+      53,
+      45,
+      37,
+      29,
+      21,
+      13,
+      5,
+      28,
+      20,
+      12,
+      4
+    ];
+
+    // PC2 permutation
+    final pc2 = [
+      14,
+      17,
+      11,
+      24,
+      1,
+      5,
+      3,
+      28,
+      15,
+      6,
+      21,
+      10,
+      23,
+      19,
+      12,
+      4,
+      26,
+      8,
+      16,
+      7,
+      27,
+      20,
+      13,
+      2,
+      41,
+      52,
+      31,
+      37,
+      47,
+      55,
+      30,
+      40,
+      51,
+      45,
+      33,
+      48,
+      44,
+      49,
+      39,
+      56,
+      34,
+      53,
+      46,
+      42,
+      50,
+      36,
+      29,
+      32
+    ];
+
+    // Left shift schedule
+    final leftShifts = [1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 1];
+
+    final keyBits = _bytesToBits(key);
+
+    // PC1 permutation
+    final pc1Result = List<int>.filled(56, 0);
+    for (int i = 0; i < 56; i++) {
+      pc1Result[i] = keyBits[pc1[i] - 1];
+    }
+
+    var c = pc1Result.sublist(0, 28);
+    var d = pc1Result.sublist(28, 56);
+
+    final roundKeys = <List<int>>[];
+
+    for (int round = 0; round < 16; round++) {
+      // Left shift
+      c = _leftShift(c, leftShifts[round]);
+      d = _leftShift(d, leftShifts[round]);
+
+      // Combine and apply PC2
+      final combined = [...c, ...d];
+      final roundKey = List<int>.filled(48, 0);
+      for (int i = 0; i < 48; i++) {
+        roundKey[i] = combined[pc2[i] - 1];
+      }
+      roundKeys.add(roundKey);
+    }
+
+    return roundKeys;
+  }
+
+  List<int> _leftShift(List<int> bits, int positions) {
+    final result = List<int>.from(bits);
+    for (int i = 0; i < positions; i++) {
+      final first = result.removeAt(0);
+      result.add(first);
+    }
+    return result;
+  }
+
+  List<int> _bytesToBits(Uint8List bytes) {
+    final bits = <int>[];
+    for (final byte in bytes) {
+      for (int i = 7; i >= 0; i--) {
+        bits.add((byte >> i) & 1);
+      }
+    }
+    return bits;
+  }
+
+  Uint8List _bitsToBytes(List<int> bits) {
+    final bytes = Uint8List(bits.length ~/ 8);
+    for (int i = 0; i < bytes.length; i++) {
       int byte = 0;
       for (int j = 0; j < 8; j++) {
-        byte |= (combined[i * 8 + j] << (7 - j));
+        byte = (byte << 1) | bits[i * 8 + j];
       }
-      result[i] = byte;
+      bytes[i] = byte;
+    }
+    return bytes;
+  }
+
+  // Complete the VNC connection after successful authentication
+  Future<void> _completeConnection() async {
+    try {
+      _log('Authentication successful! Completing VNC connection...');
+
+      // Send ClientInit message (shared desktop flag)
+      final clientInit = Uint8List(1);
+      clientInit[0] = 1; // Shared desktop = true
+      _socket!.add(clientInit);
+      _log('Sent ClientInit (shared=true)');
+
+      // Read ServerInit message
+      final serverInit = await _readBytes(24); // Minimum ServerInit size
+
+      final frameBufferWidth = (serverInit[0] << 8) | serverInit[1];
+      final frameBufferHeight = (serverInit[2] << 8) | serverInit[3];
+
+      _log('Frame buffer size: ${frameBufferWidth}x${frameBufferHeight}');
+
+      // Create or update frame buffer
+      final pixelFormat = VNCPixelFormat(
+        bitsPerPixel: serverInit[4],
+        depth: serverInit[5],
+        bigEndianFlag: serverInit[6] != 0,
+        trueColourFlag: serverInit[7] != 0,
+        redMax: (serverInit[8] << 8) | serverInit[9],
+        greenMax: (serverInit[10] << 8) | serverInit[11],
+        blueMax: (serverInit[12] << 8) | serverInit[13],
+        redShift: serverInit[14],
+        greenShift: serverInit[15],
+        blueShift: serverInit[16],
+      );
+
+      _frameBuffer = VNCFrameBuffer(
+        frameBufferWidth,
+        frameBufferHeight,
+        pixelFormat,
+        'VNC Server',
+      );
+
+      // Read pixel format (16 bytes)
+      final bitsPerPixel = serverInit[4];
+      final depth = serverInit[5];
+      final bigEndianFlag = serverInit[6];
+      final trueColorFlag = serverInit[7];
+
+      _log(
+          'Pixel format: ${bitsPerPixel}bpp, depth: $depth, bigEndian: $bigEndianFlag, trueColor: $trueColorFlag');
+
+      // Read server name length and name
+      final nameLength = (serverInit[20] << 24) |
+          (serverInit[21] << 16) |
+          (serverInit[22] << 8) |
+          serverInit[23];
+      if (nameLength > 0 && nameLength < 1024) {
+        final nameBytes = await _readBytes(nameLength);
+        final serverName = utf8.decode(nameBytes);
+        _log('Server name: $serverName');
+        _frameBuffer = VNCFrameBuffer(
+          frameBufferWidth,
+          frameBufferHeight,
+          pixelFormat,
+          serverName,
+        );
+      }
+
+      // Set connection state to connected
+      _log('DEBUG: About to set connection state to connected');
+      _updateState(VNCConnectionState.connected);
+      _log('DEBUG: Connection state set to connected, state is now: $_state');
+
+      // Set up pixel format (use 16-bit RGB565 for performance)
+      await _setPixelFormat();
+
+      // Set encodings
+      await _setEncodings();
+
+      // Request initial frame update
+      await _requestFrameUpdate(false);
+
+      _log('VNC connection fully established!');
+    } catch (e) {
+      _log('ERROR completing connection: $e');
+      _state = VNCConnectionState.failed;
+      _stateController.add(_state);
+    }
+  }
+
+  // Set pixel format to 16-bit RGB565
+  Future<void> _setPixelFormat() async {
+    final setPixelFormat = Uint8List(20);
+    setPixelFormat[0] = 0; // SetPixelFormat message type
+
+    // Pixel format (16-bit RGB565)
+    setPixelFormat[4] = 16; // bits-per-pixel
+    setPixelFormat[5] = 16; // depth
+    setPixelFormat[6] = 0; // big-endian-flag
+    setPixelFormat[7] = 1; // true-color-flag
+    setPixelFormat[8] = 0; // red-max high byte
+    setPixelFormat[9] = 31; // red-max low byte (31)
+    setPixelFormat[10] = 0; // green-max high byte
+    setPixelFormat[11] = 63; // green-max low byte (63)
+    setPixelFormat[12] = 0; // blue-max high byte
+    setPixelFormat[13] = 31; // blue-max low byte (31)
+    setPixelFormat[14] = 11; // red-shift
+    setPixelFormat[15] = 5; // green-shift
+    setPixelFormat[16] = 0; // blue-shift
+
+    _socket!.add(setPixelFormat);
+    _log('Set pixel format to 16-bit RGB565');
+  }
+
+  // Set supported encodings
+  Future<void> _setEncodings() async {
+    final encodings = [0, 1]; // Raw and CopyRect encodings
+    final setEncodings = Uint8List(4 + encodings.length * 4);
+
+    setEncodings[0] = 2; // SetEncodings message type
+    setEncodings[2] = 0; // number-of-encodings high byte
+    setEncodings[3] = encodings.length; // number-of-encodings low byte
+
+    for (int i = 0; i < encodings.length; i++) {
+      final offset = 4 + i * 4;
+      final encoding = encodings[i];
+      setEncodings[offset] = (encoding >> 24) & 0xFF;
+      setEncodings[offset + 1] = (encoding >> 16) & 0xFF;
+      setEncodings[offset + 2] = (encoding >> 8) & 0xFF;
+      setEncodings[offset + 3] = encoding & 0xFF;
     }
 
-    return result;
+    _socket!.add(setEncodings);
+    _log('Set encodings: ${encodings.join(', ')}');
+  }
+
+  // Request frame buffer update
+  Future<void> _requestFrameUpdate(bool incremental) async {
+    final request = Uint8List(10);
+    request[0] = 3; // FramebufferUpdateRequest message type
+    request[1] = incremental ? 1 : 0; // incremental flag
+    // x-position (0)
+    request[2] = 0;
+    request[3] = 0;
+    // y-position (0)
+    request[4] = 0;
+    request[5] = 0;
+    // width (use frame buffer width or default)
+    final width = _frameBuffer?.width ?? 1024;
+    request[6] = (width >> 8) & 0xFF;
+    request[7] = width & 0xFF;
+    // height (use frame buffer height or default)
+    final height = _frameBuffer?.height ?? 768;
+    request[8] = (height >> 8) & 0xFF;
+    request[9] = height & 0xFF;
+
+    _socket!.add(request);
+    _log(
+        'Requested frame update (incremental: $incremental, ${width}x${height})');
   }
 
   void _startListening() {
     _log('VNC connection established, starting to listen for frame updates');
     // Socket listener is already set up in _setupSocketListener()
-    // Just request initial frame update
-    requestFrameUpdate(incremental: false);
+    // Request initial frame update
+    _requestFrameUpdate(false);
+  }
+
+  void _processServerMessages() {
+    // Process all complete messages in the buffer
+    while (_buffer.isNotEmpty) {
+      if (_buffer.isEmpty) return;
+
+      final messageType = _buffer[0];
+      int messageLength = 0;
+
+      switch (messageType) {
+        case 0: // FramebufferUpdate
+          if (_buffer.length < 4) return; // Need at least header
+          final numberOfRectangles = (_buffer[2] << 8) | _buffer[3];
+          messageLength = _calculateFramebufferUpdateLength(numberOfRectangles);
+          break;
+        case 1: // SetColourMapEntries
+          if (_buffer.length < 6) return;
+          final numberOfColors = (_buffer[4] << 8) | _buffer[5];
+          messageLength = 6 + numberOfColors * 6;
+          break;
+        case 2: // Bell
+          messageLength = 1;
+          break;
+        case 3: // ServerCutText
+          if (_buffer.length < 8) return;
+          final textLength = (_buffer[4] << 24) |
+              (_buffer[5] << 16) |
+              (_buffer[6] << 8) |
+              _buffer[7];
+          messageLength = 8 + textLength;
+          break;
+        default:
+          _log(
+              'Unknown message type: $messageType (0x${messageType.toRadixString(16).padLeft(2, '0')})');
+          _log(
+              'Buffer first 16 bytes: ${_buffer.take(16).map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}').join(' ')}');
+          _log('Buffer length: ${_buffer.length}');
+          // Skip this byte and try to resync
+          _buffer.removeAt(0);
+          continue;
+      }
+
+      if (messageLength == 0 || _buffer.length < messageLength) {
+        return; // Wait for more data
+      }
+
+      // Extract and process the complete message
+      final messageData =
+          Uint8List.fromList(_buffer.take(messageLength).toList());
+      _buffer.removeRange(0, messageLength);
+
+      _handleServerMessage(messageData);
+    }
+  }
+
+  int _calculateFramebufferUpdateLength(int numberOfRectangles) {
+    // Start with header: 1 + 1 + 2 = 4 bytes
+    int length = 4;
+    int offset = 4;
+
+    _log(
+        'Calculating FramebufferUpdate length for $numberOfRectangles rectangles');
+
+    for (int i = 0; i < numberOfRectangles; i++) {
+      if (_buffer.length < offset + 12) return 0; // Need rectangle header
+
+      // Rectangle header format:
+      // 2 bytes: x-position (offset + 0, offset + 1)
+      // 2 bytes: y-position (offset + 2, offset + 3)
+      // 2 bytes: width (offset + 4, offset + 5)
+      // 2 bytes: height (offset + 6, offset + 7)
+      // 4 bytes: encoding (offset + 8-11)
+      final width = (_buffer[offset + 4] << 8) | _buffer[offset + 5];
+      final height = (_buffer[offset + 6] << 8) | _buffer[offset + 7];
+      final encoding = (_buffer[offset + 8] << 24) |
+          (_buffer[offset + 9] << 16) |
+          (_buffer[offset + 10] << 8) |
+          _buffer[offset + 11];
+
+      _log(
+          'Rectangle $i: ${width}x${height}, encoding=$encoding, offset=$offset');
+
+      length += 12; // Rectangle header
+      offset += 12;
+
+      if (encoding == 0) {
+        // Raw encoding - calculate pixel data size
+        final pixelDataSize = width * height * 4; // Server sends 32bpp
+        _log('Adding $pixelDataSize bytes of pixel data for rectangle $i');
+        length += pixelDataSize;
+        offset += pixelDataSize;
+      } else {
+        // Other encodings not implemented yet
+        return 0;
+      }
+    }
+
+    _log('Total calculated message length: $length bytes');
+    return length;
   }
 
   void _handleServerMessage(Uint8List data) {
@@ -908,17 +1483,186 @@ class VNCClient {
   }
 
   void _handleFramebufferUpdate(Uint8List data) {
-    // Simplified framebuffer update handling
-    // In a real implementation, this would parse the actual pixel data
-    final update = VNCFrameUpdate(
-      x: 0,
-      y: 0,
-      width: _frameBuffer?.width ?? 0,
-      height: _frameBuffer?.height ?? 0,
-      pixels: data,
-    );
+    if (data.length < 4) {
+      _log('FramebufferUpdate message too short: ${data.length} bytes');
+      return;
+    }
 
-    _frameUpdateController?.add(update);
+    try {
+      // FramebufferUpdate message format:
+      // 1 byte: message type (0)
+      // 1 byte: padding
+      // 2 bytes: number of rectangles
+      // For each rectangle:
+      //   2 bytes: x-position
+      //   2 bytes: y-position
+      //   2 bytes: width
+      //   2 bytes: height
+      //   4 bytes: encoding type
+      //   pixel data (encoding dependent)
+
+      int offset = 0;
+      offset++; // Skip message type (should be 0)
+      offset++; // Skip padding
+      final numberOfRectangles = (data[offset] << 8) | data[offset + 1];
+      offset += 2;
+
+      _log('FramebufferUpdate: $numberOfRectangles rectangles');
+
+      for (int i = 0; i < numberOfRectangles; i++) {
+        if (offset + 12 > data.length) {
+          _log('Not enough data for rectangle $i header');
+          return;
+        }
+
+        final x = (data[offset] << 8) | data[offset + 1];
+        offset += 2;
+        final y = (data[offset] << 8) | data[offset + 1];
+        offset += 2;
+        final width = (data[offset] << 8) | data[offset + 1];
+        offset += 2;
+        final height = (data[offset] << 8) | data[offset + 1];
+        offset += 2;
+        final encoding = (data[offset] << 24) |
+            (data[offset + 1] << 16) |
+            (data[offset + 2] << 8) |
+            data[offset + 3];
+        offset += 4;
+
+        _log('Rectangle $i: ${x},${y} ${width}x${height} encoding=$encoding');
+
+        if (encoding == 0) {
+          // Raw encoding - pixel data follows
+          final bytesPerPixel = _frameBuffer?.pixelFormat.bitsPerPixel ?? 32;
+          final pixelDataSize = width * height * (bytesPerPixel ~/ 8);
+
+          _log(
+              'Processing ${pixelDataSize} bytes of pixel data for ${width}x${height} rectangle');
+          _log(
+              'Bytes per pixel from frameBuffer: ${bytesPerPixel ~/ 8}, bitsPerPixel: ${bytesPerPixel}');
+
+          if (offset + pixelDataSize > data.length) {
+            _log(
+                'Not enough pixel data for rectangle $i: need $pixelDataSize, have ${data.length - offset}');
+            return;
+          }
+
+          final pixels = data.sublist(offset, offset + pixelDataSize);
+          offset += pixelDataSize;
+
+          _log(
+              'Processing ${pixels.length} bytes of pixel data for ${width}x${height} rectangle');
+
+          // Update frame buffer with this rectangle
+          _updateFrameBufferRectangle(x, y, width, height, pixels);
+
+          // Notify UI of update
+          final update = VNCFrameUpdate(
+            x: x,
+            y: y,
+            width: width,
+            height: height,
+            pixels: pixels,
+          );
+          _frameUpdateController.add(update);
+        } else {
+          _log('Unsupported encoding: $encoding');
+          // Skip this rectangle for now
+          break;
+        }
+      }
+
+      // Update connection state to connected after first frame buffer update
+      if (_state != VNCConnectionState.connected) {
+        _log(
+            'First frame buffer received, updating connection state to connected');
+        _updateState(VNCConnectionState.connected);
+      }
+
+      // Request next frame update
+      _requestFrameUpdate(true); // incremental
+    } catch (e) {
+      _log('Error processing FramebufferUpdate: $e');
+    }
+  }
+
+  void _updateFrameBufferRectangle(
+      int x, int y, int width, int height, Uint8List pixels) {
+    if (_frameBuffer == null) return;
+
+    _log(
+        'Updated rectangle: ${x},${y} ${width}x${height} (${pixels.length} bytes)');
+
+    // Create frame buffer if not exists
+    if (_frameBuffer!.pixels == null) {
+      final totalPixels =
+          _frameBuffer!.width * _frameBuffer!.height * 4; // RGBA
+      _frameBuffer!.pixels = Uint8List(totalPixels);
+      // Fill with black initially
+      for (int i = 0; i < _frameBuffer!.pixels!.length; i += 4) {
+        _frameBuffer!.pixels![i] = 0; // R
+        _frameBuffer!.pixels![i + 1] = 0; // G
+        _frameBuffer!.pixels![i + 2] = 0; // B
+        _frameBuffer!.pixels![i + 3] = 255; // A
+      }
+    }
+
+    // Get server pixel format
+    final serverBpp = _frameBuffer!.pixelFormat.bitsPerPixel;
+    final serverBytesPerPixel = serverBpp ~/ 8;
+
+    _log(
+        'Server pixel format: ${serverBpp}bpp, ${serverBytesPerPixel} bytes per pixel');
+    _log(
+        'Expected pixel data: ${width * height * serverBytesPerPixel} bytes, got: ${pixels.length} bytes');
+
+    // Convert server pixels to RGBA format
+    for (int row = 0; row < height; row++) {
+      for (int col = 0; col < width; col++) {
+        final srcOffset = (row * width + col) * serverBytesPerPixel;
+        final dstOffset = ((y + row) * _frameBuffer!.width + (x + col)) * 4;
+
+        if (srcOffset + serverBytesPerPixel <= pixels.length &&
+            dstOffset + 4 <= _frameBuffer!.pixels!.length) {
+          int r, g, b, a = 255;
+
+          if (serverBpp == 32) {
+            // 32-bit RGBA (assuming server format)
+            b = pixels[srcOffset];
+            g = pixels[srcOffset + 1];
+            r = pixels[srcOffset + 2];
+            a = pixels[srcOffset + 3];
+          } else if (serverBpp == 16) {
+            // 16-bit RGB565
+            final pixel = (pixels[srcOffset + 1] << 8) | pixels[srcOffset];
+            r = ((pixel >> 11) & 0x1F) * 255 ~/ 31;
+            g = ((pixel >> 5) & 0x3F) * 255 ~/ 63;
+            b = (pixel & 0x1F) * 255 ~/ 31;
+          } else {
+            // Fallback - copy as is
+            r = srcOffset < pixels.length ? pixels[srcOffset] : 0;
+            g = srcOffset + 1 < pixels.length ? pixels[srcOffset + 1] : 0;
+            b = srcOffset + 2 < pixels.length ? pixels[srcOffset + 2] : 0;
+          }
+
+          // Store in RGBA format
+          _frameBuffer!.pixels![dstOffset] = r;
+          _frameBuffer!.pixels![dstOffset + 1] = g;
+          _frameBuffer!.pixels![dstOffset + 2] = b;
+          _frameBuffer!.pixels![dstOffset + 3] = a;
+        }
+      }
+    }
+
+    // Trigger repaint by sending frame update event
+    final update = VNCFrameUpdate(
+      x: x,
+      y: y,
+      width: width,
+      height: height,
+      pixels: pixels,
+    );
+    _frameUpdateController.add(update);
   }
 
   void sendPointerEvent(int x, int y, int buttonMask) {
@@ -945,15 +1689,19 @@ class VNCClient {
   }
 
   void _updateState(VNCConnectionState newState) {
+    print('DEBUG: _updateState called with: $newState, old state: $_state');
     _state = newState;
-    _stateController?.add(newState);
+    print(
+        'DEBUG: Broadcasting state $newState to ${_stateController.hasListener ? "listeners" : "no listeners"}');
+    _stateController.add(newState);
+    print('DEBUG: State update complete, current state: $_state');
   }
 
   void dispose() {
     _socket?.close();
-    _frameUpdateController?.close();
-    _stateController?.close();
-    _logController?.close();
+    _frameUpdateController.close();
+    _stateController.close();
+    _logController.close();
     _socketSubscription?.cancel();
   }
 }
@@ -1056,21 +1804,22 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
       child: Stack(
         children: [
           if (_frameBuffer != null)
-            GestureDetector(
-              onTapDown: (details) {
-                final x = details.localPosition.dx.round();
-                final y = details.localPosition.dy.round();
-                widget.client.sendPointerEvent(x, y, 1); // Left click
-              },
-              onTapUp: (details) {
-                final x = details.localPosition.dx.round();
-                final y = details.localPosition.dy.round();
-                widget.client.sendPointerEvent(x, y, 0); // Release
-              },
-              child: CustomPaint(
-                painter: VNCFramePainter(_frameBuffer!),
-                size: Size(_frameBuffer!.width.toDouble(),
-                    _frameBuffer!.height.toDouble()),
+            Positioned.fill(
+              child: GestureDetector(
+                onTapDown: (details) {
+                  final x = details.localPosition.dx.round();
+                  final y = details.localPosition.dy.round();
+                  widget.client.sendPointerEvent(x, y, 1); // Left click
+                },
+                onTapUp: (details) {
+                  final x = details.localPosition.dx.round();
+                  final y = details.localPosition.dy.round();
+                  widget.client.sendPointerEvent(x, y, 0); // Release
+                },
+                child: CustomPaint(
+                  painter: VNCFramePainter(_frameBuffer!),
+                  child: Container(), // Ensure the painter fills the area
+                ),
               ),
             ),
 
@@ -1123,33 +1872,33 @@ class VNCFramePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Draw a placeholder pattern since we don't have actual pixel data yet
+    // Debug info
+    print(
+        '[VNCFramePainter] Paint called - Canvas size: ${size.width}x${size.height}');
+    print(
+        '[VNCFramePainter] Frame buffer: ${frameBuffer.width}x${frameBuffer.height}');
+    print(
+        '[VNCFramePainter] Has pixels: ${frameBuffer.pixels != null}, Length: ${frameBuffer.pixels?.length ?? 0}');
+
+    if (frameBuffer.pixels != null && frameBuffer.pixels!.isNotEmpty) {
+      // Draw the actual VNC frame buffer using manual pixel drawing
+      _drawPixelData(canvas, size);
+      return;
+    }
+
+    // Draw placeholder if no pixel data available
     final paint = Paint()
-      ..color = Colors.blue.shade900
+      ..color = Colors.grey.shade900
       ..style = PaintingStyle.fill;
 
     canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
 
-    // Draw grid pattern to simulate desktop
-    final gridPaint = Paint()
-      ..color = Colors.blue.shade800
-      ..strokeWidth = 1;
-
-    for (int i = 0; i < size.width; i += 50) {
-      canvas.drawLine(Offset(i.toDouble(), 0),
-          Offset(i.toDouble(), size.height), gridPaint);
-    }
-
-    for (int i = 0; i < size.height; i += 50) {
-      canvas.drawLine(
-          Offset(0, i.toDouble()), Offset(size.width, i.toDouble()), gridPaint);
-    }
-
-    // Draw server name
+    // Draw connection status
     final textPainter = TextPainter(
       text: TextSpan(
-        text:
-            'Native VNC Client\n${frameBuffer.serverName}\n${frameBuffer.width}x${frameBuffer.height}',
+        text: frameBuffer.pixels == null
+            ? 'Waiting for frame data...\n${frameBuffer.serverName}\n${frameBuffer.width}x${frameBuffer.height}'
+            : 'Processing frame data...\n${frameBuffer.serverName}\n${frameBuffer.width}x${frameBuffer.height}',
         style: const TextStyle(
           color: Colors.white,
           fontSize: 16,
@@ -1160,7 +1909,66 @@ class VNCFramePainter extends CustomPainter {
     );
 
     textPainter.layout();
-    textPainter.paint(canvas, const Offset(20, 20));
+    textPainter.paint(
+        canvas,
+        Offset((size.width - textPainter.width) / 2,
+            (size.height - textPainter.height) / 2));
+  }
+
+  void _drawPixelData(Canvas canvas, Size size) {
+    final pixels = frameBuffer.pixels!;
+    final width = frameBuffer.width;
+    final height = frameBuffer.height;
+
+    print(
+        '[VNCFramePainter] Drawing pixels - FB: ${width}x${height}, Canvas: ${size.width}x${size.height}');
+
+    // Calculate scaling factors
+    final scaleX = size.width / width;
+    final scaleY = size.height / height;
+    final scale = scaleX < scaleY ? scaleX : scaleY; // Maintain aspect ratio
+
+    final offsetX = (size.width - width * scale) / 2;
+    final offsetY = (size.height - height * scale) / 2;
+
+    print('[VNCFramePainter] Scale: $scale, Offset: ($offsetX, $offsetY)');
+
+    // Draw pixels - sample every few pixels for performance when scaled down
+    final sampleRate = (scale < 0.5) ? (1 / scale).ceil() : 1;
+
+    print('[VNCFramePainter] Sample rate: $sampleRate');
+
+    int pixelsDrawn = 0;
+    for (int y = 0; y < height; y += sampleRate) {
+      for (int x = 0; x < width; x += sampleRate) {
+        final pixelOffset = (y * width + x) * 4; // RGBA format
+
+        if (pixelOffset + 3 < pixels.length) {
+          final r = pixels[pixelOffset]; // Red
+          final g = pixels[pixelOffset + 1]; // Green
+          final b = pixels[pixelOffset + 2]; // Blue
+          // final a = pixels[pixelOffset + 3]; // Alpha - not used, forcing full opacity
+
+          // Don't skip any pixels - draw everything for debugging
+          final color = Color.fromARGB(255, r, g, b); // Force alpha to 255
+          final paint = Paint()..color = color;
+
+          // Draw scaled pixel
+          final pixelSize = scale * sampleRate;
+          final rect = Rect.fromLTWH(
+            offsetX + x * scale,
+            offsetY + y * scale,
+            pixelSize < 1.0 ? 1.0 : pixelSize,
+            pixelSize < 1.0 ? 1.0 : pixelSize,
+          );
+
+          canvas.drawRect(rect, paint);
+          pixelsDrawn++;
+        }
+      }
+    }
+
+    print('[VNCFramePainter] Drew $pixelsDrawn pixels');
   }
 
   @override

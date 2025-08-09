@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../vnc_client.dart';
+import 'vnc_viewer_screen.dart';
 
 enum VNCConnectionMode {
   demo,
@@ -116,61 +117,8 @@ class _VNCScreenState extends State<VNCScreen> {
       );
   }
 
-  void _connect() {
-    final host = _hostController.text.trim();
-    final webPort = int.tryParse(_portController.text.trim()) ?? 6080;
-    final vncPort = int.tryParse(_vncPortController.text.trim()) ?? 5900;
-    final path = _pathController.text.trim().isEmpty
-        ? '/vnc.html'
-        : _pathController.text.trim();
-    final password = _passwordController.text;
-
-    if (host.isEmpty) {
-      setState(() {
-        _connectionError = 'Host cannot be empty';
-      });
-      return;
-    }
-
-    setState(() {
-      _isConnecting = true;
-      _connectionError = null;
-    });
-
-    // Build noVNC URL with connection parameters
-    final params = <String, String>{
-      'host': host,
-      'port': vncPort.toString(),
-      'autoconnect': 'true',
-      'resize': 'scale',
-    };
-
-    if (password.isNotEmpty) {
-      params['password'] = password;
-    }
-
-    final queryString = params.entries
-        .map((e) =>
-            '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
-        .join('&');
-
-    final noVncUrl = 'http://$host:$webPort$path?$queryString';
-
-    _webViewController?.loadRequest(Uri.parse(noVncUrl)).then((_) {
-      setState(() {
-        _showConnectionForm = false;
-        _isConnected = true;
-        _connectionError = null;
-      });
-    }).catchError((error) {
-      setState(() {
-        _connectionError = 'Failed to connect: $error';
-        _isConnecting = false;
-      });
-    });
-  }
-
   void _connectWithEmbeddedNoVNC() {
+    print('DEBUG: _connectWithEmbeddedNoVNC called');
     final host = _hostController.text.trim();
     final vncPort = int.tryParse(_vncPortController.text.trim()) ?? 5900;
     final password = _passwordController.text;
@@ -186,6 +134,7 @@ class _VNCScreenState extends State<VNCScreen> {
       _isConnecting = true;
       _connectionError = null;
     });
+    print('DEBUG: Set _isConnecting to true for embedded noVNC');
 
     // Create embedded noVNC HTML
     final noVncHtml = _generateNoVNCHtml(host, vncPort, password);
@@ -196,11 +145,37 @@ class _VNCScreenState extends State<VNCScreen> {
         _isConnected = true;
         _connectionError = null;
       });
+      print('DEBUG: About to navigate to VNC viewer for webview mode');
+      // Navigate to VNC viewer screen for embedded noVNC
+      _navigateToVNCViewer(VNCViewerMode.webview);
     }).catchError((error) {
       setState(() {
         _connectionError = 'Failed to load embedded noVNC: $error';
         _isConnecting = false;
       });
+    });
+  }
+
+  // Demo mode connection - immediately navigates to demo viewer
+  void _connectWithDemo() {
+    print('DEBUG: _connectWithDemo called');
+    setState(() {
+      _isConnecting = true;
+      _connectionError = null;
+    });
+    print('DEBUG: Set _isConnecting to true');
+
+    // Simulate a brief connection delay
+    Future.delayed(const Duration(seconds: 1), () {
+      print('DEBUG: Delayed callback executing');
+      setState(() {
+        _showConnectionForm = false;
+        _isConnected = true;
+        _isConnecting = false;
+      });
+      print('DEBUG: About to navigate to VNC viewer');
+      // Navigate to VNC viewer screen for demo
+      _navigateToVNCViewer(VNCViewerMode.demo);
     });
   }
 
@@ -220,6 +195,60 @@ class _VNCScreenState extends State<VNCScreen> {
     _vncClient = null;
   }
 
+  void _navigateToVNCViewer(VNCViewerMode mode) {
+    print('DEBUG: _navigateToVNCViewer called with mode: $mode');
+    final host = _hostController.text.trim();
+    final port = mode == VNCViewerMode.webview
+        ? (int.tryParse(_portController.text.trim()) ?? 6080)
+        : (int.tryParse(_vncPortController.text.trim()) ?? 5900);
+    final password = _passwordController.text.trim();
+
+    // For demo mode, use default values if host is empty
+    final effectiveHost =
+        (mode == VNCViewerMode.demo && host.isEmpty) ? 'demo.local' : host;
+
+    print(
+        'DEBUG: About to navigate to VNCViewerScreen with host: $effectiveHost, port: $port');
+
+    try {
+      Navigator.of(context)
+          .push(
+        MaterialPageRoute(
+          builder: (context) => VNCViewerScreen(
+            host: effectiveHost,
+            port: port,
+            password: password.isEmpty ? null : password,
+            mode: mode,
+            vncClient: mode == VNCViewerMode.native ? _vncClient : null,
+            webViewController:
+                mode == VNCViewerMode.webview ? _webViewController : null,
+          ),
+        ),
+      )
+          .then((_) {
+        print('DEBUG: Returned from VNC viewer');
+        // When returning from VNC viewer, reset the connection state
+        setState(() {
+          _isConnected = false;
+          _showConnectionForm = true;
+          _isConnecting = false;
+        });
+
+        // Clean up connections
+        _vncClient?.disconnect();
+        _vncClient = null;
+        _webViewController
+            ?.loadHtmlString('<html><body><h1>Disconnected</h1></body></html>');
+      });
+    } catch (e) {
+      print('DEBUG: Error navigating to VNC viewer: $e');
+      setState(() {
+        _connectionError = 'Navigation error: $e';
+        _isConnecting = false;
+      });
+    }
+  }
+
   // Helper methods for connection mode UI
   String _getConnectionModeDescription() {
     switch (_connectionMode) {
@@ -235,9 +264,9 @@ class _VNCScreenState extends State<VNCScreen> {
   VoidCallback? _getConnectFunction() {
     switch (_connectionMode) {
       case VNCConnectionMode.demo:
-        return _connectWithEmbeddedNoVNC;
+        return _connectWithDemo;
       case VNCConnectionMode.webview:
-        return _connect;
+        return _connectWithEmbeddedNoVNC;
       case VNCConnectionMode.native:
         return _connectWithNativeVNC;
     }
@@ -387,25 +416,33 @@ class _VNCScreenState extends State<VNCScreen> {
       print('VNC Log: $log');
     });
 
+    // Set up connection state listener BEFORE connecting
     _vncClient!.connectionState.listen((state) {
+      print('DEBUG: VNC connection state changed to: $state');
       setState(() {
         switch (state) {
           case VNCConnectionState.connected:
+            print('DEBUG: Connection state is CONNECTED, navigating to viewer');
             _isConnected = true;
             _isConnecting = false;
             _showConnectionForm = false;
+            // Navigate to VNC viewer screen
+            _navigateToVNCViewer(VNCViewerMode.native);
             break;
           case VNCConnectionState.failed:
+            print('DEBUG: Connection state is FAILED');
             _connectionError =
                 'Failed to connect to VNC server. If you see "Too many security failures", wait 5-10 minutes before retrying.';
             _isConnecting = false;
             break;
           case VNCConnectionState.disconnected:
+            print('DEBUG: Connection state is DISCONNECTED');
             _isConnected = false;
             _isConnecting = false;
             _showConnectionForm = true;
             break;
           default:
+            print('DEBUG: Connection state is: $state');
             break;
         }
       });
@@ -975,7 +1012,15 @@ class _VNCScreenState extends State<VNCScreen> {
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: _isConnecting ? null : _getConnectFunction(),
+                  onPressed: _isConnecting
+                      ? null
+                      : () {
+                          print(
+                              'DEBUG: Connect button pressed! Mode: $_connectionMode');
+                          final connectFunc = _getConnectFunction();
+                          print('DEBUG: Connect function: $connectFunc');
+                          connectFunc?.call();
+                        },
                   icon: Icon(_getConnectIcon()),
                   label: _isConnecting
                       ? const Text('Connecting...')
