@@ -53,7 +53,7 @@ class VNCScreen extends StatefulWidget {
   State<VNCScreen> createState() => _VNCScreenState();
 }
 
-class _VNCScreenState extends State<VNCScreen> {
+class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
   final TextEditingController _hostController = TextEditingController();
   final TextEditingController _portController =
       TextEditingController(text: '6080');
@@ -409,6 +409,14 @@ class _VNCScreenState extends State<VNCScreen> {
       case VNCConnectionMode.native:
         return Colors.blue;
     }
+  }
+
+  // Build marquee text widget for long dropdown text
+  Widget _buildMarqueeText(String text) {
+    return SizedBox(
+      width: 180.0, // Fixed width to prevent overflow
+      child: _MarqueeText(text: text),
+    );
   }
 
   // Debug VNC handshake
@@ -1024,12 +1032,13 @@ class _VNCScreenState extends State<VNCScreen> {
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.settings_display),
                     ),
-                    items: const [
+                    items: [
                       DropdownMenuItem(
                         value: VNCConnectionMode.native,
-                        child: Text('Native VNC Client (Recommended)'),
+                        child: _buildMarqueeText(
+                            'Native VNC Client (Recommended)'),
                       ),
-                      DropdownMenuItem(
+                      const DropdownMenuItem(
                         value: VNCConnectionMode.webview,
                         child: Text('noVNC (WebView)'),
                       ),
@@ -1506,5 +1515,78 @@ class _VNCScreenState extends State<VNCScreen> {
               )
             : const Center(child: CircularProgressIndicator());
     }
+  }
+}
+
+// Custom marquee text widget for dropdown items
+class _MarqueeText extends StatefulWidget {
+  final String text;
+  const _MarqueeText({required this.text});
+
+  @override
+  State<_MarqueeText> createState() => _MarqueeTextState();
+}
+
+class _MarqueeTextState extends State<_MarqueeText>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late ScrollController _scrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+    _controller = AnimationController(
+      duration: const Duration(seconds: 3),
+      vsync: this,
+    );
+
+    // Start animation after a delay
+    Future.delayed(const Duration(seconds: 1), () {
+      if (mounted) {
+        _startMarquee();
+      }
+    });
+  }
+
+  void _startMarquee() async {
+    while (mounted) {
+      await Future.delayed(const Duration(seconds: 2));
+      if (mounted && _scrollController.hasClients) {
+        await _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(seconds: 2),
+          curve: Curves.easeInOut,
+        );
+        await Future.delayed(const Duration(seconds: 1));
+        if (mounted && _scrollController.hasClients) {
+          await _scrollController.animateTo(
+            0.0,
+            duration: const Duration(seconds: 2),
+            curve: Curves.easeInOut,
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      controller: _scrollController,
+      scrollDirection: Axis.horizontal,
+      child: Text(
+        widget.text,
+        style: const TextStyle(fontSize: 14),
+        overflow: TextOverflow.visible,
+      ),
+    );
   }
 }
