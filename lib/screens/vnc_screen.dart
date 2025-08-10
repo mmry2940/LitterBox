@@ -3,6 +3,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../vnc_client.dart'; // This includes VNCScalingMode, VNCInputMode, VNCResolutionMode
+import '../vnc_profiles.dart'; // VNC connection profiles
 
 enum VNCConnectionMode {
   webview, // noVNC via WebView
@@ -71,6 +72,8 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
   VNCInputMode _inputMode = VNCInputMode.directTouch;
   VNCResolutionMode _resolutionMode = VNCResolutionMode.fixed;
   List<SavedVNCDevice> _savedDevices = [];
+  List<VNCProfile> _connectionProfiles = [];
+  VNCProfile? _selectedProfile;
 
   WebViewController? _webViewController;
   VNCConnectionMode _connectionMode =
@@ -93,6 +96,7 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
     }
 
     _loadSavedDevices();
+    _loadConnectionProfiles();
     _initializeWebView();
   }
 
@@ -136,6 +140,185 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
     await prefs.setStringList('saved_vnc_devices', devicesJson);
 
     setState(() {});
+  }
+
+  Future<void> _loadConnectionProfiles() async {
+    try {
+      final profiles = await VNCProfileManager.getAllProfiles();
+      final lastUsedProfileName =
+          await VNCProfileManager.getLastUsedProfileName();
+
+      setState(() {
+        _connectionProfiles = profiles;
+        if (lastUsedProfileName != null) {
+          try {
+            _selectedProfile = profiles.firstWhere(
+              (p) => p.name == lastUsedProfileName,
+            );
+          } catch (e) {
+            _selectedProfile = profiles.isNotEmpty ? profiles.first : null;
+          }
+        } else if (profiles.isNotEmpty) {
+          _selectedProfile = profiles.first;
+        }
+
+        // Apply selected profile settings if available
+        if (_selectedProfile != null) {
+          _applyProfile(_selectedProfile!);
+        }
+      });
+    } catch (e) {
+      print('Error loading connection profiles: $e');
+    }
+  }
+
+  void _applyProfile(VNCProfile profile) {
+    setState(() {
+      if (profile.host.isNotEmpty) {
+        _hostController.text = profile.host;
+      }
+      _vncPortController.text = profile.port.toString();
+      if (profile.password != null) {
+        _passwordController.text = profile.password!;
+      }
+
+      // Apply display settings
+      _scalingMode =
+          _mapStringToScalingMode(profile.displaySettings.scalingMode);
+
+      // Apply input settings
+      _inputMode = _mapStringToInputMode(profile.inputSettings.inputMode);
+    });
+  }
+
+  VNCScalingMode _mapStringToScalingMode(String scalingMode) {
+    switch (scalingMode) {
+      case 'autoFitWidth':
+        return VNCScalingMode.autoFitWidth;
+      case 'autoFitHeight':
+        return VNCScalingMode.autoFitHeight;
+      case 'autoFitBest':
+        return VNCScalingMode.autoFitBest;
+      case 'fitToScreen':
+        return VNCScalingMode.fitToScreen;
+      case 'centerCrop':
+        return VNCScalingMode.centerCrop;
+      case 'actualSize':
+        return VNCScalingMode.actualSize;
+      case 'stretchFit':
+        return VNCScalingMode.stretchFit;
+      default:
+        return VNCScalingMode.autoFitBest;
+    }
+  }
+
+  VNCInputMode _mapStringToInputMode(String inputMode) {
+    switch (inputMode) {
+      case 'directTouch':
+        return VNCInputMode.directTouch;
+      case 'trackpadMode':
+        return VNCInputMode.trackpadMode;
+      case 'directTouchWithZoom':
+        return VNCInputMode.directTouchWithZoom;
+      default:
+        return VNCInputMode.directTouch;
+    }
+  }
+
+  Future<void> _saveCurrentAsProfile() async {
+    final nameController = TextEditingController();
+    final descriptionController = TextEditingController();
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Save Connection Profile'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Profile Name',
+                hintText: 'e.g., My Windows PC',
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: descriptionController,
+              decoration: const InputDecoration(
+                labelText: 'Description (optional)',
+                hintText: 'Brief description of this connection',
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true && nameController.text.trim().isNotEmpty) {
+      final profile = VNCProfileManager.createProfileFromSettings(
+        name: nameController.text.trim(),
+        description: descriptionController.text.trim(),
+        host: _hostController.text.trim(),
+        port: int.tryParse(_vncPortController.text.trim()) ?? 5900,
+        password: _passwordController.text.isNotEmpty
+            ? _passwordController.text
+            : null,
+        scalingMode: _getScalingModeString(_scalingMode),
+        inputMode: _getInputModeString(_inputMode),
+      );
+
+      await VNCProfileManager.saveProfile(profile);
+      await _loadConnectionProfiles(); // Reload profiles
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Profile "${profile.name}" saved')),
+      );
+    }
+  }
+
+  String _getScalingModeString(VNCScalingMode mode) {
+    switch (mode) {
+      case VNCScalingMode.autoFitWidth:
+        return 'autoFitWidth';
+      case VNCScalingMode.autoFitHeight:
+        return 'autoFitHeight';
+      case VNCScalingMode.autoFitBest:
+        return 'autoFitBest';
+      case VNCScalingMode.fitToScreen:
+        return 'fitToScreen';
+      case VNCScalingMode.centerCrop:
+        return 'centerCrop';
+      case VNCScalingMode.actualSize:
+        return 'actualSize';
+      case VNCScalingMode.stretchFit:
+        return 'stretchFit';
+      default:
+        return 'autoFitBest';
+    }
+  }
+
+  String _getInputModeString(VNCInputMode mode) {
+    switch (mode) {
+      case VNCInputMode.directTouch:
+        return 'directTouch';
+      case VNCInputMode.trackpadMode:
+        return 'trackpadMode';
+      case VNCInputMode.directTouchWithZoom:
+        return 'directTouchWithZoom';
+    }
   }
 
   Future<void> _loadDevice(SavedVNCDevice device) async {
@@ -1372,19 +1555,6 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
               ],
             ),
           ],
-          // Always show embedded demo option
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _isConnecting ? null : _connectWithEmbeddedNoVNC,
-                  icon: const Icon(Icons.integration_instructions),
-                  label: const Text('Use Embedded Demo'),
-                ),
-              ),
-            ],
-          ),
           const SizedBox(height: 24),
           ExpansionTile(
             title: const Text('Setup Instructions'),
@@ -1395,23 +1565,15 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Option 1: External noVNC Server',
+                      'Setup Instructions',
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
+                    const SizedBox(height: 8),
                     const Text(
-                      '• Install noVNC on your server\n'
-                      '• Run: websockify --web /path/to/noVNC 6080 localhost:5900\n'
-                      '• Use server IP and port 6080',
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Option 2: Embedded noVNC (Recommended)',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const Text(
-                      '• Uses built-in noVNC simulation\n'
-                      '• No external server required\n'
-                      '• Good for testing and development',
+                      '• Install VNC server on your target machine\n'
+                      '• Configure VNC server (usually port 5900)\n'
+                      '• Use target machine IP and VNC port\n'
+                      '• Enter password if VNC server requires authentication',
                     ),
                   ],
                 ),
