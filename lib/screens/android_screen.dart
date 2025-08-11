@@ -163,6 +163,7 @@ class _AndroidScreenState extends State<AndroidScreen>
   Future<void> _pairDevice() async {
     final host = _hostController.text.trim();
     final pairingPort = int.tryParse(_pairingPortController.text) ?? 37205;
+    final connectionPort = int.tryParse(_portController.text) ?? 5555;
     final pairingCode = _pairingCodeController.text.trim();
 
     if (host.isEmpty || pairingCode.isEmpty) {
@@ -175,7 +176,8 @@ class _AndroidScreenState extends State<AndroidScreen>
       return;
     }
 
-    final success = await _adbClient.pairDevice(host, pairingPort, pairingCode);
+    final success = await _adbClient.pairDevice(
+        host, pairingPort, pairingCode, connectionPort);
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -190,6 +192,10 @@ class _AndroidScreenState extends State<AndroidScreen>
 
   Future<void> _disconnect() async {
     await _adbClient.disconnect();
+  }
+
+  Future<void> _checkADBServer() async {
+    await _adbClient.checkADBServer();
   }
 
   Future<void> _executeCommand() async {
@@ -469,6 +475,99 @@ class _AndroidScreenState extends State<AndroidScreen>
                     const SizedBox(height: 16),
                   ],
 
+                  // ADB Server Controls
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    child: Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'ADB Server Control',
+                              style: TextStyle(
+                                  fontSize: 14, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: (_adbClient.currentState ==
+                                            ADBConnectionState.connected)
+                                        ? null
+                                        : () => _adbClient.startServer(),
+                                    icon:
+                                        const Icon(Icons.play_arrow, size: 18),
+                                    label: const Text('Start',
+                                        style: TextStyle(fontSize: 12)),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 8),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: (_adbClient.currentState !=
+                                            ADBConnectionState.connected)
+                                        ? null
+                                        : () => _adbClient.stopServer(),
+                                    icon: const Icon(Icons.stop, size: 18),
+                                    label: const Text('Stop',
+                                        style: TextStyle(fontSize: 12)),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 8),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: _checkADBServer,
+                                    icon: const Icon(Icons.refresh, size: 18),
+                                    label: const Text('Check',
+                                        style: TextStyle(fontSize: 12)),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 8),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (_adbClient.server != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                  'Status: ${_adbClient.server!.currentState.name}',
+                                  style: const TextStyle(fontSize: 12)),
+                              if (_adbClient.getServerDevices().isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                const Text('Devices:',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold)),
+                                ..._adbClient.getServerDevices().take(2).map(
+                                      (device) => Padding(
+                                        padding: const EdgeInsets.only(
+                                            left: 8, top: 2),
+                                        child: Text(
+                                            '• ${device.id} (${device.state})',
+                                            style:
+                                                const TextStyle(fontSize: 11)),
+                                      ),
+                                    ),
+                              ],
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
                   // Action Buttons
                   Row(
                     children: [
@@ -680,10 +779,157 @@ class _AndroidScreenState extends State<AndroidScreen>
       child: ListView(
         children: [
           const Text(
-            'Android ADB Information',
+            'Android ADB Setup Guide',
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
+
+          // ADB Server Setup
+          Card(
+            color: Colors.blue.shade50,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.settings_system_daydream,
+                          color: Colors.blue),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'ADB Server Setup',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    '1. Install Android SDK Platform Tools\n'
+                    '2. Add ADB to your system PATH\n'
+                    '3. Run "adb start-server" in terminal\n'
+                    '4. Use "Check ADB Server" button to verify',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade200,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      'Download: https://developer.android.com/studio/releases/platform-tools',
+                      style: TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Wireless ADB Setup
+          Card(
+            color: Colors.green.shade50,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.wifi, color: Colors.green),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Wireless ADB Setup',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Android 11+ (Wireless Debugging):\n'
+                    '1. Enable Developer Options\n'
+                    '2. Enable "Wireless debugging"\n'
+                    '3. Tap "Pair device with pairing code"\n'
+                    '4. Use pairing code and port in this app\n'
+                    '5. Connect using IP and port 5555',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Older Android (ADB over network):\n'
+                    '1. Connect via USB first\n'
+                    '2. Run: adb tcpip 5555\n'
+                    '3. Disconnect USB\n'
+                    '4. Connect using device IP:5555',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // USB Setup
+          Card(
+            color: Colors.orange.shade50,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.usb, color: Colors.orange),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'USB Debugging Setup',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    '1. Enable Developer Options:\n'
+                    '   Settings → About → Tap "Build number" 7 times\n'
+                    '2. Enable "USB debugging"\n'
+                    '3. Connect device via USB\n'
+                    '4. Accept debugging authorization on device\n'
+                    '5. Use USB connection type in this app',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Connection Types
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Connection Types',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    '• Wi-Fi: Connect to devices over network (IP:5555)\n'
+                    '• USB: Connect via USB cable (localhost:5037)\n'
+                    '• Custom: Specify custom IP and port\n'
+                    '• Pairing: Pair new wireless debugging devices',
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // About ADB
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -697,68 +943,7 @@ class _AndroidScreenState extends State<AndroidScreen>
                   const SizedBox(height: 8),
                   const Text(
                     'Android Debug Bridge (ADB) is a versatile command-line tool that lets you communicate with a device. '
-                    'The ADB command facilitates a variety of device actions, such as installing and debugging apps.',
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Connection Types',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '• Wi-Fi: Connect to Android devices over network (requires ADB over network enabled)\n'
-                    '• USB: Connect via USB cable (requires ADB daemon running)\n'
-                    '• Custom: Specify custom IP and port for connection',
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Setup Instructions',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '1. Enable Developer Options on your Android device\n'
-                    '2. Enable USB Debugging in Developer Options\n'
-                    '3. For Wi-Fi: Enable "ADB over network" or use "adb tcpip 5555"\n'
-                    '4. Connect using the device IP address and port 5555',
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Security Note',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'ADB provides powerful access to your Android device. Only connect to trusted devices '
-                    'and networks. The first connection may require authorization on the target device.',
-                    style: TextStyle(color: Colors.red),
+                    'It facilitates device actions like installing apps, debugging, accessing shell commands, and more.',
                   ),
                 ],
               ),
