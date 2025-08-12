@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async'; // For Timer
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
@@ -67,11 +68,14 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
   bool _isConnecting = false;
   String? _connectionError;
   bool _showVncWidget = false;
+  // Popup card (bottom sheet) for connection form instead of full screen replacement
+  bool _connectionSheetOpen = false;
   VNCScalingMode _scalingMode = VNCScalingMode
       .autoFitBest; // Auto-fit best dimension (recommended for Android)
   VNCInputMode _inputMode = VNCInputMode.directTouch;
   VNCResolutionMode _resolutionMode = VNCResolutionMode.fixed;
   List<SavedVNCDevice> _savedDevices = [];
+  // ignore: unused_field - reserved for future profile selection UI
   List<VNCProfile> _connectionProfiles = [];
   VNCProfile? _selectedProfile;
 
@@ -79,6 +83,13 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
   VNCConnectionMode _connectionMode =
       VNCConnectionMode.native; // Set native as default
   VNCClient? _vncClient;
+
+  // Auto reconnect support
+  bool _autoReconnect = false;
+  int _reconnectDelaySeconds = 10;
+  Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
+  final int _maxReconnectAttempts = 5;
 
   @override
   void initState() {
@@ -225,6 +236,7 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
     }
   }
 
+  // ignore: unused_element - profile saving dialog currently not exposed in popup card
   Future<void> _saveCurrentAsProfile() async {
     final nameController = TextEditingController();
     final descriptionController = TextEditingController();
@@ -347,6 +359,7 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
     // Disconnect VNC client if connected
     _vncClient?.disconnect();
     _vncClient = null;
+  _cancelScheduledReconnect();
   }
 
   void _showSaveDeviceDialog() {
@@ -723,6 +736,12 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
               print('DEBUG: Connection state is CONNECTED, showing VNC widget');
               _isConnecting = false;
               _showVncWidget = true;
+              _reconnectAttempts = 0; // reset attempts on success
+              _cancelScheduledReconnect();
+              // Close sheet if still open
+              if (_connectionSheetOpen && Navigator.of(context).canPop()) {
+                Navigator.of(context).pop();
+              }
               break;
             case VNCConnectionState.failed:
               print('DEBUG: Connection state is FAILED');
@@ -730,11 +749,13 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
                   'Failed to connect to VNC server. If you see "Too many security failures", wait 5-10 minutes before retrying.';
               _isConnecting = false;
               _showVncWidget = false;
+              _maybeScheduleReconnect();
               break;
             case VNCConnectionState.disconnected:
               print('DEBUG: Connection state is DISCONNECTED');
               _isConnecting = false;
               _showVncWidget = false;
+              _maybeScheduleReconnect();
               break;
             default:
               print('DEBUG: Connection state is: $state');
@@ -1133,24 +1154,152 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildConnectionForm() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.desktop_windows, size: 64, color: Colors.blue),
-          const SizedBox(height: 24),
-          const Text(
-            'noVNC Remote Desktop',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.desktop_windows, size: 40, color: Colors.blue),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: const [
+                          Text('VNC Connection',
+                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                          SizedBox(height: 4),
+                          Text('Configure and connect to your remote desktop',
+                              style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(context).maybePop(),
+                    )
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ActionChip(
+                      label: const Text('Common Profiles'),
+                      avatar: const Icon(Icons.list_alt, size: 18),
+                      onPressed: () async {
+                        final profiles = await VNCProfileManager.getAllProfiles();
+                        if (mounted) {
+                          setState(() {
+                            _connectionProfiles = profiles;
+                          });
+                        }
+                        _showProfilesDialog();
+                      },
+                    ),
+                    ActionChip(
+                      label: const Text('Save Profile'),
+                      avatar: const Icon(Icons.save, size: 18),
+                      onPressed: _saveCurrentAsProfile,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (_selectedProfile != null)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.bookmark, color: Colors.blue),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Profile: ${_selectedProfile!.name}\n${_selectedProfile!.description}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            setState(() {
+                              _selectedProfile = null;
+                            });
+                          },
+                          child: const Text('Clear'),
+                        )
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Column(
+              children: [
+          // Auto reconnect controls
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Column(
+                children: [
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Auto Reconnect'),
+                    subtitle: Text(_autoReconnect
+                        ? 'Attempts: $_reconnectAttempts / $_maxReconnectAttempts'
+                        : 'Disabled'),
+                    value: _autoReconnect,
+                    onChanged: (v) {
+                      setState(() {
+                        _autoReconnect = v;
+                      });
+                      if (!v) _cancelScheduledReconnect();
+                    },
+                  ),
+                  if (_autoReconnect)
+                    Row(
+                      children: [
+                        const Text('Delay (s):'),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Slider(
+                            value: _reconnectDelaySeconds.toDouble(),
+                            min: 5,
+                            max: 60,
+                            divisions: 11,
+                            label: '$_reconnectDelaySeconds',
+                            onChanged: (val) {
+                              setState(() {
+                                _reconnectDelaySeconds = val.round();
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  if (_reconnectTimer != null)
+                    Text(
+                      'Reconnecting in ${_remainingReconnectSeconds()}s...',
+                      style: const TextStyle(fontSize: 12, color: Colors.orange),
+                    ),
+                ],
+              ),
+            ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            'Connect to a VNC server using noVNC web client',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 32),
 
           // Saved Devices Section
           if (_savedDevices.isNotEmpty) ...[
@@ -1477,7 +1626,7 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           if (_connectionError != null)
             Container(
               margin: const EdgeInsets.only(bottom: 16),
@@ -1553,33 +1702,159 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
             ),
           ],
           const SizedBox(height: 24),
-          ExpansionTile(
-            title: const Text('Setup Instructions'),
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          Card(
+            child: ExpansionTile(
+              title: const Text('Setup & Tips'),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text('Quick Setup', style: TextStyle(fontWeight: FontWeight.bold)),
+                      SizedBox(height: 8),
+                      Text('• Install VNC server on target machine\n'
+                          '• Default ports: 5900 (VNC), 5901+ for multiple displays\n'
+                          '• Enter password if server requires authentication'),
+                      SizedBox(height: 12),
+                      Text('Performance Tips', style: TextStyle(fontWeight: FontWeight.bold)),
+                      SizedBox(height: 8),
+                      Text('• Use Auto-fit Best scaling for most devices\n'
+                          '• Trackpad mode is better for precise control\n'
+                          '• Enable Auto Reconnect for unstable networks'),
+                    ],
+                  ),
+                )
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+              ],
+            ),
+          ),
+        ),
+        const SliverPadding(padding: EdgeInsets.only(bottom: 48)),
+      ],
+    );
+  }
+
+  void _showProfilesDialog() async {
+    final profiles = _connectionProfiles;
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: ListView.builder(
+            itemCount: profiles.length,
+            itemBuilder: (c, i) {
+              final p = profiles[i];
+              final isCustom = !VNCProfileManager.getCommonProfiles()
+                  .any((cp) => cp.name == p.name);
+              return ListTile(
+                leading: Icon(isCustom ? Icons.star : Icons.auto_awesome_motion,
+                    color: isCustom ? Colors.amber : Colors.blue),
+                title: Text(p.name),
+                subtitle: Text(p.description.isEmpty ? 'No description' : p.description,
+                    maxLines: 2, overflow: TextOverflow.ellipsis),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      'Setup Instructions',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '• Install VNC server on your target machine\n'
-                      '• Configure VNC server (usually port 5900)\n'
-                      '• Use target machine IP and VNC port\n'
-                      '• Enter password if VNC server requires authentication',
+                    if (isCustom)
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Delete profile',
+                        onPressed: () async {
+                          await VNCProfileManager.deleteProfile(p.name);
+                          final updated = await VNCProfileManager.getAllProfiles();
+                          if (mounted) {
+                            setState(() {
+                              _connectionProfiles = updated;
+                            });
+                          }
+                          Navigator.of(ctx).pop();
+                        },
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.check_circle_outline),
+                      tooltip: 'Apply',
+                      onPressed: () async {
+                        if (mounted) {
+                          setState(() {
+                            _selectedProfile = p;
+                            _applyProfile(p);
+                          });
+                        }
+                        await VNCProfileManager.saveLastUsedProfile(p.name);
+                        Navigator.of(ctx).pop();
+                      },
                     ),
                   ],
                 ),
-              ),
-            ],
+              );
+            },
           ),
-        ],
+        );
+      },
+    );
+  }
+
+  // Schedules a reconnect attempt if enabled and attempts remain.
+  void _maybeScheduleReconnect() {
+    if (!_autoReconnect || _isConnecting) return;
+    if (_reconnectAttempts >= _maxReconnectAttempts) return;
+    if (_reconnectTimer != null) return; // already scheduled
+
+    _reconnectAttempts++;
+    final delay = Duration(seconds: _reconnectDelaySeconds);
+    final snack = SnackBar(
+      content: Text('Reconnecting in ${_reconnectDelaySeconds}s (attempt $_reconnectAttempts/$_maxReconnectAttempts)...'),
+      duration: const Duration(seconds: 3),
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(snack);
+    }
+    final start = DateTime.now();
+    _reconnectTimer = Timer(delay, () {
+      _reconnectTimer = null;
+      if (mounted && !_isConnecting && !_showVncWidget) {
+        _connectWithNativeVNC();
+      }
+    });
+    // store start time for remaining seconds calc
+    _reconnectTimerStart = start;
+  }
+
+  DateTime? _reconnectTimerStart;
+  int _remainingReconnectSeconds() {
+    if (_reconnectTimer == null || _reconnectTimerStart == null) return 0;
+    final elapsed = DateTime.now().difference(_reconnectTimerStart!);
+    final remain = _reconnectDelaySeconds - elapsed.inSeconds;
+    return remain.clamp(0, _reconnectDelaySeconds);
+  }
+
+  void _cancelScheduledReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _reconnectTimerStart = null;
+  }
+
+  // Opens the modal bottom sheet connection form
+  Future<void> _openConnectionSheet() async {
+    if (_connectionSheetOpen) return;
+    _connectionSheetOpen = true;
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: 0.9,
+          child: _buildConnectionForm(),
+        ),
       ),
     );
+    _connectionSheetOpen = false;
   }
 
   @override
@@ -1606,51 +1881,100 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
                 onPressed: _disconnect,
                 tooltip: 'Close',
               ),
-            ] else
+            ] else ...[
               IconButton(
-                icon: const Icon(Icons.help_outline),
-                onPressed: () {
-                  showDialog(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('VNC Help'),
-                      content: const SingleChildScrollView(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                                'VNC (Virtual Network Computing) allows you to remotely control another computer.'),
-                            SizedBox(height: 8),
-                            Text('Connection Modes:'),
-                            SizedBox(height: 4),
-                            Text(
-                                '• Native Mode: Direct VNC protocol (recommended)'),
-                            Text('• WebView Mode: noVNC web client'),
-                            SizedBox(height: 8),
-                            Text('For real connections, you need:'),
-                            Text('• VNC server running on target machine'),
-                            Text('• Correct host/IP and port'),
-                            Text('• Password (if required)'),
-                            SizedBox(height: 8),
-                            Text(
-                                'You can save frequently used devices for quick access.'),
-                          ],
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('OK'),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+                icon: const Icon(Icons.settings_input_composite),
+                onPressed: _openConnectionSheet,
+                tooltip: 'Open Connection Form',
               ),
+            ],
+            IconButton(
+              icon: const Icon(Icons.help_outline),
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('VNC Help'),
+                    content: const SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                              'VNC (Virtual Network Computing) allows you to remotely control another computer.'),
+                          SizedBox(height: 8),
+                          Text('Connection Modes:'),
+                          SizedBox(height: 4),
+                          Text(
+                              '• Native Mode: Direct VNC protocol (recommended)'),
+                          Text('• WebView Mode: noVNC web client'),
+                          SizedBox(height: 8),
+                          Text('For real connections, you need:'),
+                          Text('• VNC server running on target machine'),
+                          Text('• Correct host/IP and port'),
+                          Text('• Password (if required)'),
+                          SizedBox(height: 8),
+                          Text(
+                              'You can save frequently used devices for quick access.'),
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('OK'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           ],
         ),
-        body: _showVncWidget ? _buildVncWidget() : _buildConnectionForm(),
+        body: _showVncWidget
+            ? _buildVncWidget()
+            : Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.desktop_windows,
+                        size: 72, color: Colors.blueGrey),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'VNC Remote Desktop',
+                      style:
+                          TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Open the connection card to configure and connect.',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: _openConnectionSheet,
+                      icon: const Icon(Icons.link),
+                      label: const Text('Open Connection Card'),
+                    ),
+                    if (_connectionError != null) ...[
+                      const SizedBox(height: 16),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                        child: Text(_connectionError!,
+                            style: const TextStyle(color: Colors.red),
+                            textAlign: TextAlign.center),
+                      ),
+                    ]
+                  ],
+                ),
+              ),
+        floatingActionButton: !_showVncWidget
+            ? FloatingActionButton.extended(
+                onPressed: _openConnectionSheet,
+                icon: const Icon(Icons.settings_ethernet),
+                label: const Text('Connect'),
+              )
+            : null,
       ),
     );
   }
