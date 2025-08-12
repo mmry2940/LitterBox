@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../adb_client.dart';
 import '../adb_backend.dart';
+import '../webadb_server.dart';
 
 class AndroidScreen extends StatefulWidget {
   const AndroidScreen({super.key});
@@ -18,6 +19,9 @@ class _AndroidScreenState extends State<AndroidScreen>
   int _navIndex = 0;
   late ADBClientManager _adbClient;
   List<ADBBackendDevice> _externalDevices = [];
+  String _selectedBackend = 'external'; // external | internal
+  WebAdbServer? _webAdbServer;
+  final _webAdbPortController = TextEditingController(text: '8587');
 
   // Connection form controllers
   final _hostController = TextEditingController(text: '192.168.1.100');
@@ -113,21 +117,14 @@ class _AndroidScreenState extends State<AndroidScreen>
     _pairingCodeController.dispose();
     _outputScrollController.dispose();
     _logcatFilterController.dispose();
+    _webAdbPortController.dispose();
     super.dispose();
   }
 
   Future<void> _refreshExternalDevices() async {
     if (!_adbClient.usingExternalBackend) return;
-    try {
-      await _adbClient.enableExternalAdbBackend(); // ensure initialized
-      // call backend directly through temp method
-      final backendDevices = await (ExternalAdbBackend()).listDevices();
-      if (mounted) {
-        setState(() {
-          _externalDevices = backendDevices;
-        });
-      }
-    } catch (_) {}
+    final devices = await _adbClient.refreshBackendDevices();
+    if (mounted) setState(() => _externalDevices = devices);
   }
 
   Future<void> _loadSavedDevices() async {
@@ -380,9 +377,24 @@ class _AndroidScreenState extends State<AndroidScreen>
             ],
           ),
           const VerticalDivider(width: 1),
-          Expanded(child: _buildBodyByIndex()),
+          Expanded(child: _lazyBody()),
         ],
       ),
+    );
+  }
+
+  // Cache built tabs when first visited
+  final Map<int, Widget> _tabCache = {};
+
+  Widget _lazyBody() {
+    // Preserve state per tab by caching the widget tree once created
+    if (!_tabCache.containsKey(_navIndex)) {
+      _tabCache[_navIndex] = _buildBodyByIndex();
+    }
+    // Use IndexedStack to keep previous tabs alive without rebuilding
+    return IndexedStack(
+      index: _navIndex,
+      children: List.generate(6, (i) => _tabCache[i] ?? const SizedBox()),
     );
   }
 
@@ -407,28 +419,33 @@ class _AndroidScreenState extends State<AndroidScreen>
   Widget _buildDashboard() {
     return LayoutBuilder(builder: (context, constraints) {
       final isWide = constraints.maxWidth > 900;
-      final left = Expanded(child: _buildConnectionTab());
-      final right = Expanded(
-        child: Column(
-          children: [
-            _buildDeviceSummaryCard(),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _buildQuickActions(),
-              ),
+      final left = _buildConnectionTab();
+      final right = Column(
+        children: [
+          _buildDeviceSummaryCard(),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _buildQuickActions(),
             ),
-          ],
-        ),
+          ),
+        ],
       );
       return Padding(
         padding: const EdgeInsets.all(8.0),
         child: isWide
-            ? Row(children: [left, const SizedBox(width: 12), right])
+            ? Row(children: [
+                Expanded(child: left),
+                const SizedBox(width: 12),
+                Expanded(child: right),
+              ])
             : Column(children: [
                 Expanded(child: left),
                 const SizedBox(height: 12),
-                SizedBox(height: 320, child: right)
+                SizedBox(
+                  height: 320,
+                  child: right,
+                )
               ]),
       );
     });
@@ -556,6 +573,170 @@ class _AndroidScreenState extends State<AndroidScreen>
                   ),
                 );
               },
+            ),
+            const SizedBox(height: 16),
+
+            // Backend Selector (internal vs external)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.settings_input_component, size: 18),
+                        const SizedBox(width: 6),
+                        const Text('ADB Backend',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold)),
+                        const Spacer(),
+                        Tooltip(
+                          message:
+                              'External uses system adb (real devices). Internal is a mock backend for demo/offline.',
+                          child: const Icon(Icons.info_outline, size: 16),
+                        )
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: _selectedBackend,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            labelText: 'Backend',
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'external',
+                                child: Text('External (system adb)')),
+                            DropdownMenuItem(
+                                value: 'internal',
+                                child: Text('Internal (mock)')),
+                          ],
+                          onChanged: (v) {
+                            if (v == null) return;
+                            setState(() => _selectedBackend = v);
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      ElevatedButton(
+                        onPressed: () async {
+                          if (_selectedBackend == 'external') {
+                            await _adbClient.enableExternalAdbBackend();
+                          } else {
+                            await _adbClient.enableInternalAdbBackend();
+                          }
+                          await _refreshExternalDevices();
+                          if (mounted) setState(() {});
+                        },
+                        child: const Text('Apply'),
+                      )
+                    ]),
+                    const SizedBox(height: 12),
+                    Text('Active: ${_adbClient.backendLabel}',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.primary)),
+                    if (_selectedBackend == 'external' &&
+                        _externalDevices.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: _realDeviceHelp(),
+                      )
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // WebADB Bridge Controls
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.public, size: 18),
+                        const SizedBox(width: 6),
+                        const Text('WebADB Bridge',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold)),
+                        const Spacer(),
+                        Tooltip(
+                          message:
+                              'Starts a lightweight HTTP + WebSocket bridge for browser clients (/devices, /connect, /disconnect, /shell).',
+                          child: const Icon(Icons.info_outline, size: 16),
+                        )
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        SizedBox(
+                          width: 110,
+                          child: TextField(
+                            controller: _webAdbPortController,
+                            decoration: const InputDecoration(
+                              labelText: 'Port',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            keyboardType: TextInputType.number,
+                            enabled: !(_webAdbServer?.running ?? false),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        ElevatedButton.icon(
+                          icon: Icon((_webAdbServer?.running ?? false)
+                              ? Icons.stop
+                              : Icons.play_arrow),
+                          label: Text((_webAdbServer?.running ?? false)
+                              ? 'Stop'
+                              : 'Start'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: (_webAdbServer?.running ?? false)
+                                ? Colors.red
+                                : null,
+                          ),
+                          onPressed: () async {
+                            if (!(_webAdbServer?.running ?? false)) {
+                              final port = int.tryParse(
+                                      _webAdbPortController.text.trim()) ??
+                                  8587;
+                              _webAdbServer =
+                                  WebAdbServer(_adbClient, port: port);
+                              final ok = await _webAdbServer!.start();
+                              if (ok && mounted) setState(() {});
+                            } else {
+                              await _webAdbServer?.stop();
+                              if (mounted) setState(() {});
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      child: (_webAdbServer?.running ?? false)
+                          ? Text(
+                              'Running at http://<host>:${_webAdbServer!.port} (WS: /shell)',
+                              key: const ValueKey('webadb_on'),
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context).colorScheme.primary),
+                            )
+                          : const Text('Stopped',
+                              key: ValueKey('webadb_off'),
+                              style: TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 16),
 
@@ -946,6 +1127,28 @@ class _AndroidScreenState extends State<AndroidScreen>
           ],
         ),
       ),
+    );
+  }
+
+  Widget _realDeviceHelp() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: const [
+        Text('No devices detected. Steps to connect:',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+        SizedBox(height: 4),
+        Text('1. Enable Developer Options on your Android device.',
+            style: TextStyle(fontSize: 11)),
+        Text('2. Turn on USB Debugging (Developer Options).',
+            style: TextStyle(fontSize: 11)),
+        Text(
+            '3. For Wi-Fi: In Developer Options tap "Wireless debugging" > Pair or enable.',
+            style: TextStyle(fontSize: 11)),
+        Text('4. Ensure adb is installed and in system PATH.',
+            style: TextStyle(fontSize: 11)),
+        Text('5. Run: adb devices (should list your device).',
+            style: TextStyle(fontSize: 11)),
+      ],
     );
   }
 

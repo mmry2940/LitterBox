@@ -563,10 +563,20 @@ class ADBClientManager {
   ADBConnectionMode get connectionMode => _connectionMode;
   ADBOutputMode get outputMode => _outputMode;
   bool get usingExternalBackend => _externalBackend != null;
+  bool get isInternalBackend => _externalBackend is InternalAdbBackend;
+  String get backendLabel => _externalBackend == null
+      ? 'none'
+      : (_externalBackend is ExternalAdbBackend)
+          ? 'external'
+          : 'internal';
   bool get interactiveShellActive => _interactiveShell != null;
   bool get logcatActive => _logcatActive;
   Stream<String> get logcatStream => _logcatController.stream;
   List<String> get logcatBuffer => List.unmodifiable(_logcatBuffer);
+  ADBBackend? get backend => _externalBackend; // expose for WebADB server
+  // Public wrapper so auxiliary helpers (e.g. WebAdbServer) can append to console
+  void addOutput(String line, {bool deviceOutput = false}) =>
+      _addOutput(line, deviceOutput: deviceOutput);
 
   ADBClientManager() {
     _connectionStateController =
@@ -609,6 +619,28 @@ class ADBClientManager {
     } catch (e) {
       _addOutput('⚠️ External adb backend unavailable: $e');
       // Do not rethrow; fall back to internal mechanisms
+    }
+  }
+
+  Future<void> enableInternalAdbBackend() async {
+    _addOutput('🧪 Activating internal adb backend...');
+    try {
+      final backend = InternalAdbBackend();
+      await backend.init();
+      _externalBackend = backend; // reuse field for polymorphic backend
+      _addOutput('✅ Internal adb backend active (mock)');
+    } catch (e) {
+      _addOutput('❌ Failed to init internal backend: $e');
+    }
+  }
+
+  Future<List<ADBBackendDevice>> refreshBackendDevices() async {
+    if (_externalBackend == null) return [];
+    try {
+      return await _externalBackend!.listDevices();
+    } catch (e) {
+      _addOutput('⚠️ Device refresh failed: $e');
+      return [];
     }
   }
 

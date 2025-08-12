@@ -6,8 +6,6 @@ import 'device_files_screen.dart';
 import 'device_packages_screen.dart';
 import 'device_processes_screen.dart';
 import 'device_misc_screen.dart';
-import 'package:network_tools/network_tools.dart';
-import 'package:network_info_plus/network_info_plus.dart';
 
 typedef AddDeviceCallback = void Function(String ip);
 
@@ -164,93 +162,6 @@ class _DeviceScreenState extends State<DeviceScreen> {
         ),
         // No floatingActionButton here; add device button is only on HomeScreen
       ),
-    );
-  }
-
-  void _scanForDevices(BuildContext context) async {
-    final info = NetworkInfo();
-    String? ip = await info.getWifiIP();
-    if (ip == null || !ip.contains('.')) {
-      // Show error dialog if IP not found
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Error'),
-          content: const Text('Could not determine local IP address.'),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx), child: const Text('OK'))
-          ],
-        ),
-      );
-      return;
-    }
-    final subnet = ip.substring(0, ip.lastIndexOf('.'));
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        List<String> foundHosts = [];
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: Text('Scanning $subnet.x'),
-              content: SizedBox(
-                width: 300,
-                height: 300,
-                child: StreamBuilder<ActiveHost>(
-                  stream: HostScannerService.instance.getAllPingableDevices(
-                    subnet,
-                    firstHostId: 1,
-                    lastHostId: 254,
-                    progressCallback: (progress) {},
-                  ),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting &&
-                        foundHosts.isEmpty) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (snapshot.hasError) {
-                      return Text('Error: \\${snapshot.error}');
-                    }
-                    if (snapshot.hasData) {
-                      final host = snapshot.data!;
-                      if (!foundHosts.contains(host.address)) {
-                        foundHosts.add(host.address);
-                      }
-                    }
-                    if (foundHosts.isEmpty) {
-                      return const Center(
-                          child: Text('No devices found yet...'));
-                    }
-                    return ListView.builder(
-                      itemCount: foundHosts.length,
-                      itemBuilder: (context, idx) {
-                        final ip = foundHosts[idx];
-                        return ListTile(
-                          title: Text(ip),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            if (widget.onAddDevice != null) {
-                              widget.onAddDevice!(ip);
-                            }
-                          },
-                        );
-                      },
-                    );
-                  },
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Close'),
-                ),
-              ],
-            );
-          },
-        );
-      },
     );
   }
 }

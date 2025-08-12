@@ -63,6 +63,153 @@ abstract class ADBBackend {
       const Stream.empty();
 }
 
+/// Lightweight in-process fallback backend (mock / minimal internal ADB)
+/// Provides simulated devices and basic command responses without requiring
+/// an external adb binary. Useful for environments where adb isn't installed
+/// or for offline demo/testing. Not a full protocol implementation.
+class InternalAdbBackend implements ADBBackend {
+  bool _initialized = false;
+  final List<ADBBackendDevice> _devices = [
+    ADBBackendDevice('internal-emulator-5554', 'device'),
+    ADBBackendDevice('internal-virtual-001', 'device'),
+  ];
+  final Map<String, StreamController<String>> _logcatControllers = {};
+
+  @override
+  Future<void> init() async {
+    // Simulate async init delay
+    if (_initialized) return;
+    await Future.delayed(const Duration(milliseconds: 150));
+    _initialized = true;
+  }
+
+  @override
+  Future<List<ADBBackendDevice>> listDevices() async {
+    if (!_initialized) await init();
+    return List.unmodifiable(_devices);
+  }
+
+  @override
+  Future<String> shell(String serial, String command) async {
+    if (!_initialized) await init();
+    // Provide canned responses similar to server mock
+    final now = DateTime.now();
+    switch (command.trim()) {
+      case 'getprop ro.build.version.release':
+        return '15';
+      case 'getprop ro.product.model':
+        return 'Internal Virtual Device';
+      case 'whoami':
+        return 'shell';
+      case 'pwd':
+        return '/data/local/tmp';
+      case 'date':
+        return now.toIso8601String();
+      case 'ls':
+        return 'cache\ndata\ndownload\nsdcard';
+      default:
+        return 'Executed: $command';
+    }
+  }
+
+  @override
+  Future<bool> connect(String host, int port) async {
+    // Simulate success; create a pseudo network device entry
+    final serial = '$host:$port';
+    if (_devices.indexWhere((d) => d.serial == serial) == -1) {
+      _devices.add(ADBBackendDevice(serial, 'device'));
+    }
+    return true;
+  }
+
+  @override
+  Future<bool> disconnect(String host, int port) async {
+    final serial = '$host:$port';
+    _devices.removeWhere((d) => d.serial == serial);
+    return true;
+  }
+
+  @override
+  Future<void> dispose() async {
+    for (final c in _logcatControllers.values) {
+      await c.close();
+    }
+    _logcatControllers.clear();
+  }
+
+  // Simple stubs for file transfer and port forwarding (no-ops)
+  @override
+  Future<bool> installApk(String serial, String filePath) async => false;
+  @override
+  Future<bool> pushFile(
+          String serial, String localPath, String remotePath) async =>
+      false;
+  @override
+  Future<bool> pullFile(
+          String serial, String remotePath, String localPath) async =>
+      false;
+  @override
+  Future<bool> forward(String serial, int localPort, String remoteSpec) async =>
+      false;
+  @override
+  Future<bool> removeForward(String serial, int localPort) async => false;
+  @override
+  Future<bool> uninstallApk(String serial, String packageName) async => false;
+  @override
+  Future<bool> reboot(String serial, {String? mode}) async => false;
+  @override
+  Future<List<String>> listForwards(String serial) async => const [];
+  @override
+  Future<bool> pair(String host, int pairingPort, String code) async => false;
+  @override
+  Stream<TransferProgress> pushFileWithProgress(
+          String serial, String localPath, String remotePath) =>
+      const Stream.empty();
+  @override
+  Stream<TransferProgress> pullFileWithProgress(
+          String serial, String remotePath, String localPath) =>
+      const Stream.empty();
+
+  // Optional: minimal logcat streamer producing synthetic lines
+  @override
+  Stream<String>? streamLogcat(String serial,
+      {List<String> filters = const []}) {
+    final existing = _logcatControllers[serial];
+    if (existing != null) return existing.stream;
+    final ctl = StreamController<String>.broadcast();
+    _logcatControllers[serial] = ctl;
+    Timer.periodic(const Duration(milliseconds: 750), (t) {
+      if (ctl.isClosed) {
+        t.cancel();
+        return;
+      }
+      final line =
+          '${DateTime.now().toIso8601String()} I/MockTag($serial): synthetic log entry';
+      ctl.add(line);
+    });
+    return ctl.stream;
+  }
+
+  @override
+  Future<void> stopLogcat(String serial) async {
+    final ctl = _logcatControllers.remove(serial);
+    await ctl?.close();
+  }
+
+  // Provide simple stubs for optional advanced operations
+  @override
+  Future<Map<String, String>> getProps(String serial) async => {
+        'ro.build.version.release': '15',
+        'ro.product.model': 'Internal Virtual Device',
+        'ro.product.manufacturer': 'Internal',
+      };
+  @override
+  Future<Uint8List?> screencap(String serial) async => null;
+  @override
+  Future<String> execOut(String serial, List<String> args) async =>
+      shell(serial, args.join(' '));
+}
+
 class ADBBackendDevice {
   final String serial;
   final String state;

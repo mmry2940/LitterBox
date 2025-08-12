@@ -5,12 +5,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'device_screen.dart';
-import 'package:network_tools/network_tools.dart';
+import 'dart:io';
+import '../network_init.dart';
+import '../isolate_scanner.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:LitterBox/screens/_host_tile_with_retry.dart';
 import 'android_screen.dart';
 import 'vnc_screen.dart';
 import 'rdp_screen.dart';
+
+// LiteHost is a lightweight stand-in for ActiveHost when using isolate scan
+class LiteHost {
+  final String address;
+  final Duration? responseTime;
+  LiteHost(this.address, {this.responseTime});
+  // Mimic API used by HostTileWithRetry
+  Future<String?> get hostName async {
+    try {
+      final list = await InternetAddress.lookup(address);
+      if (list.isNotEmpty) return list.first.host;
+    } catch (_) {}
+    return null;
+  }
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -483,13 +500,17 @@ class _ScanDialog extends StatefulWidget {
 }
 
 class _ScanDialogState extends State<_ScanDialog> {
-  final Set<ActiveHost> _foundHosts = <ActiveHost>{};
+  final Set<LiteHost> _foundHosts = <LiteHost>{};
   bool _scanning = false;
   String _errorMessage = '';
-  StreamSubscription<ActiveHost>? _scanSubscription;
+  StreamSubscription<String>? _scanSubscription;
   String? _subnet;
   String? _networkInfo;
   bool _fetchingNetworkInfo = true;
+  bool _initializingTools = true;
+  String _progressText = '';
+  bool _loadedCached = false;
+  DateTime? _cacheTime;
 
   @override
   void initState() {
@@ -522,9 +543,56 @@ class _ScanDialogState extends State<_ScanDialog> {
       _networkInfo = 'IP: $ip\nWiFi: ${wifiName ?? 'Unknown'}';
       _fetchingNetworkInfo = false;
     });
-    // Wait 3 seconds before starting scan
-    await Future.delayed(const Duration(milliseconds: 1500));
-    _startScan();
+    // Load cached results (if any) immediately
+    await _loadCachedResults();
+    // Ensure network tools initialized & show status
+    setState(() => _initializingTools = true);
+    final ok = await NetworkToolsInitializer.ensureInitialized();
+    setState(() => _initializingTools = false);
+    if (!ok) {
+      setState(() {
+        _errorMessage =
+            'Network tools failed to initialize; scan may be limited.';
+      });
+    }
+    // Debounce start if already scanning or pending
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!_scanning) _startScan();
+  }
+
+  Future<void> _loadCachedResults() async {
+    if (_subnet == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = 'scan_cache_${_subnet}';
+      final jsonStr = prefs.getString(key);
+      if (jsonStr == null) return;
+      final data = json.decode(jsonStr) as Map<String, dynamic>;
+      final ts = DateTime.tryParse(data['timestamp'] as String? ?? '');
+      final List<dynamic> ips = data['ips'] as List<dynamic>? ?? [];
+      if (ips.isNotEmpty) {
+        setState(() {
+          _foundHosts.addAll(ips.map((e) => LiteHost(e.toString())));
+          _loadedCached = true;
+          _cacheTime = ts;
+        });
+      }
+    } catch (e) {
+      // ignore cache errors
+    }
+  }
+
+  Future<void> _cacheResults() async {
+    if (_subnet == null || _foundHosts.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = 'scan_cache_${_subnet}';
+      final data = {
+        'timestamp': DateTime.now().toIso8601String(),
+        'ips': _foundHosts.map((h) => h.address).toList(),
+      };
+      await prefs.setString(key, json.encode(data));
+    } catch (_) {}
   }
 
   @override
@@ -533,82 +601,74 @@ class _ScanDialogState extends State<_ScanDialog> {
     super.dispose();
   }
 
+  DateTime? _lastScanStarted;
+  Timer? _debounceTimer;
+
   void _startScan() {
     if (!mounted || _subnet == null) return;
+    // Debounce rapid calls (within 1s)
+    final now = DateTime.now();
+    if (_lastScanStarted != null &&
+        now.difference(_lastScanStarted!).inMilliseconds < 1000) {
+      _debounceTimer?.cancel();
+      _debounceTimer = Timer(const Duration(milliseconds: 800), () {
+        if (!_scanning) _startScan();
+      });
+      return;
+    }
+    _lastScanStarted = now;
     setState(() {
       _scanning = true;
       _foundHosts.clear();
       _errorMessage = '';
     });
-    print('Starting scan for subnet: $_subnet');
+    print('Starting isolate scan for subnet: $_subnet');
     try {
-      final stream = HostScannerService.instance.getAllPingableDevices(
-        _subnet!,
-        firstHostId: 1,
-        lastHostId: 254,
-        progressCallback: (progress) {
-          print('Scan progress: $progress');
-        },
-      );
-      _scanSubscription = stream.listen(
-        (host) async {
-          print('Found host: ${host.address}');
-          try {
-            print('Host details: ${host.toString()}');
-            final hostname = await host.hostName;
-            print('Hostname: $hostname');
-          } catch (e) {
-            print('Error accessing host properties: $e');
-          }
-          if (mounted) {
-            setState(() {
-              _foundHosts.add(host);
-            });
-          }
-        },
-        onDone: () {
-          print('Scan completed. Found \\${_foundHosts.length} hosts');
-          if (mounted) {
-            setState(() {
-              _scanning = false;
-            });
-          }
-        },
-        onError: (error) {
-          print('Scan error: $error');
-          if (mounted) {
-            if (error.toString().contains('RangeError') &&
-                error.toString().contains('Invalid value')) {
-              print('Range limit reached - ending scan normally');
-              setState(() {
-                _scanning = false;
-              });
-            } else {
-              setState(() {
-                _scanning = false;
-                _errorMessage = 'Scan error: $error';
-              });
-            }
-          }
-        },
-      );
-    } catch (e) {
-      print('Failed to start scan: $e');
-      if (mounted) {
-        if (e.toString().contains('RangeError') &&
-            e.toString().contains('Invalid value')) {
-          print('Range limit reached during scan setup - ending scan normally');
+      final stream =
+          isolateSubnetScan(_subnet!, firstHostId: 1, lastHostId: 254);
+      _scanSubscription = stream.listen((msg) {
+        if (msg.startsWith('progress:')) {
+          final pct = msg.split(':').last;
+          if (mounted) setState(() => _progressText = '$pct%');
+          return;
+        }
+        final ip = msg;
+        if (mounted) {
           setState(() {
-            _scanning = false;
-          });
-        } else {
-          setState(() {
-            _scanning = false;
-            _errorMessage = 'Failed to start scan: $e';
+            // Represent ActiveHost minimally (placeholder wrapper) - for now just store via custom ActiveHost-like stand-in
+            _foundHosts.add(LiteHost(ip));
           });
         }
-      }
+      }, onDone: () {
+        _cacheResults();
+        if (mounted)
+          setState(() {
+            _scanning = false;
+          });
+      }, onError: (e) {
+        if (mounted)
+          setState(() {
+            _scanning = false;
+            _errorMessage = 'Scan error: $e';
+          });
+      });
+    } catch (e) {
+      if (mounted)
+        setState(() {
+          _scanning = false;
+          _errorMessage = 'Failed to start scan: $e';
+        });
     }
+  }
+
+  void _cancelScan() {
+    if (!_scanning) return;
+    _scanSubscription?.cancel();
+    _cacheResults();
+    setState(() {
+      _scanning = false;
+      _progressText = 'Cancelled';
+    });
   }
 
   void _testNetworkConnectivity() async {
@@ -675,10 +735,19 @@ class _ScanDialogState extends State<_ScanDialog> {
                 const Text('Preparing scan...'),
               ],
             )
+          else if (_initializingTools)
+            Row(children: const [
+              SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(width: 12),
+              Text('Initializing network tools...')
+            ])
           else if (_subnet != null)
             Text(_scanning
-                ? 'Scanning $_subnet.1-254...'
-                : 'Found ${_foundHosts.length} devices'),
+                ? 'Scanning $_subnet.1-254... ${_progressText.isNotEmpty ? _progressText : ''}'
+                : 'Found ${_foundHosts.length} devices${_loadedCached && _cacheTime != null ? ' (cached)' : ''}'),
           if (_networkInfo != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -750,16 +819,18 @@ class _ScanDialogState extends State<_ScanDialog> {
             child: const Text('Test Network'),
           ),
         if (_scanning)
-          const Row(
+          Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SizedBox(
+              const SizedBox(
                 width: 20,
                 height: 20,
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              SizedBox(width: 8),
-              Text('Scanning...'),
+              const SizedBox(width: 8),
+              const Text('Scanning...'),
+              const SizedBox(width: 16),
+              TextButton(onPressed: _cancelScan, child: const Text('Cancel')),
             ],
           ),
         TextButton(

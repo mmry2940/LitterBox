@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_breakpoints/flutter_breakpoints.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:network_tools/network_tools.dart';
+import 'dart:isolate';
 import 'screens/settings_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/android_screen.dart';
+import 'network_init.dart';
 
 final ValueNotifier<ThemeMode> themeModeNotifier =
     ValueNotifier(ThemeMode.dark);
@@ -36,16 +38,8 @@ Future<void> main() async {
     }
   } catch (_) {}
 
-  // Configure network tools - required for network_tools package
-  try {
-    final appDocDirectory = await getApplicationDocumentsDirectory();
-    await configureNetworkTools(appDocDirectory.path, enableDebugging: true);
-    print('Network tools configured with path: \\${appDocDirectory.path}');
-  } catch (e) {
-    print('Failed to get app directory, using fallback: $e');
-    // Fallback configuration if path_provider fails
-    await configureNetworkTools('', enableDebugging: true);
-  }
+  // Defer network tools configuration to reduce first-frame jank
+  unawaited(_deferredInit());
 
   // Determine the splash image to use
   final splashImages = [
@@ -57,6 +51,37 @@ Future<void> main() async {
   final splashImage = splashImages[random.nextInt(splashImages.length)];
 
   runApp(MyApp(splashImage: splashImage));
+}
+
+Future<void> _deferredInit() async {
+  try {
+    // Ensure first frame rendered before heavy work
+    await Future.delayed(const Duration(milliseconds: 10));
+    final dir = await getApplicationDocumentsDirectory();
+    await _configureNetworkToolsIsolate(dir.path);
+    NetworkToolsInitializer.completeSuccess();
+  } catch (e) {
+    try {
+      await _configureNetworkToolsIsolate('');
+      NetworkToolsInitializer.completeSuccess();
+    } catch (_) {}
+    print('Deferred network tools init fallback: $e');
+    if (!NetworkToolsInitializer.isDone) {
+      NetworkToolsInitializer.completeFailure(e);
+    }
+  }
+}
+
+Future<void> _configureNetworkToolsIsolate(String path) async {
+  try {
+    await Isolate.run(() async {
+      await configureNetworkTools(path, enableDebugging: true);
+    });
+  } catch (_) {
+    // Fallback without isolate if not supported
+    await configureNetworkTools(path, enableDebugging: true);
+  }
+  print('Network tools configured (deferred) with path: $path');
 }
 
 class MyApp extends StatelessWidget {
