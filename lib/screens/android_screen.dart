@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../adb_client.dart';
@@ -627,91 +628,185 @@ class _AndroidScreenState extends State<AndroidScreen>
   }
 
   Widget _buildConsoleTab() {
-    return Column(
-      children: [
-        // Output Area
-        Expanded(
-          child: Container(
-            color: Colors.black87,
-            child: StreamBuilder<String>(
-              stream: _adbClient.output,
-              builder: (context, snapshot) {
-                return ListView.builder(
-                  controller: _outputScrollController,
-                  padding: const EdgeInsets.all(8),
-                  itemCount: _adbClient.outputBuffer.length,
-                  itemBuilder: (context, index) {
-                    final output = _adbClient.outputBuffer[index];
-                    return SelectableText(
-                      output,
-                      style: const TextStyle(
-                        color: Colors.green,
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                      ),
-                    );
-                  },
-                );
-              },
+    int historyIndex = _adbClient.commandHistoryList.length;
+    return StatefulBuilder(builder: (context, setInnerState) {
+      return Column(
+        children: [
+          // Output Area
+          Expanded(
+            child: Container(
+              color: Colors.black87,
+              child: StreamBuilder<String>(
+                stream: _adbClient.output,
+                builder: (context, snapshot) {
+                  return ListView.builder(
+                    controller: _outputScrollController,
+                    padding: const EdgeInsets.all(8),
+                    itemCount: _adbClient.outputBuffer.length,
+                    itemBuilder: (context, index) {
+                      final output = _adbClient.outputBuffer[index];
+                      return SelectableText(
+                        output,
+                        style: const TextStyle(
+                          color: Colors.green,
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
             ),
           ),
-        ),
-
-        // Command Input
-        Container(
-          padding: const EdgeInsets.all(8),
-          color: Colors.grey[200],
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _commandController,
-                  decoration: const InputDecoration(
-                    hintText: 'Enter ADB command...',
-                    border: OutlineInputBorder(),
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  ),
-                  onSubmitted: (_) => _executeCommand(),
+          // Command/Input + Controls
+          Container(
+            padding: const EdgeInsets.all(8),
+            color: Colors.grey[200],
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: RawKeyboardListener(
+                        focusNode: FocusNode(),
+                        onKey: (evt) {
+                          if (evt.isKeyPressed(LogicalKeyboardKey.arrowUp)) {
+                            if (_adbClient.commandHistoryList.isNotEmpty) {
+                              historyIndex = (historyIndex - 1).clamp(
+                                  0, _adbClient.commandHistoryList.length - 1);
+                              _commandController.text =
+                                  _adbClient.commandHistoryList[historyIndex];
+                              _commandController.selection =
+                                  TextSelection.fromPosition(TextPosition(
+                                      offset: _commandController.text.length));
+                              setInnerState(() {});
+                            }
+                          } else if (evt
+                              .isKeyPressed(LogicalKeyboardKey.arrowDown)) {
+                            if (_adbClient.commandHistoryList.isNotEmpty) {
+                              historyIndex = (historyIndex + 1).clamp(
+                                  0, _adbClient.commandHistoryList.length);
+                              if (historyIndex ==
+                                  _adbClient.commandHistoryList.length) {
+                                _commandController.clear();
+                              } else {
+                                _commandController.text =
+                                    _adbClient.commandHistoryList[historyIndex];
+                                _commandController.selection =
+                                    TextSelection.fromPosition(TextPosition(
+                                        offset:
+                                            _commandController.text.length));
+                              }
+                              setInnerState(() {});
+                            }
+                          }
+                        },
+                        child: TextField(
+                          controller: _commandController,
+                          decoration: InputDecoration(
+                            hintText: _adbClient.interactiveShellActive
+                                ? 'Interactive shell input (press Enter)'
+                                : 'Enter ADB command...',
+                            border: const OutlineInputBorder(),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                          ),
+                          onSubmitted: (_) {
+                            if (_adbClient.interactiveShellActive) {
+                              _adbClient.sendInteractiveShellInput(
+                                  _commandController.text.trim());
+                              _commandController.clear();
+                            } else {
+                              _executeCommand();
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    if (!_adbClient.interactiveShellActive)
+                      ElevatedButton(
+                        onPressed: _adbClient.currentState ==
+                                ADBConnectionState.connected
+                            ? _executeCommand
+                            : null,
+                        child: const Text('Execute'),
+                      )
+                    else
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red),
+                        onPressed: _adbClient.stopInteractiveShell,
+                        child: const Text('Stop'),
+                      ),
+                    const SizedBox(width: 8),
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert),
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'clear_output':
+                            _adbClient.clearOutput();
+                            break;
+                          case 'clear_history':
+                            _adbClient.clearHistory();
+                            break;
+                          case 'start_shell':
+                            _adbClient.startInteractiveShell();
+                            break;
+                          case 'stop_shell':
+                            _adbClient.stopInteractiveShell();
+                            break;
+                        }
+                        setInnerState(() {});
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'clear_output',
+                          child: Text('Clear Output'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'clear_history',
+                          child: Text('Clear History'),
+                        ),
+                        if (!_adbClient.interactiveShellActive)
+                          const PopupMenuItem(
+                            value: 'start_shell',
+                            child: Text('Start Interactive Shell'),
+                          )
+                        else
+                          const PopupMenuItem(
+                            value: 'stop_shell',
+                            child: Text('Stop Interactive Shell'),
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed:
-                    _adbClient.currentState == ADBConnectionState.connected
-                        ? _executeCommand
-                        : null,
-                child: const Text('Execute'),
-              ),
-              const SizedBox(width: 8),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert),
-                onSelected: (value) {
-                  switch (value) {
-                    case 'clear_output':
-                      _adbClient.clearOutput();
-                      break;
-                    case 'clear_history':
-                      _adbClient.clearHistory();
-                      break;
-                  }
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: 'clear_output',
-                    child: Text('Clear Output'),
-                  ),
-                  const PopupMenuItem(
-                    value: 'clear_history',
-                    child: Text('Clear History'),
-                  ),
-                ],
-              ),
-            ],
+                Row(
+                  children: [
+                    Switch(
+                      value: _adbClient.interactiveShellActive,
+                      onChanged: (v) async {
+                        if (v) {
+                          await _adbClient.startInteractiveShell();
+                        } else {
+                          await _adbClient.stopInteractiveShell();
+                        }
+                        setInnerState(() {});
+                      },
+                    ),
+                    Text(_adbClient.interactiveShellActive
+                        ? 'Interactive Shell Active'
+                        : 'Execute Single Commands'),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
-    );
+        ],
+      );
+    });
   }
 
   Widget _buildCommandsTab() {

@@ -505,6 +505,10 @@ class ADBClientManager {
   ADBProtocolClient? _adbProtocol;
   ADBServer? _server;
   ADBBackend? _externalBackend;
+  // Persistent interactive shell process (adb -s <serial> shell)
+  Process? _interactiveShell;
+  StreamSubscription<String>? _interactiveStdoutSub;
+  StreamSubscription<String>? _interactiveStderrSub;
   StreamSubscription<String>?
       _serverLogSubscription; // avoid duplicate listeners
   late StreamController<ADBConnectionState> _connectionStateController;
@@ -553,6 +557,7 @@ class ADBClientManager {
   ADBConnectionMode get connectionMode => _connectionMode;
   ADBOutputMode get outputMode => _outputMode;
   bool get usingExternalBackend => _externalBackend != null;
+  bool get interactiveShellActive => _interactiveShell != null;
 
   ADBClientManager() {
     _connectionStateController =
@@ -1042,6 +1047,9 @@ class ADBClientManager {
     try {
       _addOutput('🔌 Disconnecting...');
 
+      // Stop interactive shell first
+      await stopInteractiveShell();
+
       // Close ADB protocol connection
       if (_adbProtocol != null) {
         await _adbProtocol!.close();
@@ -1074,6 +1082,93 @@ class ADBClientManager {
       _updateState(ADBConnectionState.disconnected);
       _addOutput('❌ Disconnect error: $e');
       print('ADB disconnect error: $e');
+    }
+  }
+
+  // ---------------- Interactive Shell Support ----------------
+  Future<bool> startInteractiveShell() async {
+    if (interactiveShellActive) return true;
+    if (_connectedDeviceId.isEmpty) {
+      _addOutput('❌ No connected device for interactive shell');
+      return false;
+    }
+    // Only works with external backend (real adb) or server/device mode.
+    final serial = _connectedDeviceId;
+    try {
+      _addOutput('🚀 Starting interactive shell for $serial');
+      final args = <String>['-s', serial, 'shell'];
+      _interactiveShell = await Process.start('adb', args, runInShell: true);
+
+      // Stdout
+      _interactiveStdoutSub = _interactiveShell!.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) {
+        if (line.trim().isEmpty) return;
+        _addOutput(line, deviceOutput: true);
+      });
+      // Stderr
+      _interactiveStderrSub = _interactiveShell!.stderr
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) {
+        if (line.trim().isEmpty) return;
+        _addOutput(line, deviceOutput: true);
+      });
+
+      _interactiveShell!.exitCode.then((code) {
+        if (_interactiveShell != null) {
+          _addOutput('🛑 Interactive shell exited (code $code)');
+          _interactiveStdoutSub?.cancel();
+          _interactiveStderrSub?.cancel();
+          _interactiveStdoutSub = null;
+          _interactiveStderrSub = null;
+          _interactiveShell = null;
+        }
+      });
+      _addOutput('✅ Interactive shell started');
+      return true;
+    } catch (e) {
+      _addOutput('❌ Failed to start interactive shell: $e');
+      return false;
+    }
+  }
+
+  Future<void> stopInteractiveShell() async {
+    if (!interactiveShellActive) return;
+    try {
+      _addOutput('🛑 Stopping interactive shell');
+      _interactiveStdoutSub?.cancel();
+      _interactiveStderrSub?.cancel();
+      _interactiveStdoutSub = null;
+      _interactiveStderrSub = null;
+      _interactiveShell!.stdin.writeln('exit');
+      await _interactiveShell!.stdin.flush();
+      // Give it a moment to exit gracefully
+      final proc = _interactiveShell!;
+      _interactiveShell = null;
+      Future.delayed(const Duration(milliseconds: 300), () {
+        try {
+          proc.kill(ProcessSignal.sigkill);
+        } catch (_) {}
+      });
+      _addOutput('✅ Interactive shell stopped');
+    } catch (e) {
+      _addOutput('⚠️ Error stopping interactive shell: $e');
+    }
+  }
+
+  Future<void> sendInteractiveShellInput(String line) async {
+    if (!interactiveShellActive) {
+      _addOutput('❌ Interactive shell not active');
+      return;
+    }
+    try {
+      _addCommandToHistory(line);
+      _interactiveShell!.stdin.writeln(line);
+      await _interactiveShell!.stdin.flush();
+    } catch (e) {
+      _addOutput('⚠️ Failed to send input: $e');
     }
   }
 
