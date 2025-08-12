@@ -359,7 +359,7 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
     // Disconnect VNC client if connected
     _vncClient?.disconnect();
     _vncClient = null;
-  _cancelScheduledReconnect();
+    _cancelScheduledReconnect();
   }
 
   void _showSaveDeviceDialog() {
@@ -1164,17 +1164,20 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.desktop_windows, size: 40, color: Colors.blue),
+                    const Icon(Icons.desktop_windows,
+                        size: 40, color: Colors.blue),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: const [
                           Text('VNC Connection',
-                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                              style: TextStyle(
+                                  fontSize: 22, fontWeight: FontWeight.bold)),
                           SizedBox(height: 4),
                           Text('Configure and connect to your remote desktop',
-                              style: TextStyle(color: Colors.grey, fontSize: 12)),
+                              style:
+                                  TextStyle(color: Colors.grey, fontSize: 12)),
                         ],
                       ),
                     ),
@@ -1194,7 +1197,8 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
                       label: const Text('Common Profiles'),
                       avatar: const Icon(Icons.list_alt, size: 18),
                       onPressed: () async {
-                        final profiles = await VNCProfileManager.getAllProfiles();
+                        final profiles =
+                            await VNCProfileManager.getAllProfiles();
                         if (mounted) {
                           setState(() {
                             _connectionProfiles = profiles;
@@ -1249,486 +1253,497 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: Column(
               children: [
-          // Auto reconnect controls
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Column(
-                children: [
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Auto Reconnect'),
-                    subtitle: Text(_autoReconnect
-                        ? 'Attempts: $_reconnectAttempts / $_maxReconnectAttempts'
-                        : 'Disabled'),
-                    value: _autoReconnect,
-                    onChanged: (v) {
-                      setState(() {
-                        _autoReconnect = v;
-                      });
-                      if (!v) _cancelScheduledReconnect();
-                    },
-                  ),
-                  if (_autoReconnect)
-                    Row(
+                // Auto reconnect controls
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
                       children: [
-                        const Text('Delay (s):'),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Slider(
-                            value: _reconnectDelaySeconds.toDouble(),
-                            min: 5,
-                            max: 60,
-                            divisions: 11,
-                            label: '$_reconnectDelaySeconds',
-                            onChanged: (val) {
-                              setState(() {
-                                _reconnectDelaySeconds = val.round();
-                              });
-                            },
-                          ),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Auto Reconnect'),
+                          subtitle: Text(_autoReconnect
+                              ? 'Attempts: $_reconnectAttempts / $_maxReconnectAttempts'
+                              : 'Disabled'),
+                          value: _autoReconnect,
+                          onChanged: (v) {
+                            setState(() {
+                              _autoReconnect = v;
+                            });
+                            if (!v) _cancelScheduledReconnect();
+                          },
                         ),
-                      ],
-                    ),
-                  if (_reconnectTimer != null)
-                    Text(
-                      'Reconnecting in ${_remainingReconnectSeconds()}s...',
-                      style: const TextStyle(fontSize: 12, color: Colors.orange),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-
-          // Saved Devices Section
-          if (_savedDevices.isNotEmpty) ...[
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Saved Devices',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 12),
-                    ..._savedDevices.map((device) => ListTile(
-                          leading: const Icon(Icons.devices),
-                          title: Text(device.name),
-                          subtitle: Text('${device.host}:${device.port}'),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
+                        if (_autoReconnect)
+                          Row(
                             children: [
-                              IconButton(
-                                icon: const Icon(Icons.edit),
-                                onPressed: () => _loadDevice(device),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete),
-                                onPressed: () => _deleteDevice(device),
+                              const Text('Delay (s):'),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Slider(
+                                  value: _reconnectDelaySeconds.toDouble(),
+                                  min: 5,
+                                  max: 60,
+                                  divisions: 11,
+                                  label: '$_reconnectDelaySeconds',
+                                  onChanged: (val) {
+                                    setState(() {
+                                      _reconnectDelaySeconds = val.round();
+                                    });
+                                  },
+                                ),
                               ),
                             ],
                           ),
-                          onTap: () => _loadDevice(device),
-                        )),
+                        if (_reconnectTimer != null)
+                          Text(
+                            'Reconnecting in ${_remainingReconnectSeconds()}s...',
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.orange),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Saved Devices Section
+                if (_savedDevices.isNotEmpty) ...[
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Saved Devices',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 12),
+                          ..._savedDevices.map((device) => ListTile(
+                                leading: const Icon(Icons.devices),
+                                title: Text(device.name),
+                                subtitle: Text('${device.host}:${device.port}'),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.edit),
+                                      onPressed: () => _loadDevice(device),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete),
+                                      onPressed: () => _deleteDevice(device),
+                                    ),
+                                  ],
+                                ),
+                                onTap: () => _loadDevice(device),
+                              )),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Connection Type',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Connection Mode Dropdown
+                        DropdownButtonFormField<VNCConnectionMode>(
+                          value: _connectionMode,
+                          decoration: const InputDecoration(
+                            labelText: 'VNC Client Type',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.settings_display),
+                          ),
+                          items: [
+                            DropdownMenuItem(
+                              value: VNCConnectionMode.native,
+                              child: _buildMarqueeText(
+                                  'Native VNC Client (Recommended)'),
+                            ),
+                            const DropdownMenuItem(
+                              value: VNCConnectionMode.webview,
+                              child: Text('noVNC (WebView)'),
+                            ),
+                          ],
+                          onChanged: (VNCConnectionMode? value) {
+                            if (value != null) {
+                              setState(() {
+                                _connectionMode = value;
+                                if (_connectionMode ==
+                                    VNCConnectionMode.native) {
+                                  if (_hostController.text.isEmpty) {
+                                    _hostController.text = '';
+                                  }
+                                  _vncPortController.text = '5900';
+                                } else {
+                                  if (_hostController.text.isEmpty) {
+                                    _hostController.text = '';
+                                  }
+                                  _vncPortController.text = '5900';
+                                }
+                              });
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _getConnectionModeDescription(),
+                          style:
+                              const TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Scaling Mode Dropdown (only show for native VNC)
+                        if (_connectionMode == VNCConnectionMode.native) ...[
+                          DropdownButtonFormField<VNCScalingMode>(
+                            value: _scalingMode,
+                            decoration: const InputDecoration(
+                              labelText: 'Display Scaling Mode',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.aspect_ratio),
+                            ),
+                            items: const [
+                              // Auto-fit modes (recommended for mobile)
+                              DropdownMenuItem(
+                                value: VNCScalingMode.autoFitBest,
+                                child: Text('Auto-fit Best (Recommended)'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCScalingMode.autoFitWidth,
+                                child: Text('Auto-fit Width'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCScalingMode.autoFitHeight,
+                                child: Text('Auto-fit Height'),
+                              ),
+
+                              // Traditional scaling modes
+                              DropdownMenuItem(
+                                value: VNCScalingMode.fitToScreen,
+                                child: Text('Fit to Screen'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCScalingMode.centerCrop,
+                                child: Text('Center Crop (No Borders)'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCScalingMode.actualSize,
+                                child: Text('Actual Size (100%)'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCScalingMode.stretchFit,
+                                child: Text('Stretch to Fill'),
+                              ),
+
+                              // Zoom levels
+                              DropdownMenuItem(
+                                value: VNCScalingMode.zoom50,
+                                child: Text('50% Zoom'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCScalingMode.zoom75,
+                                child: Text('75% Zoom'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCScalingMode.zoom125,
+                                child: Text('125% Zoom'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCScalingMode.zoom150,
+                                child: Text('150% Zoom'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCScalingMode.zoom200,
+                                child: Text('200% Zoom'),
+                              ),
+
+                              // Smart modes for Android
+                              DropdownMenuItem(
+                                value: VNCScalingMode.smartFitLandscape,
+                                child: Text('Smart Fit (Landscape)'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCScalingMode.smartFitPortrait,
+                                child: Text('Smart Fit (Portrait)'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCScalingMode.remoteResize,
+                                child: Text('Remote Resize (If Supported)'),
+                              ),
+                            ],
+                            onChanged: (VNCScalingMode? value) {
+                              if (value != null) {
+                                setState(() {
+                                  _scalingMode = value;
+                                });
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _getScalingModeDescription(),
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 16),
+
+                          // Input Mode Dropdown
+                          DropdownButtonFormField<VNCInputMode>(
+                            value: _inputMode,
+                            decoration: const InputDecoration(
+                              labelText: 'Input Mode',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.touch_app),
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: VNCInputMode.directTouch,
+                                child: Text('Direct Touch (Recommended)'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCInputMode.trackpadMode,
+                                child: Text('Trackpad Mode'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCInputMode.directTouchWithZoom,
+                                child: Text('Direct Touch with Zoom'),
+                              ),
+                            ],
+                            onChanged: (VNCInputMode? value) {
+                              if (value != null) {
+                                setState(() {
+                                  _inputMode = value;
+                                });
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _getInputModeDescription(),
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 16),
+
+                          // Resolution Mode Dropdown
+                          DropdownButtonFormField<VNCResolutionMode>(
+                            value: _resolutionMode,
+                            decoration: const InputDecoration(
+                              labelText: 'Resolution Mode',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.display_settings),
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: VNCResolutionMode.fixed,
+                                child: Text('Fixed Resolution'),
+                              ),
+                              DropdownMenuItem(
+                                value: VNCResolutionMode.dynamic,
+                                child: Text('Dynamic Resolution'),
+                              ),
+                            ],
+                            onChanged: (VNCResolutionMode? value) {
+                              if (value != null) {
+                                setState(() {
+                                  _resolutionMode = value;
+                                });
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _getResolutionModeDescription(),
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+
+                        TextField(
+                          controller: _hostController,
+                          decoration: const InputDecoration(
+                            labelText: 'Host/IP Address',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.computer),
+                            helperText: 'VNC server hostname or IP address',
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _vncPortController,
+                                decoration: const InputDecoration(
+                                  labelText: 'VNC Port',
+                                  border: OutlineInputBorder(),
+                                  prefixIcon: Icon(Icons.network_check),
+                                  helperText: 'Usually 5900',
+                                ),
+                                keyboardType: TextInputType.number,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: TextField(
+                                controller: _portController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Web Port',
+                                  border: OutlineInputBorder(),
+                                  prefixIcon: Icon(Icons.web),
+                                  helperText: 'noVNC web port',
+                                ),
+                                keyboardType: TextInputType.number,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: _pathController,
+                          decoration: const InputDecoration(
+                            labelText: 'noVNC Path',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.folder),
+                            helperText: 'Path to noVNC (e.g., /vnc.html)',
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: _passwordController,
+                          decoration: const InputDecoration(
+                            labelText: 'Password (optional)',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.lock),
+                            helperText: 'VNC server password',
+                          ),
+                          obscureText: true,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (_connectionError != null)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withValues(alpha: 0.1),
+                      border: Border.all(color: Colors.red),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error, color: Colors.red),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _connectionError!,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _isConnecting
+                            ? null
+                            : () {
+                                print(
+                                    'DEBUG: Connect button pressed! Mode: $_connectionMode');
+                                final connectFunc = _getConnectFunction();
+                                print('DEBUG: Connect function: $connectFunc');
+                                connectFunc?.call();
+                              },
+                        icon: Icon(_getConnectIcon()),
+                        label: _isConnecting
+                            ? const Text('Connecting...')
+                            : Text(_getConnectButtonText()),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _getConnectButtonColor(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      onPressed:
+                          _isConnecting ? null : () => _showSaveDeviceDialog(),
+                      icon: const Icon(Icons.save),
+                      tooltip: 'Save Device',
+                    ),
                   ],
                 ),
-              ),
-            ),
-            const SizedBox(height: 24),
-          ],
-
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Connection Type',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Connection Mode Dropdown
-                  DropdownButtonFormField<VNCConnectionMode>(
-                    value: _connectionMode,
-                    decoration: const InputDecoration(
-                      labelText: 'VNC Client Type',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.settings_display),
-                    ),
-                    items: [
-                      DropdownMenuItem(
-                        value: VNCConnectionMode.native,
-                        child: _buildMarqueeText(
-                            'Native VNC Client (Recommended)'),
-                      ),
-                      const DropdownMenuItem(
-                        value: VNCConnectionMode.webview,
-                        child: Text('noVNC (WebView)'),
-                      ),
-                    ],
-                    onChanged: (VNCConnectionMode? value) {
-                      if (value != null) {
-                        setState(() {
-                          _connectionMode = value;
-                          if (_connectionMode == VNCConnectionMode.native) {
-                            if (_hostController.text.isEmpty) {
-                              _hostController.text = '';
-                            }
-                            _vncPortController.text = '5900';
-                          } else {
-                            if (_hostController.text.isEmpty) {
-                              _hostController.text = '';
-                            }
-                            _vncPortController.text = '5900';
-                          }
-                        });
-                      }
-                    },
-                  ),
+                if (_connectionMode == VNCConnectionMode.native) ...[
                   const SizedBox(height: 8),
-                  Text(
-                    _getConnectionModeDescription(),
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Scaling Mode Dropdown (only show for native VNC)
-                  if (_connectionMode == VNCConnectionMode.native) ...[
-                    DropdownButtonFormField<VNCScalingMode>(
-                      value: _scalingMode,
-                      decoration: const InputDecoration(
-                        labelText: 'Display Scaling Mode',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.aspect_ratio),
-                      ),
-                      items: const [
-                        // Auto-fit modes (recommended for mobile)
-                        DropdownMenuItem(
-                          value: VNCScalingMode.autoFitBest,
-                          child: Text('Auto-fit Best (Recommended)'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCScalingMode.autoFitWidth,
-                          child: Text('Auto-fit Width'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCScalingMode.autoFitHeight,
-                          child: Text('Auto-fit Height'),
-                        ),
-
-                        // Traditional scaling modes
-                        DropdownMenuItem(
-                          value: VNCScalingMode.fitToScreen,
-                          child: Text('Fit to Screen'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCScalingMode.centerCrop,
-                          child: Text('Center Crop (No Borders)'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCScalingMode.actualSize,
-                          child: Text('Actual Size (100%)'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCScalingMode.stretchFit,
-                          child: Text('Stretch to Fill'),
-                        ),
-
-                        // Zoom levels
-                        DropdownMenuItem(
-                          value: VNCScalingMode.zoom50,
-                          child: Text('50% Zoom'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCScalingMode.zoom75,
-                          child: Text('75% Zoom'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCScalingMode.zoom125,
-                          child: Text('125% Zoom'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCScalingMode.zoom150,
-                          child: Text('150% Zoom'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCScalingMode.zoom200,
-                          child: Text('200% Zoom'),
-                        ),
-
-                        // Smart modes for Android
-                        DropdownMenuItem(
-                          value: VNCScalingMode.smartFitLandscape,
-                          child: Text('Smart Fit (Landscape)'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCScalingMode.smartFitPortrait,
-                          child: Text('Smart Fit (Portrait)'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCScalingMode.remoteResize,
-                          child: Text('Remote Resize (If Supported)'),
-                        ),
-                      ],
-                      onChanged: (VNCScalingMode? value) {
-                        if (value != null) {
-                          setState(() {
-                            _scalingMode = value;
-                          });
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _getScalingModeDescription(),
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Input Mode Dropdown
-                    DropdownButtonFormField<VNCInputMode>(
-                      value: _inputMode,
-                      decoration: const InputDecoration(
-                        labelText: 'Input Mode',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.touch_app),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: VNCInputMode.directTouch,
-                          child: Text('Direct Touch (Recommended)'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCInputMode.trackpadMode,
-                          child: Text('Trackpad Mode'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCInputMode.directTouchWithZoom,
-                          child: Text('Direct Touch with Zoom'),
-                        ),
-                      ],
-                      onChanged: (VNCInputMode? value) {
-                        if (value != null) {
-                          setState(() {
-                            _inputMode = value;
-                          });
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _getInputModeDescription(),
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Resolution Mode Dropdown
-                    DropdownButtonFormField<VNCResolutionMode>(
-                      value: _resolutionMode,
-                      decoration: const InputDecoration(
-                        labelText: 'Resolution Mode',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.display_settings),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: VNCResolutionMode.fixed,
-                          child: Text('Fixed Resolution'),
-                        ),
-                        DropdownMenuItem(
-                          value: VNCResolutionMode.dynamic,
-                          child: Text('Dynamic Resolution'),
-                        ),
-                      ],
-                      onChanged: (VNCResolutionMode? value) {
-                        if (value != null) {
-                          setState(() {
-                            _resolutionMode = value;
-                          });
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _getResolutionModeDescription(),
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-
-                  TextField(
-                    controller: _hostController,
-                    decoration: const InputDecoration(
-                      labelText: 'Host/IP Address',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.computer),
-                      helperText: 'VNC server hostname or IP address',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
                   Row(
                     children: [
                       Expanded(
-                        child: TextField(
-                          controller: _vncPortController,
-                          decoration: const InputDecoration(
-                            labelText: 'VNC Port',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.network_check),
-                            helperText: 'Usually 5900',
-                          ),
-                          keyboardType: TextInputType.number,
+                        child: OutlinedButton.icon(
+                          onPressed: _isConnecting ? null : _testVNCConnection,
+                          icon: const Icon(Icons.network_check),
+                          label: const Text('Test Connection'),
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 8),
                       Expanded(
-                        child: TextField(
-                          controller: _portController,
-                          decoration: const InputDecoration(
-                            labelText: 'Web Port',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.web),
-                            helperText: 'noVNC web port',
-                          ),
-                          keyboardType: TextInputType.number,
+                        child: OutlinedButton.icon(
+                          onPressed: _isConnecting ? null : _debugVNCHandshake,
+                          icon: const Icon(Icons.bug_report),
+                          label: const Text('Debug Handshake'),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _pathController,
-                    decoration: const InputDecoration(
-                      labelText: 'noVNC Path',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.folder),
-                      helperText: 'Path to noVNC (e.g., /vnc.html)',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _passwordController,
-                    decoration: const InputDecoration(
-                      labelText: 'Password (optional)',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.lock),
-                      helperText: 'VNC server password',
-                    ),
-                    obscureText: true,
-                  ),
                 ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          if (_connectionError != null)
-            Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red.withValues(alpha: 0.1),
-                border: Border.all(color: Colors.red),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.error, color: Colors.red),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _connectionError!,
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _isConnecting
-                      ? null
-                      : () {
-                          print(
-                              'DEBUG: Connect button pressed! Mode: $_connectionMode');
-                          final connectFunc = _getConnectFunction();
-                          print('DEBUG: Connect function: $connectFunc');
-                          connectFunc?.call();
-                        },
-                  icon: Icon(_getConnectIcon()),
-                  label: _isConnecting
-                      ? const Text('Connecting...')
-                      : Text(_getConnectButtonText()),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _getConnectButtonColor(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton.filled(
-                onPressed: _isConnecting ? null : () => _showSaveDeviceDialog(),
-                icon: const Icon(Icons.save),
-                tooltip: 'Save Device',
-              ),
-            ],
-          ),
-          if (_connectionMode == VNCConnectionMode.native) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _isConnecting ? null : _testVNCConnection,
-                    icon: const Icon(Icons.network_check),
-                    label: const Text('Test Connection'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _isConnecting ? null : _debugVNCHandshake,
-                    icon: const Icon(Icons.bug_report),
-                    label: const Text('Debug Handshake'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-          const SizedBox(height: 24),
-          Card(
-            child: ExpansionTile(
-              title: const Text('Setup & Tips'),
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text('Quick Setup', style: TextStyle(fontWeight: FontWeight.bold)),
-                      SizedBox(height: 8),
-                      Text('• Install VNC server on target machine\n'
-                          '• Default ports: 5900 (VNC), 5901+ for multiple displays\n'
-                          '• Enter password if server requires authentication'),
-                      SizedBox(height: 12),
-                      Text('Performance Tips', style: TextStyle(fontWeight: FontWeight.bold)),
-                      SizedBox(height: 8),
-                      Text('• Use Auto-fit Best scaling for most devices\n'
-                          '• Trackpad mode is better for precise control\n'
-                          '• Enable Auto Reconnect for unstable networks'),
+                const SizedBox(height: 24),
+                Card(
+                  child: ExpansionTile(
+                    title: const Text('Setup & Tips'),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: const [
+                            Text('Quick Setup',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            SizedBox(height: 8),
+                            Text('• Install VNC server on target machine\n'
+                                '• Default ports: 5900 (VNC), 5901+ for multiple displays\n'
+                                '• Enter password if server requires authentication'),
+                            SizedBox(height: 12),
+                            Text('Performance Tips',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            SizedBox(height: 8),
+                            Text(
+                                '• Use Auto-fit Best scaling for most devices\n'
+                                '• Trackpad mode is better for precise control\n'
+                                '• Enable Auto Reconnect for unstable networks'),
+                          ],
+                        ),
+                      )
                     ],
                   ),
-                )
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
+                ),
+                const SizedBox(height: 24),
               ],
             ),
           ),
@@ -1755,8 +1770,10 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
                 leading: Icon(isCustom ? Icons.star : Icons.auto_awesome_motion,
                     color: isCustom ? Colors.amber : Colors.blue),
                 title: Text(p.name),
-                subtitle: Text(p.description.isEmpty ? 'No description' : p.description,
-                    maxLines: 2, overflow: TextOverflow.ellipsis),
+                subtitle: Text(
+                    p.description.isEmpty ? 'No description' : p.description,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -1766,7 +1783,8 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
                         tooltip: 'Delete profile',
                         onPressed: () async {
                           await VNCProfileManager.deleteProfile(p.name);
-                          final updated = await VNCProfileManager.getAllProfiles();
+                          final updated =
+                              await VNCProfileManager.getAllProfiles();
                           if (mounted) {
                             setState(() {
                               _connectionProfiles = updated;
@@ -1808,7 +1826,8 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
     _reconnectAttempts++;
     final delay = Duration(seconds: _reconnectDelaySeconds);
     final snack = SnackBar(
-      content: Text('Reconnecting in ${_reconnectDelaySeconds}s (attempt $_reconnectAttempts/$_maxReconnectAttempts)...'),
+      content: Text(
+          'Reconnecting in ${_reconnectDelaySeconds}s (attempt $_reconnectAttempts/$_maxReconnectAttempts)...'),
       duration: const Duration(seconds: 3),
     );
     if (mounted) {

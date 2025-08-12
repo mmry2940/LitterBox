@@ -120,9 +120,9 @@ class ADBServer {
       }
       _clientConnections.clear();
 
-  // Cancel discovery timer
-  _deviceDiscoveryTimer?.cancel();
-  _deviceDiscoveryTimer = null;
+      // Cancel discovery timer
+      _deviceDiscoveryTimer?.cancel();
+      _deviceDiscoveryTimer = null;
 
       // Close server socket
       await _serverSocket?.close();
@@ -261,7 +261,7 @@ class ADBServer {
   }
 
   void _startDeviceDiscovery() {
-  if (_deviceDiscoveryTimer != null) return; // already running
+    if (_deviceDiscoveryTimer != null) return; // already running
     // Add some mock devices for demonstration
     _addDevice(ADBDevice(
       id: 'emulator-5554',
@@ -278,7 +278,8 @@ class ADBServer {
     ));
 
     // In a real implementation, this would scan for actual devices
-    _deviceDiscoveryTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+    _deviceDiscoveryTimer =
+        Timer.periodic(const Duration(seconds: 30), (timer) {
       if (_state != ADBServerState.running) {
         timer.cancel();
         return;
@@ -504,7 +505,8 @@ class ADBClientManager {
   ADBProtocolClient? _adbProtocol;
   ADBServer? _server;
   ADBBackend? _externalBackend;
-  StreamSubscription<String>? _serverLogSubscription; // avoid duplicate listeners
+  StreamSubscription<String>?
+      _serverLogSubscription; // avoid duplicate listeners
   late StreamController<ADBConnectionState> _connectionStateController;
   late StreamController<String> _outputController;
   late StreamController<String> _commandHistoryController;
@@ -698,9 +700,10 @@ class ADBClientManager {
           }
           final first = devices.first;
           _connectedDeviceId = first.serial;
-            _connectionMode = ADBConnectionMode.server;
+          _connectionMode = ADBConnectionMode.server;
           _updateState(ADBConnectionState.connected);
-          _addOutput('✅ Connected to USB device via external adb: ${first.serial} (${first.state})');
+          _addOutput(
+              '✅ Connected to USB device via external adb: ${first.serial} (${first.state})');
           return true;
         } catch (e) {
           _addOutput('⚠️ External adb backend USB failed: $e, falling back');
@@ -831,13 +834,14 @@ class ADBClientManager {
 
     try {
       _addCommandToHistory(command);
-  _addOutput('> $command');
+      _addOutput('> $command');
 
       String? result;
 
       // External backend takes precedence
       if (_externalBackend != null && _connectedDeviceId.isNotEmpty) {
-        final result = await _externalBackend!.shell(_connectedDeviceId, command);
+        final result =
+            await _externalBackend!.shell(_connectedDeviceId, command);
         if (result.isEmpty) {
           _addOutput('(no output)', deviceOutput: true);
         } else {
@@ -847,8 +851,9 @@ class ADBClientManager {
         }
       }
       // Check if we have our own server running
-      else if (_server != null && _server!.currentState == ADBServerState.running) {
-  _addOutput('📤 Executing via internal ADB server...');
+      else if (_server != null &&
+          _server!.currentState == ADBServerState.running) {
+        _addOutput('📤 Executing via internal ADB server...');
 
         // Use server's built-in command responses for demo
         await Future.delayed(const Duration(milliseconds: 500));
@@ -1055,7 +1060,9 @@ class ADBClientManager {
         if (parts.length == 2) {
           final h = parts[0];
           final p = int.tryParse(parts[1]) ?? 5555;
-          try { await _externalBackend!.disconnect(h, p); } catch (_) {}
+          try {
+            await _externalBackend!.disconnect(h, p);
+          } catch (_) {}
         }
       }
 

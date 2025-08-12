@@ -59,7 +59,8 @@ class MyApp extends StatelessWidget {
                   seedColor: Colors.deepPurple, brightness: Brightness.dark),
             ),
             themeMode: mode,
-            home: SplashScreen(splashImage: splashImage ?? 'assets/splash_1.jpg'),
+            home:
+                SplashScreen(splashImage: splashImage ?? 'assets/splash_1.jpg'),
             routes: {
               '/settings': (context) => const SettingsScreen(),
               '/home': (context) => const HomeScreen(),
@@ -78,7 +79,7 @@ class SplashScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-  // Navigate to the main screen after a delay
+    // Navigate to the main screen after a delay
     Timer(const Duration(seconds: 3), () {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (context) => const HomeScreen()),
@@ -87,7 +88,7 @@ class SplashScreen extends StatelessWidget {
 
     return Scaffold(
       body: Center(
-  child: Image.asset(splashImage ?? 'assets/splash_1.jpg'),
+        child: Image.asset(splashImage ?? 'assets/splash_1.jpg'),
       ),
     );
   }

@@ -36,8 +36,10 @@ class _AndroidScreenState extends State<AndroidScreen>
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
     _adbClient = ADBClientManager();
-  // Enable external adb backend (real adb binary) replacing internal mock server
-  _adbClient.enableExternalAdbBackend().then((_) => _refreshExternalDevices());
+    // Enable external adb backend (real adb binary) replacing internal mock server
+    _adbClient
+        .enableExternalAdbBackend()
+        .then((_) => _refreshExternalDevices());
     _loadSavedDevices();
 
     // Listen to connection state changes
@@ -539,7 +541,8 @@ class _AndroidScreenState extends State<AndroidScreen>
                                 Text(
                                   '+ ${_externalDevices.length - 4} more',
                                   style: const TextStyle(
-                                      fontSize: 11, fontStyle: FontStyle.italic),
+                                      fontSize: 11,
+                                      fontStyle: FontStyle.italic),
                                 ),
                             ],
                           ),

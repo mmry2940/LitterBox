@@ -127,7 +127,9 @@ class _DeviceScreenState extends State<DeviceScreen> {
       onPopInvoked: (didPop) {
         if (!didPop && _selectedIndex != 5) {
           if (!mounted) return;
-            setState(() { _selectedIndex = 5; });
+          setState(() {
+            _selectedIndex = 5;
+          });
         }
       },
       child: Scaffold(

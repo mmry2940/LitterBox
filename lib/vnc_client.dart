@@ -130,7 +130,8 @@ class VNCClient {
   }
 
   /// Debug method to test just the initial handshake
-  Future<bool> debugHandshake(String host, int port, {String? password, bool skipInitialDelay = true}) async {
+  Future<bool> debugHandshake(String host, int port,
+      {String? password, bool skipInitialDelay = true}) async {
     try {
       _log('=== DEBUG HANDSHAKE START ===');
       _password = password;
@@ -268,7 +269,8 @@ class VNCClient {
   }
 
   /// Connect to VNC server
-  Future<bool> connect(String host, int port, {String? password, bool fast = true}) async {
+  Future<bool> connect(String host, int port,
+      {String? password, bool fast = true}) async {
     try {
       _log('Connecting to VNC server at $host:$port');
       _password = password;
@@ -308,8 +310,8 @@ class VNCClient {
     _log('Disconnecting from VNC server');
     _updateState(VNCConnectionState.disconnecting);
 
-  _frameRequestTimer?.cancel();
-  _frameRequestTimer = null;
+    _frameRequestTimer?.cancel();
+    _frameRequestTimer = null;
 
     try {
       await _socket?.close();
@@ -1074,52 +1076,52 @@ class VNCClient {
   Future<bool> _handleVeNCryptAES() async {
     try {
       _log('Starting VeNCrypt AES handshake');
-      
+
       // VeNCrypt handshake step 1: Read VeNCrypt version from server
       final vencryptVersionData = await _readBytes(2);
       final serverMajor = vencryptVersionData[0];
       final serverMinor = vencryptVersionData[1];
       _log('Server VeNCrypt version: $serverMajor.$serverMinor');
-      
+
       // Send our supported VeNCrypt version (0.2)
       _socket!.add([0, 2]);
       _log('Sent client VeNCrypt version: 0.2');
-      
+
       // Read VeNCrypt handshake response
       final vencryptResponseData = await _readBytes(1);
       final vencryptResponse = vencryptResponseData[0];
       _log('VeNCrypt handshake response: $vencryptResponse');
-      
+
       if (vencryptResponse != 0) {
         _log('ERROR: VeNCrypt handshake failed');
         return false;
       }
-      
+
       // Read number of supported sub-types
       final subTypeCountData = await _readBytes(1);
       final subTypeCount = subTypeCountData[0];
       _log('VeNCrypt supported sub-types count: $subTypeCount');
-      
+
       if (subTypeCount == 0) {
         _log('ERROR: No VeNCrypt sub-types available');
         return false;
       }
-      
+
       // Read supported sub-types (4 bytes each)
       final subTypesData = await _readBytes(subTypeCount * 4);
       final subTypes = <int>[];
       for (int i = 0; i < subTypeCount; i++) {
         final subType = (subTypesData[i * 4] << 24) |
-                       (subTypesData[i * 4 + 1] << 16) |
-                       (subTypesData[i * 4 + 2] << 8) |
-                       subTypesData[i * 4 + 3];
+            (subTypesData[i * 4 + 1] << 16) |
+            (subTypesData[i * 4 + 2] << 8) |
+            subTypesData[i * 4 + 3];
         subTypes.add(subType);
       }
       _log('VeNCrypt supported sub-types: ${subTypes.join(', ')}');
-      
+
       // Choose AES128-based sub-type
       // Sub-type 260 = X509None + AES128
-      // Sub-type 261 = X509Vnc + AES128  
+      // Sub-type 261 = X509Vnc + AES128
       // Sub-type 262 = X509Plain + AES128
       int chosenSubType;
       if (subTypes.contains(261)) {
@@ -1133,9 +1135,9 @@ class VNCClient {
         _log('Available sub-types: ${subTypes.join(', ')}');
         return false;
       }
-      
+
       _log('Choosing VeNCrypt sub-type: $chosenSubType');
-      
+
       // Send chosen sub-type (4 bytes, big-endian)
       final subTypeBytes = Uint8List(4);
       subTypeBytes[0] = (chosenSubType >> 24) & 0xFF;
@@ -1144,43 +1146,44 @@ class VNCClient {
       subTypeBytes[3] = chosenSubType & 0xFF;
       _socket!.add(subTypeBytes);
       _log('Sent chosen sub-type');
-      
+
       // Read sub-type acknowledgment
       final subTypeAckData = await _readBytes(1);
       final subTypeAck = subTypeAckData[0];
       _log('VeNCrypt sub-type acknowledgment: $subTypeAck');
-      
+
       if (subTypeAck != 1) {
         _log('ERROR: VeNCrypt sub-type rejected');
         return false;
       }
-      
+
       // Now perform TLS/AES handshake
       return await _performAESHandshake(chosenSubType);
-      
     } catch (e) {
       _log('ERROR: VeNCrypt AES handshake failed: $e');
       return false;
     }
   }
-  
+
   /// Perform AES encryption handshake for VeNCrypt
   Future<bool> _performAESHandshake(int subType) async {
     try {
       _log('Starting AES handshake for sub-type: $subType');
-      
+
       // Generate random AES key (128-bit = 16 bytes)
       final random = math.Random.secure();
-      final keyBytes = Uint8List.fromList(List.generate(16, (_) => random.nextInt(256)));
-      final ivBytes = Uint8List.fromList(List.generate(16, (_) => random.nextInt(256)));
-      
+      final keyBytes =
+          Uint8List.fromList(List.generate(16, (_) => random.nextInt(256)));
+      final ivBytes =
+          Uint8List.fromList(List.generate(16, (_) => random.nextInt(256)));
+
       _log('Generated 128-bit AES key and IV');
-      
+
       // Create AES cipher
       final cipher = AESEngine();
       final params = KeyParameter(keyBytes);
       cipher.init(true, params); // true for encryption
-      
+
       // If this is X509Vnc sub-type, we need to handle VNC authentication over AES
       if (subType == 261) {
         return await _handleAESVNCAuth(cipher, keyBytes, ivBytes);
@@ -1192,68 +1195,71 @@ class VNCClient {
         // X509Plain - handle plain text authentication over AES
         return await _handleAESPlainAuth(cipher, keyBytes, ivBytes);
       }
-      
+
       return false;
     } catch (e) {
       _log('ERROR: AES handshake failed: $e');
       return false;
     }
   }
-  
+
   /// Handle VNC authentication over AES encryption
-  Future<bool> _handleAESVNCAuth(AESEngine cipher, Uint8List keyBytes, Uint8List iv) async {
+  Future<bool> _handleAESVNCAuth(
+      AESEngine cipher, Uint8List keyBytes, Uint8List iv) async {
     try {
       _log('Handling VNC authentication over AES');
-      
+
       // Read encrypted 16-byte challenge
       final encryptedChallenge = await _readBytes(16);
       _log('Received AES-encrypted 16-byte challenge');
-      
+
       // Decrypt the challenge
       final challenge = _aesDecryptData(encryptedChallenge, keyBytes, iv);
       _log('Decrypted challenge');
-      
+
       if (_password == null || _password!.isEmpty) {
         _log('ERROR: AES VNC auth requires password');
         return false;
       }
-      
+
       // Encrypt challenge with VNC DES method
       final response1 = _encryptChallenge(challenge.sublist(0, 8), _password!);
       final response2 = _encryptChallenge(challenge.sublist(8, 16), _password!);
       final response = Uint8List.fromList([...response1, ...response2]);
-      
+
       // Encrypt response with AES
       final encryptedResponse = _aesEncryptData(response, keyBytes, iv);
-      
+
       // Send encrypted response
       _socket!.add(encryptedResponse);
       _log('Sent AES-encrypted VNC auth response');
-      
+
       return true;
     } catch (e) {
       _log('ERROR: AES VNC authentication failed: $e');
       return false;
     }
   }
-  
+
   /// Handle plain text authentication over AES encryption
-  Future<bool> _handleAESPlainAuth(AESEngine cipher, Uint8List keyBytes, Uint8List iv) async {
+  Future<bool> _handleAESPlainAuth(
+      AESEngine cipher, Uint8List keyBytes, Uint8List iv) async {
     try {
       _log('Handling plain text authentication over AES');
-      
+
       if (_password == null || _password!.isEmpty) {
         _log('ERROR: AES plain auth requires password');
         return false;
       }
-      
+
       // Read username/password length requirements
       final lengthData = await _readBytes(2);
       final usernameLength = lengthData[0];
       final passwordLength = lengthData[1];
-      
-      _log('Required lengths - Username: $usernameLength, Password: $passwordLength');
-      
+
+      _log(
+          'Required lengths - Username: $usernameLength, Password: $passwordLength');
+
       // Prepare username and password (pad/truncate as needed)
       final username = 'user'; // Default username
       final usernameBytes = Uint8List(usernameLength);
@@ -1261,30 +1267,31 @@ class VNCClient {
       for (int i = 0; i < usernameLength; i++) {
         usernameBytes[i] = i < userUtfBytes.length ? userUtfBytes[i] : 0;
       }
-      
+
       final passwordBytes = Uint8List(passwordLength);
       final passUtfBytes = utf8.encode(_password!);
       for (int i = 0; i < passwordLength; i++) {
         passwordBytes[i] = i < passUtfBytes.length ? passUtfBytes[i] : 0;
       }
-      
+
       // Combine username and password
-      final credentials = Uint8List.fromList([...usernameBytes, ...passwordBytes]);
-      
+      final credentials =
+          Uint8List.fromList([...usernameBytes, ...passwordBytes]);
+
       // Encrypt credentials with AES
       final encryptedCredentials = _aesEncryptData(credentials, keyBytes, iv);
-      
+
       // Send encrypted credentials
       _socket!.add(encryptedCredentials);
       _log('Sent AES-encrypted credentials');
-      
+
       return true;
     } catch (e) {
       _log('ERROR: AES plain authentication failed: $e');
       return false;
     }
   }
-  
+
   /// Encrypt data with AES-128 in CBC mode
   Uint8List _aesEncryptData(Uint8List data, Uint8List key, Uint8List iv) {
     // Pad data to 16-byte boundary using PKCS7 padding
@@ -1294,118 +1301,121 @@ class VNCClient {
     for (int i = data.length; i < paddedData.length; i++) {
       paddedData[i] = paddingLength;
     }
-    
+
     final encrypted = Uint8List(paddedData.length);
     final cipher = AESEngine();
     cipher.init(true, KeyParameter(key));
-    
+
     Uint8List currentIv = Uint8List.fromList(iv);
-    
+
     for (int i = 0; i < paddedData.length; i += 16) {
       final block = Uint8List(16);
       // XOR with IV/previous ciphertext (CBC mode)
       for (int j = 0; j < 16; j++) {
         block[j] = paddedData[i + j] ^ currentIv[j];
       }
-      
+
       // Encrypt block
       final encryptedBlock = Uint8List(16);
       cipher.processBlock(block, 0, encryptedBlock, 0);
-      
+
       encrypted.setRange(i, i + 16, encryptedBlock);
       currentIv = encryptedBlock; // Use ciphertext as IV for next block
     }
-    
+
     return encrypted;
   }
-  
+
   /// Decrypt data with AES-128 in CBC mode
   Uint8List _aesDecryptData(Uint8List data, Uint8List key, Uint8List iv) {
     if (data.length % 16 != 0) {
       throw ArgumentError('AES encrypted data must be multiple of 16 bytes');
     }
-    
+
     final decrypted = Uint8List(data.length);
     final cipher = AESEngine();
     cipher.init(false, KeyParameter(key)); // false for decryption
-    
+
     Uint8List currentIv = Uint8List.fromList(iv);
-    
+
     for (int i = 0; i < data.length; i += 16) {
       final encryptedBlock = data.sublist(i, i + 16);
-      
+
       // Decrypt block
       final decryptedBlock = Uint8List(16);
       cipher.processBlock(encryptedBlock, 0, decryptedBlock, 0);
-      
+
       // XOR with IV/previous ciphertext (CBC mode)
       for (int j = 0; j < 16; j++) {
         decryptedBlock[j] ^= currentIv[j];
       }
-      
+
       decrypted.setRange(i, i + 16, decryptedBlock);
-      currentIv = Uint8List.fromList(encryptedBlock); // Use ciphertext as IV for next block
+      currentIv = Uint8List.fromList(
+          encryptedBlock); // Use ciphertext as IV for next block
     }
-    
+
     // Remove PKCS7 padding
     final paddingLength = decrypted.last;
     if (paddingLength > 0 && paddingLength <= 16) {
       return decrypted.sublist(0, decrypted.length - paddingLength);
     }
-    
+
     return decrypted;
   }
-  
+
   /// Encrypt a single AES block
   Uint8List _aesEncryptBlock(AESEngine cipher, Uint8List block, Uint8List iv) {
     final input = Uint8List(16);
     final output = Uint8List(16);
-    
+
     // XOR with IV for CBC mode
     for (int i = 0; i < 16; i++) {
       input[i] = block[i] ^ iv[i];
     }
-    
+
     cipher.processBlock(input, 0, output, 0);
     return output;
   }
-  
+
   /// Decrypt a single AES block
   Uint8List _aesDecryptBlock(AESEngine cipher, Uint8List block, Uint8List iv) {
     final output = Uint8List(16);
-    
+
     // Create decryption cipher with the same key
     final decryptCipher = AESEngine();
-    final keyParam = KeyParameter(Uint8List(16)); // Placeholder - use proper key management
+    final keyParam =
+        KeyParameter(Uint8List(16)); // Placeholder - use proper key management
     decryptCipher.init(false, keyParam); // false for decryption
-    
+
     decryptCipher.processBlock(block, 0, output, 0);
-    
+
     // XOR with IV for CBC mode
     for (int i = 0; i < 16; i++) {
       output[i] ^= iv[i];
     }
-    
+
     return output;
   }
-  
+
   /// Encrypt data with AES (handles multiple blocks)
-  Uint8List _aesEncryptDataLegacy(AESEngine cipher, Uint8List data, Uint8List iv) {
+  Uint8List _aesEncryptDataLegacy(
+      AESEngine cipher, Uint8List data, Uint8List iv) {
     // Pad data to 16-byte boundary
     final paddedLength = ((data.length + 15) ~/ 16) * 16;
     final paddedData = Uint8List(paddedLength);
     paddedData.setRange(0, data.length, data);
-    
+
     final encrypted = Uint8List(paddedLength);
     Uint8List currentIv = Uint8List.fromList(iv);
-    
+
     for (int i = 0; i < paddedLength; i += 16) {
       final block = paddedData.sublist(i, i + 16);
       final encryptedBlock = _aesEncryptBlock(cipher, block, currentIv);
       encrypted.setRange(i, i + 16, encryptedBlock);
       currentIv = encryptedBlock; // Chain for CBC mode
     }
-    
+
     return encrypted;
   }
 

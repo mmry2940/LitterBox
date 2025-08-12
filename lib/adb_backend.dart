@@ -6,8 +6,10 @@ abstract class ADBBackend {
   Future<void> init();
   Future<List<ADBBackendDevice>> listDevices();
   Future<String> shell(String serial, String command);
+
   /// Connect to a device over TCP (adb connect host:port)
   Future<bool> connect(String host, int port);
+
   /// Disconnect a previously connected device (adb disconnect host:port)
   Future<bool> disconnect(String host, int port);
   Future<void> dispose();
@@ -50,7 +52,8 @@ class ExternalAdbBackend implements ADBBackend {
         .where((l) => l.isNotEmpty)
         .toList();
     final devices = <ADBBackendDevice>[];
-    for (final line in lines.skip(1)) { // skip header
+    for (final line in lines.skip(1)) {
+      // skip header
       if (line.contains('\t')) {
         final parts = line.split('\t');
         if (parts.length >= 2) {
