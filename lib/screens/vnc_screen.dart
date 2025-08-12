@@ -744,24 +744,21 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
       }
     });
 
-    // Add delay to avoid triggering VNC server security lockout
-    Future.delayed(const Duration(seconds: 2), () {
-      _vncClient!
-          .connect(host, vncPort,
-              password: password.isNotEmpty ? password : null)
-          .then((success) {
-        if (!success) {
-          setState(() {
-            _connectionError =
-                'Failed to connect to VNC server. Check logs for details. If "Too many security failures", wait before retrying.';
-            _isConnecting = false;
-          });
-        }
-      }).catchError((error) {
+    _vncClient!
+        .connect(host, vncPort,
+            password: password.isNotEmpty ? password : null, fast: true)
+        .then((success) {
+      if (!success) {
         setState(() {
-          _connectionError = 'Connection error: $error';
+          _connectionError =
+              'Failed to connect to VNC server. Check logs for details. If "Too many security failures", retry with delay.';
           _isConnecting = false;
         });
+      }
+    }).catchError((error) {
+      setState(() {
+        _connectionError = 'Connection error: $error';
+        _isConnecting = false;
       });
     });
   }
@@ -1587,14 +1584,12 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        if (_showVncWidget) {
-          // Handle back button when VNC widget is shown
+    return PopScope(
+      canPop: !_showVncWidget,
+      onPopInvoked: (didPop) {
+        if (!didPop && _showVncWidget) {
           _disconnect();
-          return false; // Don't pop the route, just go back to connection form
         }
-        return true; // Allow normal back navigation
       },
       child: Scaffold(
         appBar: AppBar(

@@ -122,16 +122,13 @@ class _DeviceScreenState extends State<DeviceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        if (_selectedIndex != 5) {
-          if (!mounted) return false;
-          setState(() {
-            _selectedIndex = 5;
-          });
-          return false;
+    return PopScope(
+      canPop: _selectedIndex == 5,
+      onPopInvoked: (didPop) {
+        if (!didPop && _selectedIndex != 5) {
+          if (!mounted) return;
+            setState(() { _selectedIndex = 5; });
         }
-        return true;
       },
       child: Scaffold(
         appBar: AppBar(

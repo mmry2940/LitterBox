@@ -72,15 +72,16 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
       return const Center(child: Text('Waiting for SSH connection...'));
     }
 
-    return RawKeyboardListener(
-      focusNode: FocusNode(),
-      onKey: (RawKeyEvent event) {
-        if (event is RawKeyDownEvent) {
-          final key = event.character ?? '';
-          if (key.isNotEmpty) {
-            _terminal.write(key);
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (FocusNode node, KeyEvent event) {
+        if (event is KeyDownEvent) {
+          final character = event.character;
+          if (character != null && character.isNotEmpty) {
+            _terminal.write(character);
           }
         }
+        return KeyEventResult.handled;
       },
       child: TerminalView(_terminal),
     );

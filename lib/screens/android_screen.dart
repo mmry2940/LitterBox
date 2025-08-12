@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../adb_client.dart';
+import '../adb_backend.dart';
 
 class AndroidScreen extends StatefulWidget {
   const AndroidScreen({super.key});
@@ -14,6 +15,7 @@ class _AndroidScreenState extends State<AndroidScreen>
     with TickerProviderStateMixin {
   late TabController _tabController;
   late ADBClientManager _adbClient;
+  List<ADBBackendDevice> _externalDevices = [];
 
   // Connection form controllers
   final _hostController = TextEditingController(text: '192.168.1.100');
@@ -34,6 +36,8 @@ class _AndroidScreenState extends State<AndroidScreen>
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
     _adbClient = ADBClientManager();
+  // Enable external adb backend (real adb binary) replacing internal mock server
+  _adbClient.enableExternalAdbBackend().then((_) => _refreshExternalDevices());
     _loadSavedDevices();
 
     // Listen to connection state changes
@@ -70,6 +74,20 @@ class _AndroidScreenState extends State<AndroidScreen>
     _pairingCodeController.dispose();
     _outputScrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _refreshExternalDevices() async {
+    if (!_adbClient.usingExternalBackend) return;
+    try {
+      await _adbClient.enableExternalAdbBackend(); // ensure initialized
+      // call backend directly through temp method
+      final backendDevices = await (ExternalAdbBackend()).listDevices();
+      if (mounted) {
+        setState(() {
+          _externalDevices = backendDevices;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadSavedDevices() async {
@@ -194,9 +212,7 @@ class _AndroidScreenState extends State<AndroidScreen>
     await _adbClient.disconnect();
   }
 
-  Future<void> _checkADBServer() async {
-    await _adbClient.checkADBServer();
-  }
+  // Removed legacy ADB server checker (internal mock server removed)
 
   Future<void> _executeCommand() async {
     final command = _commandController.text.trim();
@@ -475,98 +491,61 @@ class _AndroidScreenState extends State<AndroidScreen>
                     const SizedBox(height: 16),
                   ],
 
-                  // ADB Server Controls
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 16),
-                    child: Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'ADB Server Control',
-                              style: TextStyle(
-                                  fontSize: 14, fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: (_adbClient.currentState ==
-                                            ADBConnectionState.connected)
-                                        ? null
-                                        : () => _adbClient.startServer(),
-                                    icon:
-                                        const Icon(Icons.play_arrow, size: 18),
-                                    label: const Text('Start',
-                                        style: TextStyle(fontSize: 12)),
-                                    style: OutlinedButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 8),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: (_adbClient.currentState !=
-                                            ADBConnectionState.connected)
-                                        ? null
-                                        : () => _adbClient.stopServer(),
-                                    icon: const Icon(Icons.stop, size: 18),
-                                    label: const Text('Stop',
-                                        style: TextStyle(fontSize: 12)),
-                                    style: OutlinedButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 8),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: _checkADBServer,
+                  // External adb (real) device list replacing mock server controls
+                  if (_adbClient.usingExternalBackend)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      child: Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.usb, size: 16),
+                                  const SizedBox(width: 6),
+                                  const Text('ADB Devices (external)',
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold)),
+                                  const Spacer(),
+                                  IconButton(
                                     icon: const Icon(Icons.refresh, size: 18),
-                                    label: const Text('Check',
-                                        style: TextStyle(fontSize: 12)),
-                                    style: OutlinedButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 8),
-                                    ),
+                                    tooltip: 'Refresh devices',
+                                    onPressed: _refreshExternalDevices,
                                   ),
-                                ),
-                              ],
-                            ),
-                            if (_adbClient.server != null) ...[
-                              const SizedBox(height: 8),
-                              Text(
-                                  'Status: ${_adbClient.server!.currentState.name}',
-                                  style: const TextStyle(fontSize: 12)),
-                              if (_adbClient.getServerDevices().isNotEmpty) ...[
-                                const SizedBox(height: 4),
-                                const Text('Devices:',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold)),
-                                ..._adbClient.getServerDevices().take(2).map(
-                                      (device) => Padding(
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              if (_externalDevices.isEmpty)
+                                const Text('No devices detected',
+                                    style: TextStyle(fontSize: 12))
+                              else
+                                ..._externalDevices
+                                    .take(4)
+                                    .map(
+                                      (d) => Padding(
                                         padding: const EdgeInsets.only(
-                                            left: 8, top: 2),
+                                            left: 4, top: 2),
                                         child: Text(
-                                            '• ${device.id} (${device.state})',
-                                            style:
-                                                const TextStyle(fontSize: 11)),
+                                          '• ${d.serial} (${d.state})',
+                                          style: const TextStyle(fontSize: 12),
+                                        ),
                                       ),
-                                    ),
-                              ],
+                                    )
+                                    .toList(),
+                              if (_externalDevices.length > 4)
+                                Text(
+                                  '+ ${_externalDevices.length - 4} more',
+                                  style: const TextStyle(
+                                      fontSize: 11, fontStyle: FontStyle.italic),
+                                ),
                             ],
-                          ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
 
                   // Action Buttons
                   Row(

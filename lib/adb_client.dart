@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'adb_backend.dart';
 
 enum ADBConnectionState {
   disconnected,
@@ -24,6 +25,9 @@ enum ADBConnectionMode {
   direct, // Direct connection to device
   server, // Through ADB server
 }
+
+// Controls formatting/verbosity of console output
+enum ADBOutputMode { verbose, raw }
 
 enum ADBServerState {
   stopped,
@@ -63,6 +67,7 @@ class ADBServer {
       StreamController<ADBServerState>.broadcast();
   final StreamController<String> _logController =
       StreamController<String>.broadcast();
+  Timer? _deviceDiscoveryTimer; // single periodic refresh timer
 
   Stream<ADBServerState> get stateStream => _stateController.stream;
   Stream<String> get logStream => _logController.stream;
@@ -114,6 +119,10 @@ class ADBServer {
         }
       }
       _clientConnections.clear();
+
+  // Cancel discovery timer
+  _deviceDiscoveryTimer?.cancel();
+  _deviceDiscoveryTimer = null;
 
       // Close server socket
       await _serverSocket?.close();
@@ -252,6 +261,7 @@ class ADBServer {
   }
 
   void _startDeviceDiscovery() {
+  if (_deviceDiscoveryTimer != null) return; // already running
     // Add some mock devices for demonstration
     _addDevice(ADBDevice(
       id: 'emulator-5554',
@@ -268,14 +278,13 @@ class ADBServer {
     ));
 
     // In a real implementation, this would scan for actual devices
-    Timer.periodic(const Duration(seconds: 30), (timer) {
+    _deviceDiscoveryTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
       if (_state != ADBServerState.running) {
         timer.cancel();
         return;
       }
-
-      // Refresh device list periodically
-      _log('Refreshing device list...');
+      // Suppress noisy periodic log unless debugging:
+      // _log('Refreshing device list...');
     });
   }
 
@@ -494,12 +503,15 @@ class ADBClientManager {
   Socket? _socket;
   ADBProtocolClient? _adbProtocol;
   ADBServer? _server;
+  ADBBackend? _externalBackend;
+  StreamSubscription<String>? _serverLogSubscription; // avoid duplicate listeners
   late StreamController<ADBConnectionState> _connectionStateController;
   late StreamController<String> _outputController;
   late StreamController<String> _commandHistoryController;
   ADBConnectionState _state = ADBConnectionState.disconnected;
   String _connectedDeviceId = '';
   ADBConnectionMode _connectionMode = ADBConnectionMode.server;
+  ADBOutputMode _outputMode = ADBOutputMode.raw; // default raw per user request
 
   final List<String> _commandHistory = [];
   final List<String> _outputBuffer = [];
@@ -537,6 +549,8 @@ class ADBClientManager {
       Map.unmodifiable(_quickCommands);
   ADBServer? get server => _server;
   ADBConnectionMode get connectionMode => _connectionMode;
+  ADBOutputMode get outputMode => _outputMode;
+  bool get usingExternalBackend => _externalBackend != null;
 
   ADBClientManager() {
     _connectionStateController =
@@ -545,15 +559,31 @@ class ADBClientManager {
     _commandHistoryController = StreamController<String>.broadcast();
   }
 
+  Future<void> enableExternalAdbBackend() async {
+    _addOutput('🔌 Initializing external adb backend...');
+    final backend = ExternalAdbBackend();
+    try {
+      await backend.init();
+      _externalBackend = backend;
+      _addOutput('✅ External adb backend ready');
+    } catch (e) {
+      _addOutput('⚠️ External adb backend unavailable: $e');
+      // Do not rethrow; fall back to internal mechanisms
+    }
+  }
+
   // Server management methods
   Future<bool> startServer([int port = ADBServer.DEFAULT_PORT]) async {
     try {
       _server ??= ADBServer();
 
-      // Listen to server logs
-      _server!.logStream.listen((log) {
-        _addOutput(log);
-      });
+      // Attach log stream only once
+      _serverLogSubscription ??= _server!.logStream.listen(_addOutput);
+
+      if (_server!.currentState == ADBServerState.running) {
+        _addOutput('ℹ️ ADB Server already running on port $port');
+        return true;
+      }
 
       final started = await _server!.start(port);
       if (started) {
@@ -570,13 +600,14 @@ class ADBClientManager {
   }
 
   Future<void> stopServer() async {
-    if (_server != null) {
-      await _server!.stop();
-      _addOutput('🛑 ADB Server stopped');
-      if (_state == ADBConnectionState.connected &&
-          _connectionMode == ADBConnectionMode.server) {
-        _updateState(ADBConnectionState.disconnected);
-      }
+    if (_server == null) return;
+    await _server!.stop();
+    await _serverLogSubscription?.cancel();
+    _serverLogSubscription = null;
+    _addOutput('🛑 ADB Server stopped');
+    if (_state == ADBConnectionState.connected &&
+        _connectionMode == ADBConnectionMode.server) {
+      _updateState(ADBConnectionState.disconnected);
     }
   }
 
@@ -590,10 +621,33 @@ class ADBClientManager {
     _addOutput('🔄 Connection mode set to: ${mode.name}');
   }
 
+  void setOutputMode(ADBOutputMode mode) {
+    _outputMode = mode;
+    _addOutput('Output mode set to: ${mode.name}');
+  }
+
   Future<bool> connectWifi(String host, [int port = 5555]) async {
     try {
       _updateState(ADBConnectionState.connecting);
       _addOutput('🔌 Connecting to $host:$port via Wi-Fi...');
+
+      // Prefer external adb backend if available (adb connect)
+      if (_externalBackend != null) {
+        try {
+          final ok = await _externalBackend!.connect(host, port);
+          if (ok) {
+            _connectionMode = ADBConnectionMode.server;
+            _connectedDeviceId = '$host:$port';
+            _updateState(ADBConnectionState.connected);
+            _addOutput('✅ Connected via external adb backend');
+            return true;
+          } else {
+            _addOutput('⚠️ External adb backend connect failed, falling back');
+          }
+        } catch (e) {
+          _addOutput('⚠️ External adb backend error: $e');
+        }
+      }
 
       // Try ADB protocol connection first
       _adbProtocol = ADBProtocolClient();
@@ -633,6 +687,25 @@ class ADBClientManager {
     try {
       _updateState(ADBConnectionState.connecting);
       _addOutput('🔌 Connecting via USB through ADB server...');
+
+      if (_externalBackend != null) {
+        try {
+          final devices = await _externalBackend!.listDevices();
+          if (devices.isEmpty) {
+            _addOutput('❌ No USB devices (external adb)');
+            _updateState(ADBConnectionState.failed);
+            return false;
+          }
+          final first = devices.first;
+          _connectedDeviceId = first.serial;
+            _connectionMode = ADBConnectionMode.server;
+          _updateState(ADBConnectionState.connected);
+          _addOutput('✅ Connected to USB device via external adb: ${first.serial} (${first.state})');
+          return true;
+        } catch (e) {
+          _addOutput('⚠️ External adb backend USB failed: $e, falling back');
+        }
+      }
 
       // For USB connections, connect through ADB server and get device list
       Socket serverSocket = await Socket.connect('127.0.0.1', 5037,
@@ -758,13 +831,24 @@ class ADBClientManager {
 
     try {
       _addCommandToHistory(command);
-      _addOutput('> $command');
+  _addOutput('> $command');
 
       String? result;
 
+      // External backend takes precedence
+      if (_externalBackend != null && _connectedDeviceId.isNotEmpty) {
+        final result = await _externalBackend!.shell(_connectedDeviceId, command);
+        if (result.isEmpty) {
+          _addOutput('(no output)', deviceOutput: true);
+        } else {
+          for (final line in result.split('\n')) {
+            if (line.trim().isNotEmpty) _addOutput(line, deviceOutput: true);
+          }
+        }
+      }
       // Check if we have our own server running
-      if (_server != null && _server!.currentState == ADBServerState.running) {
-        _addOutput('📤 Executing via internal ADB server...');
+      else if (_server != null && _server!.currentState == ADBServerState.running) {
+  _addOutput('📤 Executing via internal ADB server...');
 
         // Use server's built-in command responses for demo
         await Future.delayed(const Duration(milliseconds: 500));
@@ -791,7 +875,12 @@ class ADBClientManager {
           response = 'Complex command executed';
         }
 
-        _addOutput('📥 Server response:\n$response');
+        // Treat each line as device output
+        for (final line in response.split('\n')) {
+          if (line.trim().isNotEmpty) {
+            _addOutput(line, deviceOutput: true);
+          }
+        }
       }
       // Use ADB protocol if available
       else if (_adbProtocol != null &&
@@ -800,7 +889,11 @@ class ADBClientManager {
         result = await _adbProtocol!.executeShellCommand(command);
 
         if (result != null && result.isNotEmpty) {
-          _addOutput(result.trim());
+          for (final line in result.split('\n')) {
+            if (line.trim().isNotEmpty) {
+              _addOutput(line, deviceOutput: true);
+            }
+          }
         } else {
           _addOutput('Command executed (no output)');
         }
@@ -844,7 +937,11 @@ class ADBClientManager {
       await serverSocket.close();
 
       if (output.isNotEmpty) {
-        _addOutput(output);
+        for (final line in output.split('\n')) {
+          if (line.trim().isNotEmpty) {
+            _addOutput(line, deviceOutput: true);
+          }
+        }
       } else {
         _addOutput('Command executed (no output)');
       }
@@ -952,6 +1049,16 @@ class ADBClientManager {
         _socket = null;
       }
 
+      // External backend disconnect (best-effort)
+      if (_externalBackend != null && _connectedDeviceId.contains(':')) {
+        final parts = _connectedDeviceId.split(':');
+        if (parts.length == 2) {
+          final h = parts[0];
+          final p = int.tryParse(parts[1]) ?? 5555;
+          try { await _externalBackend!.disconnect(h, p); } catch (_) {}
+        }
+      }
+
       _connectedDeviceId = '';
       _connectionMode = ADBConnectionMode.server;
       _updateState(ADBConnectionState.disconnected);
@@ -970,20 +1077,26 @@ class ADBClientManager {
     }
   }
 
-  void _addOutput(String output) {
-    final timestamp = DateTime.now().toString().substring(11, 19);
-    final formattedOutput = '[$timestamp] $output';
-    _outputBuffer.add(formattedOutput);
-
-    // Keep only last 100 entries
-    if (_outputBuffer.length > 100) {
-      _outputBuffer.removeAt(0);
+  void _addOutput(String output, {bool deviceOutput = false}) {
+    // In raw mode suppress non-device meta logs
+    if (_outputMode == ADBOutputMode.raw && !deviceOutput) {
+      return;
     }
-
-    if (!_outputController.isClosed) {
-      _outputController.add(formattedOutput);
+    String line;
+    if (_outputMode == ADBOutputMode.raw) {
+      line = output; // no timestamp
+    } else {
+      final ts = DateTime.now().toString().substring(11, 19);
+      line = '[$ts] $output';
     }
-    print('ADB: $formattedOutput');
+    _outputBuffer.add(line);
+    if (_outputBuffer.length > 100) _outputBuffer.removeAt(0);
+    if (!_outputController.isClosed) _outputController.add(line);
+    if (_outputMode == ADBOutputMode.raw) {
+      print(line);
+    } else {
+      print('ADB: $line');
+    }
   }
 
   void _addCommandToHistory(String command) {

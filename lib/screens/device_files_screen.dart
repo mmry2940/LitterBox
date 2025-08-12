@@ -136,9 +136,10 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        if (_currentPath != '/') {
+    return PopScope(
+      canPop: _currentPath == '/',
+      onPopInvoked: (didPop) {
+        if (!didPop && _currentPath != '/') {
           String up = _currentPath;
           if (up.endsWith('/') && up.length > 1) {
             up = up.substring(0, up.length - 1);
@@ -152,9 +153,7 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
             if (parent.isEmpty) parent = '/';
           }
           _navigateTo(parent);
-          return false;
         }
-        return true;
       },
       child: _buildFileManagerBody(),
     );
