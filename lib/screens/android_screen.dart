@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'dart:typed_data';
 import '../adb_client.dart';
 import '../adb_backend.dart';
 import '../webadb_server.dart';
@@ -16,12 +19,23 @@ class AndroidScreen extends StatefulWidget {
 class _AndroidScreenState extends State<AndroidScreen>
     with TickerProviderStateMixin {
   // Navigation indices: 0 Dashboard,1 Console,2 Logcat,3 Commands,4 Files/Ports,5 Info
+  // Updated: added 6 WebADB tab
   int _navIndex = 0;
   late ADBClientManager _adbClient;
   List<ADBBackendDevice> _externalDevices = [];
   String _selectedBackend = 'external'; // external | internal
   WebAdbServer? _webAdbServer;
   final _webAdbPortController = TextEditingController(text: '8587');
+  final _webAdbTokenController = TextEditingController();
+  bool _showWebAdbToken = false;
+  bool _fetchingWebAdbDevices = false;
+  List<dynamic> _webAdbDevices = [];
+  String? _webAdbFetchError;
+  final Map<String, Uint8List> _screencapCache = {};
+  String? _screencapLoadingSerial;
+  Map<String, dynamic>? _webAdbHealth;
+  DateTime? _webAdbHealthTime;
+  bool _webAdbHealthLoading = false;
 
   // Connection form controllers
   final _hostController = TextEditingController(text: '192.168.1.100');
@@ -58,6 +72,7 @@ class _AndroidScreenState extends State<AndroidScreen>
         .then((_) => _refreshExternalDevices());
     _loadSavedDevices();
     _applyPersistedRuntimeSettings();
+    _loadPersistedWebAdbToken();
 
     // Listen to connection state changes
     _adbClient.connectionState.listen((state) {
@@ -80,6 +95,58 @@ class _AndroidScreenState extends State<AndroidScreen>
         });
       }
     });
+  }
+
+  Future<void> _loadPersistedWebAdbToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedToken = prefs.getString('webadb_auth_token');
+    if (savedToken != null && savedToken.isNotEmpty) {
+      _webAdbTokenController.text = savedToken;
+    }
+  }
+
+  Future<void> _refreshWebAdbHealth() async {
+    if (!(_webAdbServer?.running ?? false)) return;
+    if (_webAdbHealthLoading) return;
+    setState(() => _webAdbHealthLoading = true);
+    try {
+      final p = _webAdbServer!.port;
+      final client = HttpClient();
+      final req = await client.getUrl(Uri.parse('http://localhost:$p/health'));
+      final token = _webAdbTokenController.text.trim();
+      if (token.isNotEmpty) req.headers.set('Authorization', 'Bearer $token');
+      final resp = await req.close();
+      if (resp.statusCode == 200) {
+        final body = await resp.transform(utf8.decoder).join();
+        final data = jsonDecode(body);
+        setState(() {
+          _webAdbHealth = data is Map<String, dynamic> ? data : null;
+          _webAdbHealthTime = DateTime.now();
+        });
+      } else {
+        setState(() {
+          _webAdbHealth = {'error': 'HTTP ${resp.statusCode}'};
+          _webAdbHealthTime = DateTime.now();
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _webAdbHealth = {'error': e.toString()};
+        _webAdbHealthTime = DateTime.now();
+      });
+    } finally {
+      if (mounted) setState(() => _webAdbHealthLoading = false);
+    }
+  }
+
+  Future<void> _persistWebAdbToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = _webAdbTokenController.text.trim();
+    if (token.isEmpty) {
+      await prefs.remove('webadb_auth_token');
+    } else {
+      await prefs.setString('webadb_auth_token', token);
+    }
   }
 
   Future<void> _applyPersistedRuntimeSettings() async {
@@ -118,6 +185,7 @@ class _AndroidScreenState extends State<AndroidScreen>
     _outputScrollController.dispose();
     _logcatFilterController.dispose();
     _webAdbPortController.dispose();
+    _webAdbTokenController.dispose();
     super.dispose();
   }
 
@@ -374,6 +442,10 @@ class _AndroidScreenState extends State<AndroidScreen>
                   icon: Icon(Icons.info_outline),
                   selectedIcon: Icon(Icons.info),
                   label: Text('Info')),
+              NavigationRailDestination(
+                  icon: Icon(Icons.public_outlined),
+                  selectedIcon: Icon(Icons.public),
+                  label: Text('WebADB')),
             ],
           ),
           const VerticalDivider(width: 1),
@@ -394,7 +466,7 @@ class _AndroidScreenState extends State<AndroidScreen>
     // Use IndexedStack to keep previous tabs alive without rebuilding
     return IndexedStack(
       index: _navIndex,
-      children: List.generate(6, (i) => _tabCache[i] ?? const SizedBox()),
+      children: List.generate(7, (i) => _tabCache[i] ?? const SizedBox()),
     );
   }
 
@@ -412,7 +484,8 @@ class _AndroidScreenState extends State<AndroidScreen>
         return _buildFilesTab();
       case 5:
       default:
-        return _buildInfoTab();
+        if (_navIndex == 5) return _buildInfoTab();
+        return _buildWebAdbTab();
     }
   }
 
@@ -518,6 +591,9 @@ class _AndroidScreenState extends State<AndroidScreen>
                     enabled: true),
                 _qaButton('Files', Icons.folder_copy,
                     () => setState(() => _navIndex = 4),
+                    enabled: true),
+                _qaButton(
+                    'WebADB', Icons.public, () => setState(() => _navIndex = 6),
                     enabled: true),
               ],
             )
@@ -651,7 +727,7 @@ class _AndroidScreenState extends State<AndroidScreen>
               ),
             ),
             const SizedBox(height: 16),
-            // WebADB Bridge Controls
+            // WebADB Bridge Controls + Token
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -672,6 +748,16 @@ class _AndroidScreenState extends State<AndroidScreen>
                           child: const Icon(Icons.info_outline, size: 16),
                         )
                       ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _webAdbTokenController,
+                      decoration: const InputDecoration(
+                        labelText: 'Auth Token (optional)',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (_) => _persistWebAdbToken(),
                     ),
                     const SizedBox(height: 12),
                     Row(
@@ -707,8 +793,10 @@ class _AndroidScreenState extends State<AndroidScreen>
                               final port = int.tryParse(
                                       _webAdbPortController.text.trim()) ??
                                   8587;
-                              _webAdbServer =
-                                  WebAdbServer(_adbClient, port: port);
+                              final token = _webAdbTokenController.text.trim();
+                              _webAdbServer = WebAdbServer(_adbClient,
+                                  port: port,
+                                  authToken: token.isEmpty ? null : token);
                               final ok = await _webAdbServer!.start();
                               if (ok && mounted) setState(() {});
                             } else {
@@ -734,6 +822,15 @@ class _AndroidScreenState extends State<AndroidScreen>
                               key: ValueKey('webadb_off'),
                               style: TextStyle(fontSize: 12)),
                     ),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.open_in_new, size: 16),
+                        label: const Text('Open Full WebADB Tab'),
+                        onPressed: () => setState(() => _navIndex = 6),
+                      ),
+                    )
                   ],
                 ),
               ),
@@ -1960,6 +2057,519 @@ class _AndroidScreenState extends State<AndroidScreen>
         ],
       ),
     );
+  }
+
+  // --- WebADB Enhanced Tab ---
+  Widget _buildWebAdbTab() {
+    final running = _webAdbServer?.running ?? false;
+    final port =
+        _webAdbServer?.port ?? int.tryParse(_webAdbPortController.text) ?? 8587;
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: ListView(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.public, size: 22),
+              const SizedBox(width: 8),
+              const Text('WebADB Bridge',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: running ? Colors.green.shade600 : Colors.red.shade600,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  running ? 'RUNNING' : 'STOPPED',
+                  style: const TextStyle(
+                      color: Colors.white, fontSize: 12, letterSpacing: 1.1),
+                ),
+              )
+            ],
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Configuration',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _webAdbPortController,
+                        enabled: !running,
+                        decoration: const InputDecoration(
+                            labelText: 'Port',
+                            border: OutlineInputBorder(),
+                            isDense: true),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: _webAdbTokenController,
+                        obscureText: !_showWebAdbToken,
+                        decoration: InputDecoration(
+                          labelText: 'Auth Token (optional)',
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                          suffixIcon: IconButton(
+                            tooltip: _showWebAdbToken ? 'Hide' : 'Show',
+                            icon: Icon(_showWebAdbToken
+                                ? Icons.visibility_off
+                                : Icons.visibility),
+                            onPressed: () => setState(
+                                () => _showWebAdbToken = !_showWebAdbToken),
+                          ),
+                        ),
+                        onChanged: (_) => _persistWebAdbToken(),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 12),
+                  LayoutBuilder(builder: (ctx, c) {
+                    final horizontal = c.maxWidth > 520; // switch threshold
+                    final buttons = [
+                      ElevatedButton.icon(
+                        icon: Icon(running ? Icons.stop : Icons.play_arrow),
+                        label: Text(running ? 'Stop Server' : 'Start Server'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: running ? Colors.red : null,
+                        ),
+                        onPressed: () async {
+                          if (!running) {
+                            final p = int.tryParse(
+                                    _webAdbPortController.text.trim()) ??
+                                8587;
+                            final token = _webAdbTokenController.text.trim();
+                            _webAdbServer = WebAdbServer(_adbClient,
+                                port: p,
+                                authToken: token.isEmpty ? null : token);
+                            final ok = await _webAdbServer!.start();
+                            if (ok) {
+                              setState(() {});
+                              _refreshWebAdbHealth();
+                              if (_webAdbServer!.usedFallbackPort && mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                    content: Text(
+                                        'WebADB bound to fallback port ${_webAdbServer!.port}')));
+                              }
+                            }
+                          } else {
+                            await _webAdbServer?.stop();
+                            setState(() {});
+                          }
+                        },
+                      ),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Fetch Devices'),
+                        onPressed: running ? _fetchWebAdbDevices : null,
+                      ),
+                      if (running)
+                        OutlinedButton.icon(
+                          icon: _webAdbHealthLoading
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.monitor_heart),
+                          label: const Text('Health'),
+                          onPressed: _webAdbHealthLoading
+                              ? null
+                              : _refreshWebAdbHealth,
+                        ),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.copy),
+                        label: const Text('Copy Base URL'),
+                        onPressed: () {
+                          final base = 'http://localhost:$port';
+                          Clipboard.setData(ClipboardData(text: base));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Base URL copied')));
+                        },
+                      ),
+                    ];
+                    if (horizontal) {
+                      return Row(
+                        children: [
+                          for (int i = 0; i < buttons.length; i++) ...[
+                            buttons[i],
+                            if (i != buttons.length - 1)
+                              const SizedBox(width: 12),
+                          ],
+                        ],
+                      );
+                    } else {
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        children: buttons,
+                      );
+                    }
+                  }),
+                  const SizedBox(height: 12),
+                  Text('Base URL: http://localhost:$port',
+                      style: const TextStyle(fontSize: 12)),
+                  if ((_webAdbServer?.usedFallbackPort ?? false))
+                    Text(
+                        'Port changed (fallback) from ${_webAdbServer!.lastRequestedPort} -> $port',
+                        style: const TextStyle(
+                            fontSize: 11, color: Colors.orange)),
+                  if (_webAdbTokenController.text.trim().isNotEmpty)
+                    Text(
+                        'Auth Header: X-Auth-Token: ${_webAdbTokenController.text.trim()}',
+                        style: const TextStyle(fontSize: 12)),
+                  if (_webAdbServer?.localIPv4.isNotEmpty ?? false) ...[
+                    const SizedBox(height: 4),
+                    Text('LAN: ' + (_webAdbServer!.localIPv4.join(', ')),
+                        style: const TextStyle(fontSize: 11)),
+                  ],
+                  if (_webAdbServer?.lastError != null && !running) ...[
+                    const SizedBox(height: 6),
+                    Text('Last Error: ${_webAdbServer!.lastError}',
+                        style:
+                            const TextStyle(color: Colors.red, fontSize: 11)),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.restart_alt, size: 16),
+                        label: const Text('Retry'),
+                        onPressed: () async {
+                          final p =
+                              int.tryParse(_webAdbPortController.text.trim()) ??
+                                  8587;
+                          _webAdbServer = WebAdbServer(_adbClient,
+                              port: p,
+                              authToken:
+                                  _webAdbTokenController.text.trim().isEmpty
+                                      ? null
+                                      : _webAdbTokenController.text.trim());
+                          final ok = await _webAdbServer!.start();
+                          if (!ok && mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text('WebADB retry failed')));
+                          }
+                          if (mounted) setState(() {});
+                        },
+                      ),
+                    )
+                  ],
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.health_and_safety, size: 16),
+                        label: const Text('Copy /health URL'),
+                        onPressed: () {
+                          final base = 'http://localhost:$port';
+                          final url = '$base/health';
+                          Clipboard.setData(ClipboardData(text: url));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text('Health URL copied')));
+                        },
+                      ),
+                      const SizedBox(width: 12),
+                      if (_webAdbHealth != null)
+                        Text(
+                          _webAdbHealth!.containsKey('error')
+                              ? 'Health: ERROR'
+                              : 'Health: OK (${_webAdbHealth!['deviceCount'] ?? '?'} devices)',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: _webAdbHealth!.containsKey('error')
+                                  ? Colors.red
+                                  : Colors.green),
+                        ),
+                      if (_webAdbHealthTime != null) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          'at ${_webAdbHealthTime!.hour.toString().padLeft(2, '0')}:${_webAdbHealthTime!.minute.toString().padLeft(2, '0')}:${_webAdbHealthTime!.second.toString().padLeft(2, '0')}',
+                          style:
+                              const TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
+                      ]
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Endpoints',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  _endpointTile('GET /devices', 'List devices JSON'),
+                  _endpointTile('POST /connect', 'Connect Wi-Fi host:port'),
+                  _endpointTile('POST /disconnect', 'Disconnect current'),
+                  _endpointTile('WS /shell', 'Interactive shell'),
+                  _endpointTile('GET /props?serial=SER', 'Device props'),
+                  _endpointTile('GET /screencap?serial=SER', 'PNG screenshot'),
+                  _endpointTile(
+                      'POST /push?serial=SER', 'Upload file (multipart)'),
+                  _endpointTile(
+                      'GET /pull?serial=SER&path=/sdcard/..', 'Download file'),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text('Devices (via /devices)',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold)),
+                      const Spacer(),
+                      if (_fetchingWebAdbDevices)
+                        const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (_webAdbFetchError != null)
+                    Text(_webAdbFetchError!,
+                        style:
+                            const TextStyle(color: Colors.red, fontSize: 12)),
+                  if (_webAdbDevices.isEmpty && _webAdbFetchError == null)
+                    const Text('No data fetched yet',
+                        style: TextStyle(
+                            fontSize: 12, fontStyle: FontStyle.italic)),
+                  ..._webAdbDevices.map((d) => _webAdbDeviceTile(d)).toList(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _endpointTile(String path, String desc) {
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(path,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+      subtitle: Text(desc),
+      trailing: IconButton(
+        icon: const Icon(Icons.copy, size: 16),
+        onPressed: () {
+          Clipboard.setData(ClipboardData(text: path));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text('Copied')));
+        },
+      ),
+    );
+  }
+
+  Widget _webAdbDeviceTile(dynamic json) {
+    try {
+      final serial = json['serial']?.toString() ?? 'unknown';
+      final state = json['state']?.toString() ?? 'n/a';
+      final cached = _screencapCache[serial];
+      return Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        child: ListTile(
+          leading: cached == null
+              ? const Icon(Icons.devices_other)
+              : ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.memory(
+                    cached,
+                    width: 40,
+                    height: 40,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+          title: Text(serial),
+          subtitle: Text('State: $state'),
+          trailing: Wrap(spacing: 4, children: [
+            IconButton(
+              tooltip: 'Props',
+              icon: const Icon(Icons.info_outline),
+              onPressed: () async {
+                await _adbClient.fetchProps(serial);
+                setState(() => _navIndex = 1); // jump to console
+              },
+            ),
+            IconButton(
+              tooltip: 'Screencap',
+              icon: _screencapLoadingSerial == serial
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.image),
+              onPressed: () async {
+                if (_screencapLoadingSerial != null) return;
+                setState(() => _screencapLoadingSerial = serial);
+                final bytes = await _adbClient.screencapForSerial(serial);
+                if (bytes != null) {
+                  _screencapCache[serial] = bytes;
+                  if (mounted) {
+                    // ignore: use_build_context_synchronously
+                    showDialog(
+                      context: context,
+                      builder: (ctx) => Dialog(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                              maxWidth: 520, maxHeight: 900),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                alignment: Alignment.centerLeft,
+                                child: Text('Screencap: $serial',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold)),
+                              ),
+                              Expanded(
+                                child: InteractiveViewer(
+                                  maxScale: 4,
+                                  child: Image.memory(bytes,
+                                      fit: BoxFit.contain,
+                                      filterQuality: FilterQuality.medium),
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    TextButton.icon(
+                                      icon: const Icon(Icons.save_alt),
+                                      onPressed: () async {
+                                        final path =
+                                            await _saveScreencap(serial, bytes);
+                                        if (!ctx.mounted) return;
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(
+                                              content: Text(path == null
+                                                  ? 'Save failed'
+                                                  : 'Saved to $path')),
+                                        );
+                                      },
+                                      label: const Text('Save'),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(ctx),
+                                      child: const Text('Close'),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Screencap failed')),
+                  );
+                }
+                if (mounted) setState(() => _screencapLoadingSerial = null);
+              },
+            ),
+            IconButton(
+              tooltip: 'Shell',
+              icon: const Icon(Icons.terminal),
+              onPressed: () async {
+                await _adbClient.startInteractiveShell();
+                setState(() => _navIndex = 1);
+              },
+            ),
+          ]),
+        ),
+      );
+    } catch (_) {
+      return const SizedBox();
+    }
+  }
+
+  Future<String?> _saveScreencap(String serial, Uint8List bytes) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final ts = DateTime.now().toIso8601String().replaceAll(':', '-');
+      final file = File('${dir.path}/screencap_${serial}_$ts.png');
+      await file.writeAsBytes(bytes);
+      return file.path;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Save error: $e')),
+        );
+      }
+      return null;
+    }
+  }
+
+  Future<void> _fetchWebAdbDevices() async {
+    if (_fetchingWebAdbDevices) return;
+    setState(() {
+      _fetchingWebAdbDevices = true;
+      _webAdbFetchError = null;
+    });
+    try {
+      final port = _webAdbServer?.port ??
+          int.tryParse(_webAdbPortController.text) ??
+          8587;
+      final client = HttpClient();
+      final req =
+          await client.getUrl(Uri.parse('http://localhost:$port/devices'));
+      final token = _webAdbTokenController.text.trim();
+      if (token.isNotEmpty) req.headers.set('X-Auth-Token', token);
+      final resp = await req.close();
+      if (resp.statusCode != 200) {
+        throw Exception('HTTP ${resp.statusCode}');
+      }
+      final body = await resp.transform(utf8.decoder).join();
+      final data = jsonDecode(body);
+      setState(() {
+        _webAdbDevices = (data is List) ? data : (data['devices'] ?? []);
+      });
+    } catch (e) {
+      setState(() => _webAdbFetchError = 'Fetch failed: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _fetchingWebAdbDevices = false);
+      }
+    }
   }
 
   Widget _infoSection({

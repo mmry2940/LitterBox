@@ -1389,10 +1389,47 @@ class ADBClientManager {
     return await _externalBackend!.getProps(_connectedDeviceId);
   }
 
+  // Fetch properties for an arbitrary serial without changing current connection
+  Future<Map<String, String>> getDevicePropsFor(String serial) async {
+    if (_externalBackend == null) return {};
+    try {
+      return await _externalBackend!.getProps(serial);
+    } catch (_) {
+      return {};
+    }
+  }
+
+  // Convenience wrappers for UI (WebADB tab)
+  Future<void> fetchProps(String serial) async {
+    final props = await getDevicePropsFor(serial);
+    if (props.isEmpty) {
+      _addOutput('⚠️ Failed to fetch props for $serial');
+      return;
+    }
+    _addOutput('📋 Props for $serial:');
+    for (final e in props.entries.take(40)) {
+      _addOutput('  ${e.key} = ${e.value}');
+    }
+    if (props.length > 40) {
+      _addOutput('  ... (${props.length - 40} more)');
+    }
+  }
+
   Future<bool> uninstallPackage(String packageName) async {
     if (_externalBackend == null || _connectedDeviceId.isEmpty) return false;
     return await _externalBackend!
         .uninstallApk(_connectedDeviceId, packageName);
+  }
+
+  // Execute single shell command for a given serial (bypasses current connection)
+  Future<String> shellForSerial(String serial, String command) async {
+    if (_externalBackend == null) return '';
+    try {
+      return await _externalBackend!.shell(serial, command);
+    } catch (e) {
+      _addOutput('Shell error for $serial: $e');
+      return '';
+    }
   }
 
   Future<bool> reboot({String? mode}) async {
@@ -1410,9 +1447,48 @@ class ADBClientManager {
     return await _externalBackend!.screencap(_connectedDeviceId);
   }
 
+  Future<Uint8List?> screencapForSerial(String serial) async {
+    if (_externalBackend == null) return null;
+    try {
+      return await _externalBackend!.screencap(serial);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> fetchScreencap(String serial) async {
+    final data = await screencapForSerial(serial);
+    if (data == null) {
+      _addOutput('❌ Screencap failed for $serial');
+    } else {
+      _addOutput('🖼️ Screencap (${data.length} bytes) for $serial captured.');
+    }
+  }
+
   Future<String> execOut(List<String> args) async {
     if (_externalBackend == null || _connectedDeviceId.isEmpty) return '';
     return await _externalBackend!.execOut(_connectedDeviceId, args);
+  }
+
+  Future<bool> pushFileForSerial(
+      String serial, String local, String remote) async {
+    if (_externalBackend == null) return false;
+    try {
+      return await _externalBackend!.pushFile(serial, local, remote);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<String> pullFileForSerial(String serial, String remote) async {
+    // Return base64 string for convenience (small files)
+    if (_externalBackend == null) return '';
+    try {
+      // Use execOut with 'cat' as fallback (text/binary risk). For robust impl we'd implement proper pull.
+      return await _externalBackend!.shell(serial, 'cat $remote');
+    } catch (_) {
+      return '';
+    }
   }
 }
 
