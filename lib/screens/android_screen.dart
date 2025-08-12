@@ -798,7 +798,15 @@ class _AndroidScreenState extends State<AndroidScreen>
                                   port: port,
                                   authToken: token.isEmpty ? null : token);
                               final ok = await _webAdbServer!.start();
-                              if (ok && mounted) setState(() {});
+                              if (mounted) {
+                                setState(() {});
+                                if (!ok) {
+                                  final err = _webAdbServer!.lastError ?? 'Unknown start failure';
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('WebADB start failed: $err')),
+                                  );
+                                }
+                              }
                             } else {
                               await _webAdbServer?.stop();
                               if (mounted) setState(() {});
@@ -822,6 +830,24 @@ class _AndroidScreenState extends State<AndroidScreen>
                               key: ValueKey('webadb_off'),
                               style: TextStyle(fontSize: 12)),
                     ),
+                    if((_webAdbServer?.lastError != null) && !(_webAdbServer?.running ?? false)) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.error_outline, size: 14, color: Colors.red),
+                          const SizedBox(width:4),
+                          Expanded(
+                            child: Text(
+                              _webAdbServer!.lastError!,
+                              style: const TextStyle(color: Colors.red, fontSize: 11),
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 6),
                     Align(
                       alignment: Alignment.centerRight,

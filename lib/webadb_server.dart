@@ -31,7 +31,18 @@ class WebAdbServer {
     fallbackUsed = false;
     lastRequestedPort = port;
     int attemptPort = port;
+    client.addOutput('🧪 WebADB starting on base port $port (maxFallback=$maxFallbackPorts)');
+    // quick capability probe
+    try {
+      final test = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      await test.close();
+    } catch (e) {
+      lastError = 'Loopback bind failed: $e';
+      client.addOutput('❌ Loopback probe failed: $e');
+      return false;
+    }
     for (int attempt = 0; attempt <= maxFallbackPorts; attempt++) {
+      client.addOutput('➡️  WebADB bind attempt ${attempt + 1} on $attemptPort');
       try {
         _http = await HttpServer.bind(InternetAddress.anyIPv4, attemptPort);
         port = _http!.port; // update to actual bound port
