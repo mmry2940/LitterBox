@@ -14,7 +14,8 @@ class AndroidScreen extends StatefulWidget {
 
 class _AndroidScreenState extends State<AndroidScreen>
     with TickerProviderStateMixin {
-  late TabController _tabController;
+  // Navigation indices: 0 Dashboard,1 Console,2 Logcat,3 Commands,4 Files/Ports,5 Info
+  int _navIndex = 0;
   late ADBClientManager _adbClient;
   List<ADBBackendDevice> _externalDevices = [];
 
@@ -31,17 +32,28 @@ class _AndroidScreenState extends State<AndroidScreen>
   List<SavedADBDevice> _savedDevices = [];
   SavedADBDevice? _selectedDevice;
   final ScrollController _outputScrollController = ScrollController();
+  // Batch selection for saved devices
+  final Set<String> _selectedSavedDeviceNames = {};
+  bool _batchMode = false;
+  // Recent paths and forwards
+  List<String> _recentApkPaths = [];
+  List<String> _recentLocalPaths = [];
+  List<String> _recentRemotePaths = [];
+  List<String> _recentForwards = [];
+  // Logcat filters
+  final TextEditingController _logcatFilterController = TextEditingController();
+  String _activeLogcatFilter = '';
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
     _adbClient = ADBClientManager();
     // Enable external adb backend (real adb binary) replacing internal mock server
     _adbClient
         .enableExternalAdbBackend()
         .then((_) => _refreshExternalDevices());
     _loadSavedDevices();
+    _applyPersistedRuntimeSettings();
 
     // Listen to connection state changes
     _adbClient.connectionState.listen((state) {
@@ -66,9 +78,33 @@ class _AndroidScreenState extends State<AndroidScreen>
     });
   }
 
+  Future<void> _applyPersistedRuntimeSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final buffer = prefs.getInt('console_buffer_lines');
+    final verbose = prefs.getBool('verbose_logging');
+    final progress = prefs.getBool('adb_progress_notifications');
+    _adbClient.applySettings(
+      bufferLines: buffer,
+      verbose: verbose,
+      progressNotifications: progress,
+    );
+    // Auto-connect last or first saved device if setting enabled
+    final auto = prefs.getBool('auto_connect_adb') ?? false;
+    if (auto) {
+      // wait a tick for saved devices
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (_savedDevices.isNotEmpty &&
+            mounted &&
+            _adbClient.currentState != ADBConnectionState.connected) {
+          _loadDevice(_savedDevices.first);
+          _connect();
+        }
+      });
+    }
+  }
+
   @override
   void dispose() {
-    _tabController.dispose();
     _adbClient.dispose();
     _hostController.dispose();
     _portController.dispose();
@@ -76,6 +112,7 @@ class _AndroidScreenState extends State<AndroidScreen>
     _pairingPortController.dispose();
     _pairingCodeController.dispose();
     _outputScrollController.dispose();
+    _logcatFilterController.dispose();
     super.dispose();
   }
 
@@ -96,6 +133,10 @@ class _AndroidScreenState extends State<AndroidScreen>
   Future<void> _loadSavedDevices() async {
     final prefs = await SharedPreferences.getInstance();
     final devicesJson = prefs.getStringList('adb_devices') ?? [];
+    _recentApkPaths = prefs.getStringList('recent_apk') ?? [];
+    _recentLocalPaths = prefs.getStringList('recent_local') ?? [];
+    _recentRemotePaths = prefs.getStringList('recent_remote') ?? [];
+    _recentForwards = prefs.getStringList('recent_forwards') ?? [];
     setState(() {
       _savedDevices = devicesJson
           .map((json) => SavedADBDevice.fromJson(jsonDecode(json)))
@@ -126,6 +167,16 @@ class _AndroidScreenState extends State<AndroidScreen>
         const SnackBar(content: Text('Device saved successfully')),
       );
     }
+  }
+
+  Future<void> _persistRecents(SharedPreferences prefs) async {
+    await prefs.setStringList('recent_apk', _recentApkPaths.take(10).toList());
+    await prefs.setStringList(
+        'recent_local', _recentLocalPaths.take(10).toList());
+    await prefs.setStringList(
+        'recent_remote', _recentRemotePaths.take(10).toList());
+    await prefs.setStringList(
+        'recent_forwards', _recentForwards.take(10).toList());
   }
 
   Future<void> _deleteDevice(int index) async {
@@ -234,26 +285,239 @@ class _AndroidScreenState extends State<AndroidScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Android ADB Console'),
+        title: const Text('Android Device Manager'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(icon: Icon(Icons.link), text: 'Connect'),
-            Tab(icon: Icon(Icons.terminal), text: 'Console'),
-            Tab(icon: Icon(Icons.apps), text: 'Commands'),
-            Tab(icon: Icon(Icons.info), text: 'Info'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh Devices',
+            icon: const Icon(Icons.refresh),
+            onPressed: _refreshExternalDevices,
+          ),
+          if (_adbClient.logcatActive)
+            IconButton(
+              tooltip: 'Stop Logcat',
+              icon: const Icon(Icons.stop_circle, color: Colors.orange),
+              onPressed: () async {
+                await _adbClient.stopLogcat();
+                setState(() {});
+              },
+            )
+          else if (_adbClient.currentState == ADBConnectionState.connected)
+            IconButton(
+              tooltip: 'Start Logcat',
+              icon: const Icon(Icons.play_arrow),
+              onPressed: () async {
+                await _adbClient.startLogcat();
+                setState(() {
+                  _navIndex = 2; // switch to logcat view
+                });
+              },
+            ),
+          IconButton(
+            tooltip: 'Clear Console',
+            icon: const Icon(Icons.cleaning_services_outlined),
+            onPressed: () async {
+              final prefs = await SharedPreferences.getInstance();
+              final confirm = prefs.getBool('confirm_clear_logcat') ?? true;
+              if (confirm) {
+                final ok = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Clear console output?'),
+                        content: const Text(
+                            'This will remove all buffered console lines.'),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: const Text('Cancel')),
+                          ElevatedButton(
+                              onPressed: () => Navigator.pop(ctx, true),
+                              child: const Text('Clear')),
+                        ],
+                      ),
+                    ) ??
+                    false;
+                if (!ok) return;
+              }
+              setState(() {
+                _adbClient.clearOutput();
+              });
+            },
+          ),
+        ],
+      ),
+      body: Row(
+        children: [
+          NavigationRail(
+            selectedIndex: _navIndex,
+            onDestinationSelected: (i) => setState(() => _navIndex = i),
+            labelType: NavigationRailLabelType.all,
+            destinations: const [
+              NavigationRailDestination(
+                  icon: Icon(Icons.dashboard_outlined),
+                  selectedIcon: Icon(Icons.dashboard),
+                  label: Text('Dashboard')),
+              NavigationRailDestination(
+                  icon: Icon(Icons.terminal_outlined),
+                  selectedIcon: Icon(Icons.terminal),
+                  label: Text('Console')),
+              NavigationRailDestination(
+                  icon: Icon(Icons.list_alt),
+                  selectedIcon: Icon(Icons.list),
+                  label: Text('Logcat')),
+              NavigationRailDestination(
+                  icon: Icon(Icons.flash_on_outlined),
+                  selectedIcon: Icon(Icons.flash_on),
+                  label: Text('Commands')),
+              NavigationRailDestination(
+                  icon: Icon(Icons.folder_copy_outlined),
+                  selectedIcon: Icon(Icons.folder_copy),
+                  label: Text('Files')),
+              NavigationRailDestination(
+                  icon: Icon(Icons.info_outline),
+                  selectedIcon: Icon(Icons.info),
+                  label: Text('Info')),
+            ],
+          ),
+          const VerticalDivider(width: 1),
+          Expanded(child: _buildBodyByIndex()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBodyByIndex() {
+    switch (_navIndex) {
+      case 0:
+        return _buildDashboard();
+      case 1:
+        return _buildConsoleTab();
+      case 2:
+        return _buildLogcatTab();
+      case 3:
+        return _buildCommandsTab();
+      case 4:
+        return _buildFilesTab();
+      case 5:
+      default:
+        return _buildInfoTab();
+    }
+  }
+
+  Widget _buildDashboard() {
+    return LayoutBuilder(builder: (context, constraints) {
+      final isWide = constraints.maxWidth > 900;
+      final left = Expanded(child: _buildConnectionTab());
+      final right = Expanded(
+        child: Column(
+          children: [
+            _buildDeviceSummaryCard(),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _buildQuickActions(),
+              ),
+            ),
+          ],
+        ),
+      );
+      return Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: isWide
+            ? Row(children: [left, const SizedBox(width: 12), right])
+            : Column(children: [
+                Expanded(child: left),
+                const SizedBox(height: 12),
+                SizedBox(height: 320, child: right)
+              ]),
+      );
+    });
+  }
+
+  Widget _buildDeviceSummaryCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Current Device',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            if (_adbClient.currentState == ADBConnectionState.connected)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('State: ${_getStateText(_adbClient.currentState)}'),
+                  if (_adbClient.usingExternalBackend)
+                    const Text('Backend: adb (external)'),
+                  if (_adbClient.logcatActive) const Text('Logcat: streaming'),
+                ],
+              )
+            else
+              const Text('No active device'),
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildConnectionTab(),
-          _buildConsoleTab(),
-          _buildCommandsTab(),
-          _buildInfoTab(),
-        ],
+    );
+  }
+
+  Widget _buildQuickActions() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Quick Actions',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _qaButton('Start Logcat', Icons.play_arrow, () async {
+                  if (!_adbClient.logcatActive) {
+                    await _adbClient.startLogcat();
+                    setState(() => _navIndex = 2);
+                  }
+                },
+                    enabled: _adbClient.currentState ==
+                            ADBConnectionState.connected &&
+                        !_adbClient.logcatActive),
+                _qaButton('Stop Logcat', Icons.stop, () async {
+                  await _adbClient.stopLogcat();
+                  setState(() {});
+                }, enabled: _adbClient.logcatActive),
+                _qaButton('Clear Logcat', Icons.cleaning_services, () {
+                  _adbClient.clearLogcat();
+                  setState(() {});
+                }, enabled: _adbClient.logcatActive),
+                _qaButton('Console', Icons.terminal,
+                    () => setState(() => _navIndex = 1),
+                    enabled: true),
+                _qaButton('Commands', Icons.flash_on,
+                    () => setState(() => _navIndex = 3),
+                    enabled: true),
+                _qaButton('Files', Icons.folder_copy,
+                    () => setState(() => _navIndex = 4),
+                    enabled: true),
+              ],
+            )
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _qaButton(String label, IconData icon, VoidCallback onPressed,
+      {bool enabled = true}) {
+    return SizedBox(
+      height: 38,
+      child: ElevatedButton.icon(
+        onPressed: enabled ? onPressed : null,
+        icon: Icon(icon, size: 16),
+        label: Text(label),
       ),
     );
   }
@@ -261,368 +525,426 @@ class _AndroidScreenState extends State<AndroidScreen>
   Widget _buildConnectionTab() {
     return Padding(
       padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Connection Status
-          StreamBuilder<ADBConnectionState>(
-            stream: _adbClient.connectionState,
-            initialData: _adbClient.currentState,
-            builder: (context, snapshot) {
-              final state = snapshot.data ?? ADBConnectionState.disconnected;
-              return Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _getStateIcon(state),
-                        color: _getStateColor(state),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Status: ${_getStateText(state)}',
-                          style: const TextStyle(fontSize: 16),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Connection Status
+            StreamBuilder<ADBConnectionState>(
+              stream: _adbClient.connectionState,
+              initialData: _adbClient.currentState,
+              builder: (context, snapshot) {
+                final state = snapshot.data ?? ADBConnectionState.disconnected;
+                return Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _getStateIcon(state),
+                          color: _getStateColor(state),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Status: ${_getStateText(state)}',
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Connection Type Selector
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Connection Type',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<ADBConnectionType>(
+                      value: _connectionType,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        contentPadding:
+                            EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      items: ADBConnectionType.values.map((type) {
+                        return DropdownMenuItem(
+                          value: type,
+                          child: Text(type.displayName),
+                        );
+                      }).toList(),
+                      onChanged: (ADBConnectionType? value) {
+                        if (value != null) {
+                          setState(() {
+                            _connectionType = value;
+                          });
+                        }
+                      },
+                    ),
+                  ],
                 ),
-              );
-            },
-          ),
-          const SizedBox(height: 16),
-
-          // Connection Type Selector
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Connection Type',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<ADBConnectionType>(
-                    value: _connectionType,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    ),
-                    items: ADBConnectionType.values.map((type) {
-                      return DropdownMenuItem(
-                        value: type,
-                        child: Text(type.displayName),
-                      );
-                    }).toList(),
-                    onChanged: (ADBConnectionType? value) {
-                      if (value != null) {
-                        setState(() {
-                          _connectionType = value;
-                        });
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Saved Devices
-          if (_savedDevices.isNotEmpty) ...[
-            const Text(
-              'Saved Devices',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 120,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: _savedDevices.length,
-                itemBuilder: (context, index) {
-                  final device = _savedDevices[index];
-                  return Card(
-                    margin: const EdgeInsets.only(right: 8),
-                    child: InkWell(
-                      onTap: () => _loadDevice(device),
-                      child: Container(
-                        width: 200,
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    device.name,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete, size: 16),
-                                  onPressed: () => _deleteDevice(index),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                ),
-                              ],
-                            ),
-                            Text('${device.host}:${device.port}'),
-                            Text('Type: ${device.connectionType.displayName}'),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
               ),
             ),
             const SizedBox(height: 16),
-          ],
 
-          // Connection Form
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            // Saved Devices with batch mode
+            if (_savedDevices.isNotEmpty) ...[
+              const Text(
+                'Saved Devices',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Row(
                 children: [
-                  const Text(
-                    'Connection Details',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  if (_batchMode)
+                    Text('${_selectedSavedDeviceNames.length} selected',
+                        style: const TextStyle(fontSize: 12)),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _batchMode = !_batchMode;
+                        if (!_batchMode) _selectedSavedDeviceNames.clear();
+                      });
+                    },
+                    icon: Icon(_batchMode ? Icons.close : Icons.select_all),
+                    label: Text(_batchMode ? 'Cancel' : 'Select'),
                   ),
-                  const SizedBox(height: 16),
-
-                  if (_connectionType != ADBConnectionType.usb) ...[
-                    Row(
-                      children: [
-                        Expanded(
-                          flex: 3,
-                          child: TextField(
-                            controller: _hostController,
-                            decoration: const InputDecoration(
-                              labelText: 'Host/IP Address',
-                              border: OutlineInputBorder(),
-                              prefixIcon: Icon(Icons.computer),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        if (_connectionType != ADBConnectionType.pairing) ...[
-                          Expanded(
-                            flex: 1,
-                            child: TextField(
-                              controller: _portController,
-                              decoration: const InputDecoration(
-                                labelText: 'Port',
-                                border: OutlineInputBorder(),
-                              ),
-                              keyboardType: TextInputType.number,
-                            ),
-                          ),
-                        ],
-                      ],
+                  if (_batchMode)
+                    TextButton.icon(
+                      onPressed: _selectedSavedDeviceNames.isEmpty
+                          ? null
+                          : () async {
+                              final prefs =
+                                  await SharedPreferences.getInstance();
+                              _savedDevices.removeWhere((d) =>
+                                  _selectedSavedDeviceNames.contains(d.name));
+                              _selectedSavedDeviceNames.clear();
+                              final devicesJson = _savedDevices
+                                  .map((d) => jsonEncode(d.toJson()))
+                                  .toList();
+                              await prefs.setStringList(
+                                  'adb_devices', devicesJson);
+                              setState(() {});
+                            },
+                      icon: const Icon(Icons.delete_forever),
+                      label: const Text('Delete'),
                     ),
-                    const SizedBox(height: 16),
-
-                    // Pairing-specific fields
-                    if (_connectionType == ADBConnectionType.pairing) ...[
-                      Row(
-                        children: [
-                          Expanded(
-                            flex: 1,
-                            child: TextField(
-                              controller: _pairingPortController,
-                              decoration: const InputDecoration(
-                                labelText: 'Pairing Port',
-                                border: OutlineInputBorder(),
-                                prefixIcon: Icon(Icons.settings_ethernet),
-                                hintText: '37205',
-                              ),
-                              keyboardType: TextInputType.number,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            flex: 2,
-                            child: TextField(
-                              controller: _pairingCodeController,
-                              decoration: const InputDecoration(
-                                labelText: 'Pairing Code',
-                                border: OutlineInputBorder(),
-                                prefixIcon: Icon(Icons.security),
-                                hintText: '123456',
-                              ),
-                              keyboardType: TextInputType.number,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      const Card(
-                        color: Colors.blue,
-                        child: Padding(
-                          padding: EdgeInsets.all(12.0),
-                          child: Text(
-                            'Enable "Wireless debugging" in Developer Options, then tap "Pair device with pairing code"',
-                            style: TextStyle(color: Colors.white, fontSize: 12),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                  ] else ...[
-                    const Card(
-                      color: Colors.blue,
-                      child: Padding(
-                        padding: EdgeInsets.all(16.0),
-                        child: Text(
-                          'USB Connection will attempt to connect to localhost:5037\n'
-                          'Make sure ADB daemon is running on your computer.',
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-
-                  // External adb (real) device list replacing mock server controls
-                  if (_adbClient.usingExternalBackend)
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 16),
-                      child: Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
+                ],
+              ),
+              SizedBox(
+                height: 120,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _savedDevices.length,
+                  itemBuilder: (context, index) {
+                    final device = _savedDevices[index];
+                    return Card(
+                      margin: const EdgeInsets.only(right: 8),
+                      color: _batchMode &&
+                              _selectedSavedDeviceNames.contains(device.name)
+                          ? Colors.lightBlue.shade50
+                          : null,
+                      child: InkWell(
+                        onTap: () {
+                          if (_batchMode) {
+                            setState(() {
+                              if (_selectedSavedDeviceNames
+                                  .contains(device.name)) {
+                                _selectedSavedDeviceNames.remove(device.name);
+                              } else {
+                                _selectedSavedDeviceNames.add(device.name);
+                              }
+                            });
+                          } else {
+                            _loadDevice(device);
+                          }
+                        },
+                        child: Container(
+                          width: 200,
+                          padding: const EdgeInsets.all(12),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
-                                  const Icon(Icons.usb, size: 16),
-                                  const SizedBox(width: 6),
-                                  const Text('ADB Devices (external)',
-                                      style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.bold)),
-                                  const Spacer(),
+                                  Expanded(
+                                    child: Text(
+                                      device.name,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.bold),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
                                   IconButton(
-                                    icon: const Icon(Icons.refresh, size: 18),
-                                    tooltip: 'Refresh devices',
-                                    onPressed: _refreshExternalDevices,
+                                    icon: const Icon(Icons.delete, size: 16),
+                                    onPressed: () => _deleteDevice(index),
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 4),
-                              if (_externalDevices.isEmpty)
-                                const Text('No devices detected',
-                                    style: TextStyle(fontSize: 12))
-                              else
-                                ..._externalDevices
-                                    .take(4)
-                                    .map(
-                                      (d) => Padding(
-                                        padding: const EdgeInsets.only(
-                                            left: 4, top: 2),
-                                        child: Text(
-                                          '• ${d.serial} (${d.state})',
-                                          style: const TextStyle(fontSize: 12),
-                                        ),
-                                      ),
-                                    )
-                                    .toList(),
-                              if (_externalDevices.length > 4)
-                                Text(
-                                  '+ ${_externalDevices.length - 4} more',
-                                  style: const TextStyle(
-                                      fontSize: 11,
-                                      fontStyle: FontStyle.italic),
+                              if (_batchMode)
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Icon(
+                                    _selectedSavedDeviceNames
+                                            .contains(device.name)
+                                        ? Icons.check_circle
+                                        : Icons.circle_outlined,
+                                    size: 16,
+                                    color: _selectedSavedDeviceNames
+                                            .contains(device.name)
+                                        ? Colors.blue
+                                        : Colors.grey,
+                                  ),
                                 ),
+                              Text('${device.host}:${device.port}'),
+                              Text(
+                                  'Type: ${device.connectionType.displayName}'),
                             ],
                           ),
                         ),
                       ),
-                    ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
 
-                  // Action Buttons
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _isConnecting
-                              ? null
-                              : (_connectionType == ADBConnectionType.pairing
-                                  ? _pairDevice
-                                  : _connect),
-                          icon: _isConnecting
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : Icon(
-                                  _connectionType == ADBConnectionType.pairing
-                                      ? Icons.link
-                                      : Icons.wifi),
-                          label: Text(_isConnecting
-                              ? (_connectionType == ADBConnectionType.pairing
-                                  ? 'Pairing...'
-                                  : 'Connecting...')
-                              : (_connectionType == ADBConnectionType.pairing
-                                  ? 'Pair Device'
-                                  : 'Connect')),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            backgroundColor:
-                                _connectionType == ADBConnectionType.pairing
-                                    ? Colors.orange
-                                    : null,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      if (_connectionType != ADBConnectionType.pairing) ...[
-                        ElevatedButton.icon(
-                          onPressed: _adbClient.currentState ==
-                                  ADBConnectionState.connected
-                              ? _disconnect
-                              : null,
-                          icon: const Icon(Icons.link_off),
-                          label: const Text('Disconnect'),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            backgroundColor: Colors.red,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ],
+            // Connection Form
+            const Text(
+              'Connection Details',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+
+            if (_connectionType != ADBConnectionType.usb) ...[
+              _responsiveRow([
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: _hostController,
+                    decoration: const InputDecoration(
+                      labelText: 'Host/IP Address',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.computer),
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _saveDevice,
-                      icon: const Icon(Icons.save),
-                      label: const Text('Save Device'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                const SizedBox(width: 8),
+                if (_connectionType != ADBConnectionType.pairing)
+                  Expanded(
+                    flex: 1,
+                    child: TextField(
+                      controller: _portController,
+                      decoration: const InputDecoration(
+                        labelText: 'Port',
+                        border: OutlineInputBorder(),
                       ),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+              ]),
+              const SizedBox(height: 16),
+
+              // Pairing-specific fields
+              if (_connectionType == ADBConnectionType.pairing) ...[
+                _responsiveRow([
+                  Expanded(
+                    flex: 1,
+                    child: TextField(
+                      controller: _pairingPortController,
+                      decoration: const InputDecoration(
+                        labelText: 'Pairing Port',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.settings_ethernet),
+                        hintText: '37205',
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: _pairingCodeController,
+                      decoration: const InputDecoration(
+                        labelText: 'Pairing Code',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.security),
+                        hintText: '123456',
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+                const Card(
+                  color: Colors.blue,
+                  child: Padding(
+                    padding: EdgeInsets.all(12.0),
+                    child: Text(
+                      'Enable "Wireless debugging" in Developer Options, then tap "Pair device with pairing code"',
+                      style: TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ] else ...[
+              const Card(
+                color: Colors.blue,
+                child: Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text(
+                    'USB Connection will attempt to connect to localhost:5037\n'
+                    'Make sure ADB daemon is running on your computer.',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // External adb (real) device list replacing mock server controls
+            if (_adbClient.usingExternalBackend)
+              Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.usb, size: 16),
+                            const SizedBox(width: 6),
+                            const Text('ADB Devices (external)',
+                                style: TextStyle(
+                                    fontSize: 14, fontWeight: FontWeight.bold)),
+                            const Spacer(),
+                            IconButton(
+                              icon: const Icon(Icons.refresh, size: 18),
+                              tooltip: 'Refresh devices',
+                              onPressed: _refreshExternalDevices,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        if (_externalDevices.isEmpty)
+                          const Text('No devices detected',
+                              style: TextStyle(fontSize: 12))
+                        else
+                          ..._externalDevices
+                              .take(4)
+                              .map(
+                                (d) => Padding(
+                                  padding:
+                                      const EdgeInsets.only(left: 4, top: 2),
+                                  child: Text(
+                                    '• ${d.serial} (${d.state})',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        if (_externalDevices.length > 4)
+                          Text(
+                            '+ ${_externalDevices.length - 4} more',
+                            style: const TextStyle(
+                                fontSize: 11, fontStyle: FontStyle.italic),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+            // Action Buttons
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isConnecting
+                        ? null
+                        : (_connectionType == ADBConnectionType.pairing
+                            ? _pairDevice
+                            : _connect),
+                    icon: _isConnecting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(_connectionType == ADBConnectionType.pairing
+                            ? Icons.link
+                            : Icons.wifi),
+                    label: Text(_isConnecting
+                        ? (_connectionType == ADBConnectionType.pairing
+                            ? 'Pairing...'
+                            : 'Connecting...')
+                        : (_connectionType == ADBConnectionType.pairing
+                            ? 'Pair Device'
+                            : 'Connect')),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor:
+                          _connectionType == ADBConnectionType.pairing
+                              ? Colors.orange
+                              : null,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (_connectionType != ADBConnectionType.pairing) ...[
+                  ElevatedButton.icon(
+                    onPressed:
+                        _adbClient.currentState == ADBConnectionState.connected
+                            ? _disconnect
+                            : null,
+                    icon: const Icon(Icons.link_off),
+                    label: const Text('Disconnect'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
                     ),
                   ),
                 ],
+              ],
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _saveDevice,
+                icon: const Icon(Icons.save),
+                label: const Text('Save Device'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 32),
+          ],
+        ),
       ),
     );
   }
@@ -840,7 +1162,7 @@ class _AndroidScreenState extends State<AndroidScreen>
                 ),
                 onTap: () {
                   _commandController.text = command;
-                  _tabController.animateTo(1); // Switch to console tab
+                  setState(() => _navIndex = 1); // Switch to console view
                 },
               );
             }).toList(),
@@ -850,178 +1172,465 @@ class _AndroidScreenState extends State<AndroidScreen>
     );
   }
 
-  Widget _buildInfoTab() {
-    return Padding(
+  Widget _buildLogcatTab() {
+    return Column(
+      children: [
+        Expanded(
+          child: Container(
+            color: Colors.black,
+            child: StreamBuilder<String>(
+              stream: _adbClient.logcatStream,
+              builder: (context, snapshot) {
+                return ListView.builder(
+                  padding: const EdgeInsets.all(4),
+                  itemCount: _adbClient.logcatBuffer.length,
+                  itemBuilder: (context, index) {
+                    final line = _adbClient.logcatBuffer[index];
+                    if (_activeLogcatFilter.isNotEmpty &&
+                        !line
+                            .toLowerCase()
+                            .contains(_activeLogcatFilter.toLowerCase())) {
+                      return const SizedBox.shrink();
+                    }
+                    Color c = Colors.white;
+                    if (line.contains(' E ') || line.contains(' E/'))
+                      c = Colors.redAccent;
+                    else if (line.contains(' W ') || line.contains(' W/'))
+                      c = Colors.orangeAccent;
+                    else if (line.contains(' I ') || line.contains(' I/'))
+                      c = Colors.lightBlueAccent;
+                    return Text(line,
+                        style: TextStyle(
+                            color: c, fontFamily: 'monospace', fontSize: 11));
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+        Container(
+          color: Colors.grey[200],
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: _adbClient.logcatActive
+                    ? null
+                    : () async {
+                        await _adbClient.startLogcat();
+                        setState(() {});
+                      },
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Start'),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: _adbClient.logcatActive
+                    ? () async {
+                        await _adbClient.stopLogcat();
+                        setState(() {});
+                      }
+                    : null,
+                icon: const Icon(Icons.stop),
+                label: const Text('Stop'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () {
+                  _adbClient.clearLogcat();
+                  setState(() {});
+                },
+                icon: const Icon(Icons.cleaning_services),
+                label: const Text('Clear'),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _logcatFilterController,
+                  decoration: InputDecoration(
+                    hintText: 'Filter (tag / text / level)...',
+                    isDense: true,
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.search),
+                      onPressed: () {
+                        setState(() {
+                          _activeLogcatFilter =
+                              _logcatFilterController.text.trim();
+                        });
+                      },
+                    ),
+                  ),
+                  onSubmitted: (_) {
+                    setState(() {
+                      _activeLogcatFilter = _logcatFilterController.text.trim();
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (_activeLogcatFilter.isNotEmpty)
+                IconButton(
+                  tooltip: 'Clear filter',
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    setState(() {
+                      _activeLogcatFilter = '';
+                      _logcatFilterController.clear();
+                    });
+                  },
+                ),
+              const Spacer(),
+              Text('${_adbClient.logcatBuffer.length} lines',
+                  style: const TextStyle(fontSize: 12)),
+            ],
+          ),
+        )
+      ],
+    );
+  }
+
+  Widget _buildFilesTab() {
+    final apkPathController = TextEditingController();
+    final pushLocalController = TextEditingController();
+    final pushRemoteController = TextEditingController(text: '/sdcard/');
+    final pullRemoteController = TextEditingController();
+    final pullLocalController = TextEditingController();
+    final forwardLocalPortController = TextEditingController(text: '9000');
+    final forwardRemoteSpecController = TextEditingController(text: 'tcp:9000');
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: ListView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Android ADB Setup Guide',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          Row(
+            children: [
+              const Icon(Icons.folder_copy, size: 18),
+              const SizedBox(width: 6),
+              const Text('File & Port Operations',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
           ),
-          const SizedBox(height: 16),
-
-          // ADB Server Setup
+          const SizedBox(height: 12),
           Card(
-            color: Colors.blue.shade50,
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.settings_system_daydream,
-                          color: Colors.blue),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'ADB Server Setup',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                  const Text('Install APK',
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  _responsiveRow([
+                    Expanded(
+                      child: TextField(
+                        controller: apkPathController,
+                        decoration: const InputDecoration(
+                            labelText: 'APK File Path',
+                            border: OutlineInputBorder()),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    '1. Install Android SDK Platform Tools\n'
-                    '2. Add ADB to your system PATH\n'
-                    '3. Run "adb start-server" in terminal\n'
-                    '4. Use "Check ADB Server" button to verify',
-                    style: TextStyle(fontSize: 14),
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade200,
-                      borderRadius: BorderRadius.circular(4),
                     ),
-                    child: const Text(
-                      'Download: https://developer.android.com/studio/releases/platform-tools',
-                      style: TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                        onPressed: _adbClient.currentState ==
+                                ADBConnectionState.connected
+                            ? () async {
+                                final ok = await _adbClient
+                                    .installApk(apkPathController.text);
+                                if (apkPathController.text.isNotEmpty) {
+                                  _recentApkPaths
+                                      .remove(apkPathController.text);
+                                  _recentApkPaths.insert(
+                                      0, apkPathController.text);
+                                  final prefs =
+                                      await SharedPreferences.getInstance();
+                                  _persistRecents(prefs);
+                                }
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content: Text(ok
+                                              ? 'APK installed'
+                                              : 'Install failed')));
+                                }
+                              }
+                            : null,
+                        child: const Text('Install'))
+                  ]),
+                  if (_recentApkPaths.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      children: _recentApkPaths
+                          .map((p) => ActionChip(
+                                label: Text(p.split('/').last,
+                                    overflow: TextOverflow.ellipsis),
+                                onPressed: () => apkPathController.text = p,
+                              ))
+                          .toList(),
+                    )
+                  ]
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Push File',
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  _responsiveRow([
+                    Expanded(
+                      child: TextField(
+                        controller: pushLocalController,
+                        decoration: const InputDecoration(
+                            labelText: 'Local Path',
+                            border: OutlineInputBorder()),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Wireless ADB Setup
-          Card(
-            color: Colors.green.shade50,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.wifi, color: Colors.green),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Wireless ADB Setup',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: pushRemoteController,
+                        decoration: const InputDecoration(
+                            labelText: 'Remote Path',
+                            border: OutlineInputBorder()),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Android 11+ (Wireless Debugging):\n'
-                    '1. Enable Developer Options\n'
-                    '2. Enable "Wireless debugging"\n'
-                    '3. Tap "Pair device with pairing code"\n'
-                    '4. Use pairing code and port in this app\n'
-                    '5. Connect using IP and port 5555',
-                    style: TextStyle(fontSize: 14),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Older Android (ADB over network):\n'
-                    '1. Connect via USB first\n'
-                    '2. Run: adb tcpip 5555\n'
-                    '3. Disconnect USB\n'
-                    '4. Connect using device IP:5555',
-                    style: TextStyle(fontSize: 14),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // USB Setup
-          Card(
-            color: Colors.orange.shade50,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.usb, color: Colors.orange),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'USB Debugging Setup',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                        onPressed: _adbClient.currentState ==
+                                ADBConnectionState.connected
+                            ? () async {
+                                final ok = await _adbClient.pushFile(
+                                    pushLocalController.text,
+                                    pushRemoteController.text);
+                                if (pushLocalController.text.isNotEmpty) {
+                                  _recentLocalPaths
+                                      .remove(pushLocalController.text);
+                                  _recentLocalPaths.insert(
+                                      0, pushLocalController.text);
+                                }
+                                if (pushRemoteController.text.isNotEmpty) {
+                                  _recentRemotePaths
+                                      .remove(pushRemoteController.text);
+                                  _recentRemotePaths.insert(
+                                      0, pushRemoteController.text);
+                                }
+                                final prefs =
+                                    await SharedPreferences.getInstance();
+                                _persistRecents(prefs);
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content: Text(ok
+                                              ? 'File pushed'
+                                              : 'Push failed')));
+                                }
+                              }
+                            : null,
+                        child: const Text('Push'))
+                  ]),
+                  if (_recentLocalPaths.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: _recentLocalPaths
+                            .map((p) => Padding(
+                                  padding: const EdgeInsets.only(right: 6),
+                                  child: ActionChip(
+                                    label: Text(p.split('/').last,
+                                        overflow: TextOverflow.ellipsis),
+                                    onPressed: () =>
+                                        pushLocalController.text = p,
+                                  ),
+                                ))
+                            .toList(),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    '1. Enable Developer Options:\n'
-                    '   Settings → About → Tap "Build number" 7 times\n'
-                    '2. Enable "USB debugging"\n'
-                    '3. Connect device via USB\n'
-                    '4. Accept debugging authorization on device\n'
-                    '5. Use USB connection type in this app',
-                    style: TextStyle(fontSize: 14),
-                  ),
+                    ),
+                  ],
+                  if (_recentRemotePaths.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: _recentRemotePaths
+                            .map((p) => Padding(
+                                  padding: const EdgeInsets.only(right: 6),
+                                  child: ActionChip(
+                                    label: Text(p,
+                                        overflow: TextOverflow.ellipsis),
+                                    onPressed: () =>
+                                        pushRemoteController.text = p,
+                                  ),
+                                ))
+                            .toList(),
+                      ),
+                    ),
+                  ]
                 ],
               ),
             ),
           ),
-
-          // Connection Types
+          const SizedBox(height: 12),
           Card(
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Connection Types',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
+                  const Text('Pull File',
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
-                  const Text(
-                    '• Wi-Fi: Connect to devices over network (IP:5555)\n'
-                    '• USB: Connect via USB cable (localhost:5037)\n'
-                    '• Custom: Specify custom IP and port\n'
-                    '• Pairing: Pair new wireless debugging devices',
-                  ),
+                  _responsiveRow([
+                    Expanded(
+                      child: TextField(
+                        controller: pullRemoteController,
+                        decoration: const InputDecoration(
+                            labelText: 'Remote Path',
+                            border: OutlineInputBorder()),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: pullLocalController,
+                        decoration: const InputDecoration(
+                            labelText: 'Local Path',
+                            border: OutlineInputBorder()),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                        onPressed: _adbClient.currentState ==
+                                ADBConnectionState.connected
+                            ? () async {
+                                final ok = await _adbClient.pullFile(
+                                    pullRemoteController.text,
+                                    pullLocalController.text);
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content: Text(ok
+                                              ? 'File pulled'
+                                              : 'Pull failed')));
+                                }
+                              }
+                            : null,
+                        child: const Text('Pull'))
+                  ])
                 ],
               ),
             ),
           ),
-
-          // About ADB
+          const SizedBox(height: 12),
           Card(
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'About ADB',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
+                  const Text('Port Forward',
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
-                  const Text(
-                    'Android Debug Bridge (ADB) is a versatile command-line tool that lets you communicate with a device. '
-                    'It facilitates device actions like installing apps, debugging, accessing shell commands, and more.',
-                  ),
+                  _responsiveRow([
+                    SizedBox(
+                      width: 90,
+                      child: TextField(
+                        controller: forwardLocalPortController,
+                        decoration: const InputDecoration(
+                            labelText: 'Local', border: OutlineInputBorder()),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: forwardRemoteSpecController,
+                        decoration: const InputDecoration(
+                            labelText: 'Remote Spec (tcp:NN)',
+                            border: OutlineInputBorder()),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                        onPressed: _adbClient.currentState ==
+                                ADBConnectionState.connected
+                            ? () async {
+                                final lp = int.tryParse(
+                                        forwardLocalPortController.text) ??
+                                    0;
+                                final ok = await _adbClient.forwardPort(
+                                    lp, forwardRemoteSpecController.text);
+                                if (ok) {
+                                  final fr =
+                                      '${forwardLocalPortController.text}:${forwardRemoteSpecController.text}';
+                                  _recentForwards.remove(fr);
+                                  _recentForwards.insert(0, fr);
+                                  final prefs =
+                                      await SharedPreferences.getInstance();
+                                  _persistRecents(prefs);
+                                }
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content: Text(ok
+                                              ? 'Forward added'
+                                              : 'Forward failed')));
+                                }
+                              }
+                            : null,
+                        child: const Text('Add')),
+                    const SizedBox(width: 4),
+                    ElevatedButton(
+                        onPressed: _adbClient.currentState ==
+                                ADBConnectionState.connected
+                            ? () async {
+                                final lp = int.tryParse(
+                                        forwardLocalPortController.text) ??
+                                    0;
+                                final ok = await _adbClient.removeForward(lp);
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content: Text(ok
+                                              ? 'Forward removed'
+                                              : 'Remove failed')));
+                                }
+                              }
+                            : null,
+                        child: const Text('Remove'))
+                  ]),
+                  if (_recentForwards.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      children: _recentForwards
+                          .map((f) => ActionChip(
+                                label: Text(f, overflow: TextOverflow.ellipsis),
+                                onPressed: () {
+                                  final parts = f.split(':');
+                                  if (parts.length >= 2) {
+                                    forwardLocalPortController.text = parts[0];
+                                    forwardRemoteSpecController.text =
+                                        parts.sublist(1).join(':');
+                                  }
+                                },
+                              ))
+                          .toList(),
+                    )
+                  ]
                 ],
               ),
             ),
@@ -1029,6 +1638,195 @@ class _AndroidScreenState extends State<AndroidScreen>
         ],
       ),
     );
+  }
+
+  // Responsive helper: switches to Column when horizontal space is tight
+  Widget _responsiveRow(List<Widget> children) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // If width under 640, stack vertically with spacing
+        final narrow = constraints.maxWidth < 640;
+        if (!narrow) return Row(children: children);
+
+        final List<Widget> colChildren = [];
+        for (int i = 0; i < children.length; i++) {
+          final w = children[i];
+          // Convert horizontal spacing boxes to vertical spacing
+          if (w is SizedBox && w.width != null && w.height == null) {
+            // skip leading spacing
+            if (colChildren.isNotEmpty) {
+              colChildren.add(SizedBox(height: w.width ?? 8));
+            }
+            continue;
+          }
+          Widget toAdd = w;
+          // Strip Expanded/Flexible when stacking vertically (causes unbounded height issues in scroll views)
+          if (w is Expanded) {
+            toAdd = w.child;
+          } else if (w is Flexible) {
+            toAdd = w.child;
+          }
+          colChildren.add(toAdd);
+          if (i != children.length - 1) {
+            colChildren.add(const SizedBox(height: 8));
+          }
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: colChildren,
+        );
+      },
+    );
+  }
+
+  Widget _buildInfoTab() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: ListView(
+        children: [
+          Text(
+            'Android ADB Setup Guide',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+          const SizedBox(height: 16),
+          _infoSection(
+            icon: Icons.settings_system_daydream,
+            accent: Colors.blue,
+            title: 'ADB Server Setup',
+            body: [
+              '1. Install Android SDK Platform Tools',
+              '2. Add ADB to your system PATH',
+              '3. Run "adb start-server" in terminal',
+              '4. Use "Check ADB Server" button to verify',
+            ],
+            footerMonospace:
+                'Download: https://developer.android.com/studio/releases/platform-tools',
+          ),
+          _infoSection(
+            icon: Icons.wifi,
+            accent: Colors.green,
+            title: 'Wireless ADB Setup',
+            body: [
+              'Android 11+ (Wireless Debugging):',
+              '  1. Enable Developer Options',
+              '  2. Enable "Wireless debugging"',
+              '  3. Tap "Pair device with pairing code"',
+              '  4. Enter pairing code + port here',
+              '  5. Connect using IP:5555',
+              '',
+              'Older Android (ADB over network):',
+              '  1. Connect via USB first',
+              '  2. Run: adb tcpip 5555',
+              '  3. Disconnect USB',
+              '  4. Connect using device IP:5555',
+            ],
+          ),
+          _infoSection(
+            icon: Icons.usb,
+            accent: Colors.orange,
+            title: 'USB Debugging Setup',
+            body: [
+              '1. Enable Developer Options (tap Build number 7 times)',
+              '2. Enable "USB debugging"',
+              '3. Connect device via USB',
+              '4. Accept authorization prompt',
+              '5. Choose USB connection type here',
+            ],
+          ),
+          _infoSection(
+            icon: Icons.cable,
+            accent: Colors.purple,
+            title: 'Connection Types',
+            body: [
+              '• Wi‑Fi: Network connect (IP:5555)',
+              '• USB: Via local adb daemon (localhost:5037)',
+              '• Custom: Any host:port',
+              '• Pairing: Android 11+ wireless pairing workflow',
+            ],
+          ),
+          _infoSection(
+            icon: Icons.info_outline,
+            accent: Colors.indigo,
+            title: 'About ADB',
+            body: [
+              'Android Debug Bridge (ADB) lets you communicate with devices to install apps, debug, open a shell, forward ports, and more.',
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoSection({
+    required IconData icon,
+    required Color accent,
+    required String title,
+    required List<String> body,
+    String? footerMonospace,
+  }) {
+    final textColor = Theme.of(context).colorScheme.onSurface;
+    final titleStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.bold,
+          color: textColor,
+        );
+    final bodyStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+          height: 1.3,
+          color: textColor.withOpacity(0.87),
+        );
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: accent.withOpacity(.35), width: 1),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(left: BorderSide(color: accent, width: 4)),
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: accent),
+                const SizedBox(width: 8),
+                Expanded(child: Text(title, style: titleStyle)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ...body.map((l) => Text(l, style: bodyStyle)),
+            if (footerMonospace != null) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: accent.withOpacity(.07),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  footerMonospace,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    color: _darken(accent),
+                  ),
+                ),
+              ),
+            ]
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _darken(Color c, [double amount = .25]) {
+    final hsl = HSLColor.fromColor(c);
+    final lightness = (hsl.lightness - amount).clamp(0.0, 1.0);
+    return hsl.withLightness(lightness).toColor();
   }
 
   // Helper methods for connection state display

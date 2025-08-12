@@ -518,6 +518,12 @@ class ADBClientManager {
   String _connectedDeviceId = '';
   ADBConnectionMode _connectionMode = ADBConnectionMode.server;
   ADBOutputMode _outputMode = ADBOutputMode.raw; // default raw per user request
+  // Logcat streaming
+  StreamSubscription<String>? _logcatSub;
+  final StreamController<String> _logcatController =
+      StreamController<String>.broadcast();
+  bool _logcatActive = false;
+  List<String> _logcatBuffer = [];
 
   final List<String> _commandHistory = [];
   final List<String> _outputBuffer = [];
@@ -558,12 +564,39 @@ class ADBClientManager {
   ADBOutputMode get outputMode => _outputMode;
   bool get usingExternalBackend => _externalBackend != null;
   bool get interactiveShellActive => _interactiveShell != null;
+  bool get logcatActive => _logcatActive;
+  Stream<String> get logcatStream => _logcatController.stream;
+  List<String> get logcatBuffer => List.unmodifiable(_logcatBuffer);
 
   ADBClientManager() {
     _connectionStateController =
         StreamController<ADBConnectionState>.broadcast();
     _outputController = StreamController<String>.broadcast();
     _commandHistoryController = StreamController<String>.broadcast();
+  }
+
+  // Settings (runtime adjustable)
+  int maxConsoleBufferLines = 500;
+  bool verboseLogging = false;
+  bool showProgressNotifications = true;
+
+  void applySettings(
+      {int? bufferLines,
+      bool? verbose,
+      bool? progressNotifications,
+      ADBOutputMode? outputMode}) {
+    if (bufferLines != null) {
+      maxConsoleBufferLines = bufferLines.clamp(100, 5000);
+    }
+    if (verbose != null) {
+      verboseLogging = verbose;
+    }
+    if (progressNotifications != null) {
+      showProgressNotifications = progressNotifications;
+    }
+    if (outputMode != null) {
+      setOutputMode(outputMode);
+    }
   }
 
   Future<void> enableExternalAdbBackend() async {
@@ -1180,21 +1213,29 @@ class ADBClientManager {
   }
 
   void _addOutput(String output, {bool deviceOutput = false}) {
-    // In raw mode suppress non-device meta logs
-    if (_outputMode == ADBOutputMode.raw && !deviceOutput) {
+    // Filter noise if not verbose
+    if (!verboseLogging) {
+      final lower = output.toLowerCase();
+      if (!deviceOutput &&
+          (lower.contains('refreshing device list') ||
+              lower.contains('already running'))) {
+        return; // skip low-value lines
+      }
+    }
+    // Raw mode hides non device output unless verbose
+    if (_outputMode == ADBOutputMode.raw && !deviceOutput && !verboseLogging) {
       return;
     }
-    String line;
-    if (_outputMode == ADBOutputMode.raw) {
-      line = output; // no timestamp
-    } else {
-      final ts = DateTime.now().toString().substring(11, 19);
-      line = '[$ts] $output';
-    }
+    final ts = DateTime.now().toString().substring(11, 19);
+    final line = _outputMode == ADBOutputMode.raw ? output : '[$ts] $output';
     _outputBuffer.add(line);
-    if (_outputBuffer.length > 100) _outputBuffer.removeAt(0);
+    if (_outputBuffer.length > maxConsoleBufferLines) {
+      final overflow = _outputBuffer.length - maxConsoleBufferLines;
+      _outputBuffer.removeRange(0, overflow);
+    }
     if (!_outputController.isClosed) _outputController.add(line);
     if (_outputMode == ADBOutputMode.raw) {
+      // still print for debugging
       print(line);
     } else {
       print('ADB: $line');
@@ -1229,6 +1270,117 @@ class ADBClientManager {
     _connectionStateController.close();
     _outputController.close();
     _commandHistoryController.close();
+    _logcatSub?.cancel();
+    _logcatController.close();
+  }
+
+  // ---------------- Logcat Management ----------------
+  Future<bool> startLogcat({List<String> filters = const []}) async {
+    if (_logcatActive) return true;
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) {
+      _addOutput('❌ Cannot start logcat: no external backend or device',
+          deviceOutput: false);
+      return false;
+    }
+    try {
+      final stream =
+          _externalBackend!.streamLogcat(_connectedDeviceId, filters: filters);
+      if (stream == null) return false;
+      _logcatActive = true;
+      _logcatSub = stream.listen((line) {
+        if (line.trim().isEmpty) return;
+        _logcatBuffer.add(line);
+        if (_logcatBuffer.length > 1000) {
+          _logcatBuffer.removeRange(0, _logcatBuffer.length - 800);
+        }
+        if (!_logcatController.isClosed) _logcatController.add(line);
+      }, onError: (e) {
+        _addOutput('Logcat error: $e');
+      }, onDone: () {
+        _logcatActive = false;
+      });
+      _addOutput('📜 Logcat streaming started');
+      return true;
+    } catch (e) {
+      _addOutput('❌ Failed to start logcat: $e');
+      return false;
+    }
+  }
+
+  Future<void> stopLogcat() async {
+    if (!_logcatActive) return;
+    try {
+      await _externalBackend?.stopLogcat(_connectedDeviceId);
+      await _logcatSub?.cancel();
+      _logcatSub = null;
+      _logcatActive = false;
+      _addOutput('🛑 Logcat stopped');
+    } catch (e) {
+      _addOutput('⚠️ Error stopping logcat: $e');
+    }
+  }
+
+  void clearLogcat() {
+    _logcatBuffer.clear();
+    _addOutput('🧹 Logcat buffer cleared');
+  }
+
+  // ---------------- File / Port Operations ----------------
+  Future<bool> installApk(String filePath) async {
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) return false;
+    return await _externalBackend!.installApk(_connectedDeviceId, filePath);
+  }
+
+  Future<bool> pushFile(String local, String remote) async {
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) return false;
+    return await _externalBackend!.pushFile(_connectedDeviceId, local, remote);
+  }
+
+  Future<bool> pullFile(String remote, String local) async {
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) return false;
+    return await _externalBackend!.pullFile(_connectedDeviceId, remote, local);
+  }
+
+  Future<bool> forwardPort(int localPort, String remoteSpec) async {
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) return false;
+    return await _externalBackend!
+        .forward(_connectedDeviceId, localPort, remoteSpec);
+  }
+
+  Future<bool> removeForward(int localPort) async {
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) return false;
+    return await _externalBackend!.removeForward(_connectedDeviceId, localPort);
+  }
+
+  Future<Map<String, String>> getDeviceProps() async {
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) return {};
+    return await _externalBackend!.getProps(_connectedDeviceId);
+  }
+
+  Future<bool> uninstallPackage(String packageName) async {
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) return false;
+    return await _externalBackend!
+        .uninstallApk(_connectedDeviceId, packageName);
+  }
+
+  Future<bool> reboot({String? mode}) async {
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) return false;
+    return await _externalBackend!.reboot(_connectedDeviceId, mode: mode);
+  }
+
+  Future<List<String>> listForwards() async {
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) return [];
+    return await _externalBackend!.listForwards(_connectedDeviceId);
+  }
+
+  Future<Uint8List?> screencap() async {
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) return null;
+    return await _externalBackend!.screencap(_connectedDeviceId);
+  }
+
+  Future<String> execOut(List<String> args) async {
+    if (_externalBackend == null || _connectedDeviceId.isEmpty) return '';
+    return await _externalBackend!.execOut(_connectedDeviceId, args);
   }
 }
 

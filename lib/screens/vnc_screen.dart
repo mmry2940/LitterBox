@@ -109,6 +109,27 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
     _loadSavedDevices();
     _loadConnectionProfiles();
     _initializeWebView();
+    _applyDefaultScalingFromSettings();
+  }
+
+  Future<void> _applyDefaultScalingFromSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = prefs.getString('vnc_default_scaling') ?? 'fit';
+      setState(() {
+        switch (key) {
+          case 'original':
+            _scalingMode = VNCScalingMode.actualSize;
+            break;
+          case 'fill':
+            _scalingMode = VNCScalingMode.stretchFit;
+            break;
+          case 'fit':
+          default:
+            _scalingMode = VNCScalingMode.autoFitBest;
+        }
+      });
+    } catch (_) {}
   }
 
   Future<void> _loadSavedDevices() async {
