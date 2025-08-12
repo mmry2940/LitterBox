@@ -50,7 +50,25 @@ class WebAdbServer {
             (e.osError?.message.toLowerCase().contains('in use') ?? false);
         client.addOutput('❌ WebADB start failed on $attemptPort: $e');
         if (!isAddrInUse || attempt == maxFallbackPorts) {
-          return false; // unrecoverable or exhausted
+          // If we exhausted all retries due to address-in-use, try one last ephemeral port bind
+          if (isAddrInUse && attempt == maxFallbackPorts) {
+            try {
+              client.addOutput('🔁 Trying ephemeral port (0) as last resort');
+              _http = await HttpServer.bind(InternetAddress.anyIPv4, 0);
+              port = _http!.port;
+              fallbackUsed = true;
+              _wireOutputBroadcast();
+              _http!.listen(_handleRequest, onError: (e) {});
+              await _gatherLocalIPs();
+              client.addOutput(
+                  '🌐 WebADB server started on ephemeral port $port');
+              return true;
+            } catch (ep) {
+              lastError = 'Ephemeral bind failed: $ep';
+              client.addOutput('❌ Ephemeral bind failed: $ep');
+            }
+          }
+          return false; // unrecoverable or exhausted including ephemeral attempt
         }
         attemptPort++; // try next port
       }
