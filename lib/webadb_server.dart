@@ -22,16 +22,24 @@ class WebAdbServer {
   List<String> _localIPv4 = [];
   int? lastRequestedPort;
   bool fallbackUsed = false;
+  bool _starting = false;
 
   WebAdbServer(this.client, {this.port = 8587, this.authToken});
 
   Future<bool> start({int maxFallbackPorts = 5}) async {
     if (_http != null) return true; // already running
+    if (_starting) {
+      lastError = 'Start already in progress';
+      return false;
+    }
+    _starting = true;
     lastError = null;
     fallbackUsed = false;
     lastRequestedPort = port;
     int attemptPort = port;
-    client.addOutput('🧪 WebADB starting on base port $port (maxFallback=$maxFallbackPorts)');
+    client.addOutput(
+        '🧪 WebADB starting on base port $port (maxFallback=$maxFallbackPorts)');
+    print('WEBADB: starting basePort=$port maxFallback=$maxFallbackPorts');
     // quick capability probe
     try {
       final test = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
@@ -39,10 +47,13 @@ class WebAdbServer {
     } catch (e) {
       lastError = 'Loopback bind failed: $e';
       client.addOutput('❌ Loopback probe failed: $e');
+      _starting = false; // ensure flag cleared on early failure
       return false;
     }
     for (int attempt = 0; attempt <= maxFallbackPorts; attempt++) {
-      client.addOutput('➡️  WebADB bind attempt ${attempt + 1} on $attemptPort');
+      client
+          .addOutput('➡️  WebADB bind attempt ${attempt + 1} on $attemptPort');
+      print('WEBADB: attempt ${attempt + 1} binding $attemptPort');
       try {
         _http = await HttpServer.bind(InternetAddress.anyIPv4, attemptPort);
         port = _http!.port; // update to actual bound port
@@ -54,17 +65,44 @@ class WebAdbServer {
         await _gatherLocalIPs();
         client.addOutput(
             '🌐 WebADB server started on port $port (attempt ${attempt + 1})');
+        print('WEBADB: started port=$port attempt=${attempt + 1}');
+        _starting = false;
         return true;
       } catch (e) {
         lastError = e.toString();
         final isAddrInUse = e is SocketException &&
             (e.osError?.message.toLowerCase().contains('in use') ?? false);
+        final needsShared = e is SocketException &&
+            (e.osError?.message.toLowerCase().contains('shared flag') ?? false);
         client.addOutput('❌ WebADB start failed on $attemptPort: $e');
+        print('WEBADB: fail attemptPort=$attemptPort error=$e');
+        if (needsShared) {
+          try {
+            client.addOutput('🔁 Retrying with shared:true on $attemptPort');
+            print('WEBADB: retry shared attemptPort=$attemptPort');
+            _http = await HttpServer.bind(InternetAddress.anyIPv4, attemptPort,
+                shared: true);
+            port = _http!.port;
+            if (attempt > 0 || port != lastRequestedPort) fallbackUsed = true;
+            _wireOutputBroadcast();
+            _http!.listen(_handleRequest, onError: (e) {});
+            await _gatherLocalIPs();
+            client.addOutput('🌐 WebADB server started (shared) on port $port');
+            print('WEBADB: started shared port=$port');
+            _starting = false;
+            return true;
+          } catch (se) {
+            lastError = 'Shared bind failed: $se';
+            client.addOutput('❌ Shared bind failed: $se');
+            print('WEBADB: shared bind failed $se');
+          }
+        }
         if (!isAddrInUse || attempt == maxFallbackPorts) {
           // If we exhausted all retries due to address-in-use, try one last ephemeral port bind
           if (isAddrInUse && attempt == maxFallbackPorts) {
             try {
               client.addOutput('🔁 Trying ephemeral port (0) as last resort');
+              print('WEBADB: trying ephemeral port 0');
               _http = await HttpServer.bind(InternetAddress.anyIPv4, 0);
               port = _http!.port;
               fallbackUsed = true;
@@ -73,17 +111,26 @@ class WebAdbServer {
               await _gatherLocalIPs();
               client.addOutput(
                   '🌐 WebADB server started on ephemeral port $port');
+              print('WEBADB: started ephemeral port=$port');
+              _starting = false;
               return true;
             } catch (ep) {
               lastError = 'Ephemeral bind failed: $ep';
               client.addOutput('❌ Ephemeral bind failed: $ep');
+              print('WEBADB: ephemeral bind failed $ep');
             }
           }
+          _starting = false;
           return false; // unrecoverable or exhausted including ephemeral attempt
         }
         attemptPort++; // try next port
       }
     }
+    // If we reach here all attempts failed without triggering return
+    if (_starting) _starting = false;
+    if (lastError == null) lastError = 'Unknown bind failure after attempts';
+    client.addOutput('❌ WebADB final failure: ${lastError}');
+    print('WEBADB: final failure ${lastError}');
     return false;
   }
 

@@ -1,199 +1,52 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
-import 'dart:io';
-import 'package:path_provider/path_provider.dart';
-import 'dart:typed_data';
-import '../adb_client.dart';
-import '../adb_backend.dart';
-import '../webadb_server.dart';
+import 'adb_screen_refactored.dart';
+import '../adb/adb_client.dart'; // Make sure this path is correct for your project
+// TODO: Update the import below to the correct path for adb_client.dart in your project:
+// import '../adb/adb_client.dart'; // FIX: File does not exist. Update the path if needed.
 
-class AndroidScreen extends StatefulWidget {
+@deprecated
+class AndroidScreen extends StatelessWidget {
   const AndroidScreen({super.key});
 
   @override
-  State<AndroidScreen> createState() => _AndroidScreenState();
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Android Screen (Deprecated)')),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.warning_amber_rounded,
+                  size: 72, color: Colors.orange),
+              const SizedBox(height: 16),
+              const Text(
+                'Legacy screen removed. Use the new ADB interface from navigation.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Open New ADB Screen'),
+                onPressed: () => Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                      builder: (_) => const AdbRefactoredScreen()),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
 }
+  // Removed unused dispose method and references to _adbClient and controllers,
+  // as AndroidScreen is a StatelessWidget and does not require disposal.
 
-class _AndroidScreenState extends State<AndroidScreen>
-    with TickerProviderStateMixin {
-  // Navigation indices: 0 Dashboard,1 Console,2 Logcat,3 Commands,4 Files/Ports,5 Info
-  // Updated: added 6 WebADB tab
-  int _navIndex = 0;
-  late ADBClientManager _adbClient;
-  List<ADBBackendDevice> _externalDevices = [];
-  String _selectedBackend = 'external'; // external | internal
-  WebAdbServer? _webAdbServer;
-  final _webAdbPortController = TextEditingController(text: '8587');
-  final _webAdbTokenController = TextEditingController();
-  bool _showWebAdbToken = false;
-  bool _fetchingWebAdbDevices = false;
-  List<dynamic> _webAdbDevices = [];
-  String? _webAdbFetchError;
-  final Map<String, Uint8List> _screencapCache = {};
-  String? _screencapLoadingSerial;
-  Map<String, dynamic>? _webAdbHealth;
-  DateTime? _webAdbHealthTime;
-  bool _webAdbHealthLoading = false;
-
-  // Connection form controllers
-  final _hostController = TextEditingController(text: '192.168.1.100');
-  final _portController = TextEditingController(text: '5555');
-  final _commandController = TextEditingController();
-  final _pairingPortController = TextEditingController(text: '37205');
-  final _pairingCodeController = TextEditingController();
-
-  // State variables
-  ADBConnectionType _connectionType = ADBConnectionType.wifi;
-  bool _isConnecting = false;
-  List<SavedADBDevice> _savedDevices = [];
-  SavedADBDevice? _selectedDevice;
-  final ScrollController _outputScrollController = ScrollController();
-  // Batch selection for saved devices
-  final Set<String> _selectedSavedDeviceNames = {};
-  bool _batchMode = false;
-  // Recent paths and forwards
-  List<String> _recentApkPaths = [];
-  List<String> _recentLocalPaths = [];
-  List<String> _recentRemotePaths = [];
-  List<String> _recentForwards = [];
-  // Logcat filters
-  final TextEditingController _logcatFilterController = TextEditingController();
-  String _activeLogcatFilter = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _adbClient = ADBClientManager();
-    // Enable external adb backend (real adb binary) replacing internal mock server
-    _adbClient
-        .enableExternalAdbBackend()
-        .then((_) => _refreshExternalDevices());
-    _loadSavedDevices();
-    _applyPersistedRuntimeSettings();
-    _loadPersistedWebAdbToken();
-
-    // Listen to connection state changes
-    _adbClient.connectionState.listen((state) {
-      if (mounted) {
-        setState(() {
-          _isConnecting = state == ADBConnectionState.connecting;
-        });
-      }
-    });
-
-    // Auto-scroll output to bottom when new content arrives
-    _adbClient.output.listen((_) {
-      if (_outputScrollController.hasClients) {
-        Future.delayed(const Duration(milliseconds: 100), () {
-          _outputScrollController.animateTo(
-            _outputScrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        });
-      }
-    });
-  }
-
-  Future<void> _loadPersistedWebAdbToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedToken = prefs.getString('webadb_auth_token');
-    if (savedToken != null && savedToken.isNotEmpty) {
-      _webAdbTokenController.text = savedToken;
+  // Add this field to your class (or provide it as a parameter if needed)
+  late final AdbClient _adbClient;
+  
+    Future<void> _refreshExternalDevices() async {
+      if (!_adbClient.usingExternalBackend) return;
+      final devices = await _adbClient.refreshBackendDevices();
+      if (mounted) setState(() => _externalDevices = devices);
     }
-  }
-
-  Future<void> _refreshWebAdbHealth() async {
-    if (!(_webAdbServer?.running ?? false)) return;
-    if (_webAdbHealthLoading) return;
-    setState(() => _webAdbHealthLoading = true);
-    try {
-      final p = _webAdbServer!.port;
-      final client = HttpClient();
-      final req = await client.getUrl(Uri.parse('http://localhost:$p/health'));
-      final token = _webAdbTokenController.text.trim();
-      if (token.isNotEmpty) req.headers.set('Authorization', 'Bearer $token');
-      final resp = await req.close();
-      if (resp.statusCode == 200) {
-        final body = await resp.transform(utf8.decoder).join();
-        final data = jsonDecode(body);
-        setState(() {
-          _webAdbHealth = data is Map<String, dynamic> ? data : null;
-          _webAdbHealthTime = DateTime.now();
-        });
-      } else {
-        setState(() {
-          _webAdbHealth = {'error': 'HTTP ${resp.statusCode}'};
-          _webAdbHealthTime = DateTime.now();
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _webAdbHealth = {'error': e.toString()};
-        _webAdbHealthTime = DateTime.now();
-      });
-    } finally {
-      if (mounted) setState(() => _webAdbHealthLoading = false);
-    }
-  }
-
-  Future<void> _persistWebAdbToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = _webAdbTokenController.text.trim();
-    if (token.isEmpty) {
-      await prefs.remove('webadb_auth_token');
-    } else {
-      await prefs.setString('webadb_auth_token', token);
-    }
-  }
-
-  Future<void> _applyPersistedRuntimeSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    final buffer = prefs.getInt('console_buffer_lines');
-    final verbose = prefs.getBool('verbose_logging');
-    final progress = prefs.getBool('adb_progress_notifications');
-    _adbClient.applySettings(
-      bufferLines: buffer,
-      verbose: verbose,
-      progressNotifications: progress,
-    );
-    // Auto-connect last or first saved device if setting enabled
-    final auto = prefs.getBool('auto_connect_adb') ?? false;
-    if (auto) {
-      // wait a tick for saved devices
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (_savedDevices.isNotEmpty &&
-            mounted &&
-            _adbClient.currentState != ADBConnectionState.connected) {
-          _loadDevice(_savedDevices.first);
-          _connect();
-        }
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _adbClient.dispose();
-    _hostController.dispose();
-    _portController.dispose();
-    _commandController.dispose();
-    _pairingPortController.dispose();
-    _pairingCodeController.dispose();
-    _outputScrollController.dispose();
-    _logcatFilterController.dispose();
-    _webAdbPortController.dispose();
-    _webAdbTokenController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _refreshExternalDevices() async {
-    if (!_adbClient.usingExternalBackend) return;
-    final devices = await _adbClient.refreshBackendDevices();
-    if (mounted) setState(() => _externalDevices = devices);
-  }
 
   Future<void> _loadSavedDevices() async {
     final prefs = await SharedPreferences.getInstance();
@@ -208,6 +61,13 @@ class _AndroidScreenState extends State<AndroidScreen>
           .toList();
     });
   }
+
+  // Add this near the top of your class (before any methods)
+  final TextEditingController _hostController = TextEditingController();
+  final TextEditingController _portController = TextEditingController();
+  // Add other controllers as needed, e.g.:
+  // final TextEditingController _pairingPortController = TextEditingController();
+  // final TextEditingController _pairingCodeController = TextEditingController();
 
   Future<void> _saveDevice() async {
     if (_hostController.text.isEmpty) return;
@@ -352,37 +212,34 @@ class _AndroidScreenState extends State<AndroidScreen>
       appBar: AppBar(
         title: const Text('Android Device Manager'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          IconButton(
-            tooltip: 'Refresh Devices',
-            icon: const Icon(Icons.refresh),
-            onPressed: _refreshExternalDevices,
-          ),
-          if (_adbClient.logcatActive)
-            IconButton(
-              tooltip: 'Stop Logcat',
-              icon: const Icon(Icons.stop_circle, color: Colors.orange),
-              onPressed: () async {
-                await _adbClient.stopLogcat();
-                setState(() {});
-              },
-            )
-          else if (_adbClient.currentState == ADBConnectionState.connected)
-            IconButton(
-              tooltip: 'Start Logcat',
-              icon: const Icon(Icons.play_arrow),
-              onPressed: () async {
-                await _adbClient.startLogcat();
-                setState(() {
-                  _navIndex = 2; // switch to logcat view
-                });
-              },
-            ),
-          IconButton(
-            tooltip: 'Clear Console',
-            icon: const Icon(Icons.cleaning_services_outlined),
-            onPressed: () async {
-              final prefs = await SharedPreferences.getInstance();
+        @override
+        Widget build(BuildContext context) => Scaffold(
+              appBar: AppBar(title: const Text('Android Screen (Deprecated)')),
+              body: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.warning_amber_rounded,
+                        size: 72, color: Colors.orange),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'This legacy screen has been retired.\nThe new ADB interface is now the default.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('Open New ADB Screen'),
+                      onPressed: () => Navigator.of(context).pushReplacement(
+                        MaterialPageRoute(
+                            builder: (_) => const AdbRefactoredScreen()),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+      }
               final confirm = prefs.getBool('confirm_clear_logcat') ?? true;
               if (confirm) {
                 final ok = await showDialog<bool>(
@@ -789,28 +646,36 @@ class _AndroidScreenState extends State<AndroidScreen>
                                 : null,
                           ),
                           onPressed: () async {
-                            if (!(_webAdbServer?.running ?? false)) {
-                              final port = int.tryParse(
-                                      _webAdbPortController.text.trim()) ??
-                                  8587;
-                              final token = _webAdbTokenController.text.trim();
-                              _webAdbServer = WebAdbServer(_adbClient,
-                                  port: port,
-                                  authToken: token.isEmpty ? null : token);
-                              final ok = await _webAdbServer!.start();
-                              if (mounted) {
-                                setState(() {});
-                                if (!ok) {
-                                  final err = _webAdbServer!.lastError ?? 'Unknown start failure';
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('WebADB start failed: $err')),
-                                  );
+                              // DEBUG: Print and addOutput before server creation
+                              print('WebADB Start button pressed');
+                              _adbClient.addOutput('DEBUG: Start button pressed');
+                              // Static bool toggle for state confirmation
+                              _debugToggleFlag = !_debugToggleFlag;
+                              print('DEBUG: Toggle value: $_debugToggleFlag');
+                              _adbClient.addOutput('DEBUG: Toggle value: $_debugToggleFlag');
+                              if (!(_webAdbServer?.running ?? false)) {
+                                // Force ephemeral port for debug
+                                final token = _webAdbTokenController.text.trim();
+                                _webAdbServer = WebAdbServer(_adbClient,
+                                    port: 0,
+                                    authToken: token.isEmpty ? null : token);
+                                final ok = await _webAdbServer!.start();
+                                if (mounted) {
+                                  setState(() {});
+                                  if (!ok) {
+                                    final err = _webAdbServer!.lastError ??
+                                        'Unknown start failure';
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content:
+                                              Text('WebADB start failed: $err')),
+                                    );
+                                  }
                                 }
+                              } else {
+                                await _webAdbServer?.stop();
+                                if (mounted) setState(() {});
                               }
-                            } else {
-                              await _webAdbServer?.stop();
-                              if (mounted) setState(() {});
-                            }
                           },
                         ),
                       ],
@@ -830,17 +695,20 @@ class _AndroidScreenState extends State<AndroidScreen>
                               key: ValueKey('webadb_off'),
                               style: TextStyle(fontSize: 12)),
                     ),
-                    if((_webAdbServer?.lastError != null) && !(_webAdbServer?.running ?? false)) ...[
+                    if ((_webAdbServer?.lastError != null) &&
+                        !(_webAdbServer?.running ?? false)) ...[
                       const SizedBox(height: 6),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.error_outline, size: 14, color: Colors.red),
-                          const SizedBox(width:4),
+                          const Icon(Icons.error_outline,
+                              size: 14, color: Colors.red),
+                          const SizedBox(width: 4),
                           Expanded(
                             child: Text(
                               _webAdbServer!.lastError!,
-                              style: const TextStyle(color: Colors.red, fontSize: 11),
+                              style: const TextStyle(
+                                  color: Colors.red, fontSize: 11),
                               maxLines: 3,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -2707,7 +2575,7 @@ class _AndroidScreenState extends State<AndroidScreen>
         return 'Disconnected';
     }
   }
-}
+*/
 
 // Model class for saved ADB devices
 class SavedADBDevice {

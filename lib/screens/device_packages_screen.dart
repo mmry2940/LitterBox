@@ -67,12 +67,6 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
       if (headerIdx == -1 || headerIdx + 1 >= lines.length) {
         throw Exception('No package data');
       }
-      final headerLine = lines[headerIdx];
-      final header = headerLine
-          .replaceAll('|', '')
-          .split(RegExp(r'\s+'))
-          .where((h) => h.isNotEmpty)
-          .toList();
       final data = lines
           .sublist(headerIdx + 1)
           .map((line) {
@@ -136,18 +130,6 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
     });
   }
 
-  void _onSort(String column) {
-    setState(() {
-      if (_sortColumn == column) {
-        _sortAsc = !_sortAsc;
-      } else {
-        _sortColumn = column;
-        _sortAsc = true;
-      }
-      _applyFilterSort();
-      _selectedRows.clear();
-    });
-  }
 
   void _onUninstallSelected() async {
     if (_filteredPackages == null || _selectedRows.isEmpty) return;

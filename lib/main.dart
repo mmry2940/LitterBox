@@ -8,7 +8,7 @@ import 'package:network_tools/network_tools.dart';
 import 'dart:isolate';
 import 'screens/settings_screen.dart';
 import 'screens/home_screen.dart';
-import 'screens/android_screen.dart';
+import 'screens/adb_screen_refactored.dart';
 import 'network_init.dart';
 
 final ValueNotifier<ThemeMode> themeModeNotifier =
@@ -160,7 +160,7 @@ class SplashScreen extends StatelessWidget {
       // Use named routes when possible else direct widget
       if (route == '/android') {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const AndroidScreen()),
+          MaterialPageRoute(builder: (_) => const AdbRefactoredScreen()),
         );
       } else if (route == '/settings') {
         Navigator.of(context).pushReplacement(

@@ -10,7 +10,7 @@ import '../network_init.dart';
 import '../isolate_scanner.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:LitterBox/screens/_host_tile_with_retry.dart';
-import 'android_screen.dart';
+import 'adb_screen_refactored.dart';
 import 'vnc_screen.dart';
 import 'rdp_screen.dart';
 
@@ -431,7 +431,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const AndroidScreen(),
+                    builder: (context) => const AdbRefactoredScreen(),
                   ),
                 );
               },

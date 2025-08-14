@@ -1,0 +1,1109 @@
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../adb_client.dart';
+import '../controllers/webadb_controller.dart';
+import '../models/saved_adb_device.dart';
+
+/// Modular refactored ADB & WebADB UI.
+class AdbRefactoredScreen extends StatefulWidget {
+  const AdbRefactoredScreen({super.key});
+  @override
+  State<AdbRefactoredScreen> createState() => _AdbRefactoredScreenState();
+}
+
+class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
+    with TickerProviderStateMixin {
+  late final ADBClientManager _adb;
+  late final TabController _tabs;
+  late final WebAdbController _webAdb;
+
+  // Connection & pairing
+  final _host = TextEditingController();
+  final _port = TextEditingController(text: '5555');
+  final _pairingPort = TextEditingController(text: '37205');
+  final _pairingCode = TextEditingController();
+  ADBConnectionType _connectionType = ADBConnectionType.wifi;
+
+  // Console
+  final _cmd = TextEditingController();
+  final _consoleScroll = ScrollController();
+  final List<String> _localBuffer = [];
+
+  // Logcat
+  final _logcatFilter = TextEditingController();
+  String _activeLogcatFilter = '';
+
+  // Files
+  final _apkPath = TextEditingController();
+  final _pushLocal = TextEditingController();
+  final _pushRemote = TextEditingController(text: '/sdcard/');
+  final _pullRemote = TextEditingController();
+  final _pullLocal = TextEditingController();
+  final _forwardLocalPort = TextEditingController(text: '9000');
+  final _forwardRemoteSpec = TextEditingController(text: 'tcp:9000');
+
+  // Recents
+  List<String> _recentApk = [];
+  List<String> _recentLocal = [];
+  List<String> _recentRemote = [];
+  List<String> _recentForwards = [];
+
+  // Saved devices
+  List<SavedADBDevice> _savedDevices = [];
+  SavedADBDevice? _selectedSaved;
+
+  // WebADB
+  final _webPort = TextEditingController(text: '8587');
+  final _webToken = TextEditingController();
+  // (Optional future) bool _showWebToken = false; // reserved for show/hide token toggle
+
+  bool _loadingConnect = false;
+  int _logcatLinesShown = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _adb = ADBClientManager();
+    _adb.enableExternalAdbBackend();
+    _webAdb = WebAdbController(_adb);
+    _tabs = TabController(length: 7, vsync: this);
+    _adb.output.listen((line) {
+      if (_localBuffer.length > 1500) _localBuffer.removeRange(0, 800);
+      _localBuffer.add(line);
+      _autoScroll();
+    });
+    _loadPrefs();
+  }
+
+  Future<void> _loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _recentApk = prefs.getStringList('recent_apk') ?? [];
+      _recentLocal = prefs.getStringList('recent_local') ?? [];
+      _recentRemote = prefs.getStringList('recent_remote') ?? [];
+      _recentForwards = prefs.getStringList('recent_forwards') ?? [];
+      _savedDevices = (prefs.getStringList('adb_devices') ?? [])
+          .map((j) => SavedADBDevice.fromJson(jsonDecode(j)))
+          .toList();
+    });
+  }
+
+  Future<void> _persistRecents() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('recent_apk', _recentApk.take(12).toList());
+    await prefs.setStringList('recent_local', _recentLocal.take(12).toList());
+    await prefs.setStringList('recent_remote', _recentRemote.take(12).toList());
+    await prefs.setStringList(
+        'recent_forwards', _recentForwards.take(12).toList());
+  }
+
+  Future<void> _saveDevice() async {
+    if (_host.text.trim().isEmpty) return;
+    final dev = SavedADBDevice(
+      name: '${_host.text}:${_port.text}',
+      host: _host.text.trim(),
+      port: int.tryParse(_port.text.trim()) ?? 5555,
+      connectionType: _connectionType,
+    );
+    _savedDevices.removeWhere((d) => d.name == dev.name);
+    _savedDevices.insert(0, dev);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('adb_devices',
+        _savedDevices.map((d) => jsonEncode(d.toJson())).toList());
+    if (mounted) setState(() {});
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Device saved')));
+    }
+  }
+
+  void _loadDevice(SavedADBDevice d) {
+    setState(() {
+      _host.text = d.host;
+      _port.text = d.port.toString();
+      _connectionType = d.connectionType;
+      _selectedSaved = d;
+    });
+  }
+
+  void _autoScroll() {
+    if (!_consoleScroll.hasClients) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_consoleScroll.hasClients) return;
+      _consoleScroll.jumpTo(_consoleScroll.position.maxScrollExtent);
+    });
+  }
+
+  List<String> _bufferSnapshot() => _adb.outputBuffer.isNotEmpty
+      ? _adb.outputBuffer
+      : List.unmodifiable(_localBuffer);
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    _webAdb.dispose();
+    _adb.dispose();
+    _cmd.dispose();
+    _host.dispose();
+    _port.dispose();
+    _pairingPort.dispose();
+    _pairingCode.dispose();
+    _apkPath.dispose();
+    _pushLocal.dispose();
+    _pushRemote.dispose();
+    _pullRemote.dispose();
+    _pullLocal.dispose();
+    _forwardLocalPort.dispose();
+    _forwardRemoteSpec.dispose();
+    _logcatFilter.dispose();
+    _webPort.dispose();
+    _webToken.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: [ChangeNotifierProvider.value(value: _webAdb)],
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('ADB Manager'),
+          bottom: TabBar(
+            controller: _tabs,
+            isScrollable: true,
+            tabs: const [
+              Tab(text: 'Dashboard'),
+              Tab(text: 'Console'),
+              Tab(text: 'Logcat'),
+              Tab(text: 'Commands'),
+              Tab(text: 'Files'),
+              Tab(text: 'WebADB'),
+              Tab(text: 'Info'),
+            ],
+          ),
+          actions: [
+            PopupMenuButton<String>(
+              onSelected: (v) async {
+                switch (v) {
+                  case 'output_mode':
+                    setState(() {
+                      _adb.setOutputMode(_adb.outputMode == ADBOutputMode.raw
+                          ? ADBOutputMode.verbose
+                          : ADBOutputMode.raw);
+                    });
+                    break;
+                  case 'clear_output':
+                    _adb.clearOutput();
+                    break;
+                  case 'clear_history':
+                    _adb.clearHistory();
+                    break;
+                  case 'restart_webadb':
+                    await _webAdb.stop();
+                    await _webAdb.start();
+                }
+              },
+              itemBuilder: (c) => [
+                PopupMenuItem(
+                  value: 'output_mode',
+                  child: Text('Mode: ${_adb.outputMode.name}'),
+                ),
+                const PopupMenuItem(
+                  value: 'clear_output',
+                  child: Text('Clear Output'),
+                ),
+                const PopupMenuItem(
+                  value: 'clear_history',
+                  child: Text('Clear History'),
+                ),
+                const PopupMenuItem(
+                  value: 'restart_webadb',
+                  child: Text('Restart WebADB'),
+                ),
+              ],
+            )
+          ],
+        ),
+        body: TabBarView(
+          controller: _tabs,
+          children: [
+            _dashboardTab(),
+            _consoleTab(),
+            _logcatTab(),
+            _commandsTab(),
+            _filesTab(),
+            _webadbTab(),
+            _infoTab(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Dashboard (connection + saved devices + quick actions)
+  Widget _dashboardTab() {
+    return LayoutBuilder(builder: (context, c) {
+      final wide = c.maxWidth > 950;
+      final left = _connectionCard();
+      final right = Column(children: [
+        _currentDeviceCard(),
+        const SizedBox(height: 8),
+        _quickActionsCard(),
+        const SizedBox(height: 8),
+        Expanded(child: _savedDevicesWidget()),
+      ]);
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: wide
+            ? Row(children: [
+                Expanded(child: left),
+                const SizedBox(width: 12),
+                Expanded(child: right)
+              ])
+            : Column(children: [
+                left,
+                const SizedBox(height: 12),
+                SizedBox(height: 420, child: right)
+              ]),
+      );
+    });
+  }
+
+  Card _connectionCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.cable, size: 18),
+              const SizedBox(width: 6),
+              const Text('Connection',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const Spacer(),
+              Text(_adb.currentState.name,
+                  style: TextStyle(
+                      color: _stateColor(_adb.currentState), fontSize: 12)),
+            ]),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<ADBConnectionType>(
+              value: _connectionType,
+              items: ADBConnectionType.values
+                  .map((t) =>
+                      DropdownMenuItem(value: t, child: Text(t.displayName)))
+                  .toList(),
+              onChanged: (v) =>
+                  setState(() => _connectionType = v ?? ADBConnectionType.wifi),
+              decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  labelText: 'Type'),
+            ),
+            const SizedBox(height: 12),
+            if (_connectionType != ADBConnectionType.usb)
+              Row(children: [
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: _host,
+                    decoration: const InputDecoration(
+                        labelText: 'Host / IP',
+                        border: OutlineInputBorder(),
+                        isDense: true),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (_connectionType != ADBConnectionType.pairing)
+                  SizedBox(
+                    width: 100,
+                    child: TextField(
+                      controller: _port,
+                      decoration: const InputDecoration(
+                          labelText: 'Port',
+                          border: OutlineInputBorder(),
+                          isDense: true),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+              ]),
+            if (_connectionType == ADBConnectionType.pairing) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                SizedBox(
+                  width: 110,
+                  child: TextField(
+                    controller: _pairingPort,
+                    decoration: const InputDecoration(
+                        labelText: 'Pair Port',
+                        border: OutlineInputBorder(),
+                        isDense: true),
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _pairingCode,
+                    decoration: const InputDecoration(
+                        labelText: 'Pair Code',
+                        border: OutlineInputBorder(),
+                        isDense: true),
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 8),
+              const Text('Enable Wireless debugging > Pair device with code',
+                  style: TextStyle(fontSize: 11)),
+            ],
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  icon: _loadingConnect
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : Icon(_connectionType == ADBConnectionType.pairing
+                          ? Icons.link
+                          : Icons.wifi),
+                  label: Text(_loadingConnect
+                      ? (_connectionType == ADBConnectionType.pairing
+                          ? 'Pairing...'
+                          : 'Connecting...')
+                      : (_connectionType == ADBConnectionType.pairing
+                          ? 'Pair'
+                          : 'Connect')),
+                  onPressed: _loadingConnect
+                      ? null
+                      : () async {
+                          setState(() => _loadingConnect = true);
+                          bool ok = false;
+                          switch (_connectionType) {
+                            case ADBConnectionType.wifi:
+                            case ADBConnectionType.custom:
+                              ok = await _adb.connectWifi(_host.text.trim(),
+                                  int.tryParse(_port.text) ?? 5555);
+                              break;
+                            case ADBConnectionType.usb:
+                              ok = await _adb.connectUSB();
+                              break;
+                            case ADBConnectionType.pairing:
+                              await _adb.pairDevice(
+                                  _host.text.trim(),
+                                  int.tryParse(_pairingPort.text) ?? 37205,
+                                  _pairingCode.text.trim(),
+                                  int.tryParse(_port.text) ?? 5555);
+                              ok = true;
+                              break;
+                          }
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                content: Text(ok ? 'Success' : 'Failed'),
+                                backgroundColor:
+                                    ok ? Colors.green : Colors.red));
+                          }
+                          setState(() => _loadingConnect = false);
+                        },
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                icon: const Icon(Icons.link_off),
+                label: const Text('Disconnect'),
+                onPressed: _adb.currentState == ADBConnectionState.connected
+                    ? () async {
+                        await _adb.disconnect();
+                        setState(() {});
+                      }
+                    : null,
+              )
+            ]),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(
+                  child: OutlinedButton.icon(
+                      icon: const Icon(Icons.save),
+                      label: const Text('Save Device'),
+                      onPressed: _saveDevice)),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: OutlinedButton.icon(
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Refresh Devices'),
+                      onPressed: () async {
+                        await _adb.refreshBackendDevices();
+                        setState(() {});
+                      })),
+            ])
+          ],
+        ),
+      ),
+    );
+  }
+
+  Card _currentDeviceCard() => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(children: [
+            Icon(Icons.phone_android, color: _stateColor(_adb.currentState)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [Text('State: ${_adb.currentState.name}')]),
+            ),
+          ]),
+        ),
+      );
+
+  Card _quickActionsCard() => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Quick Actions',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              _qa('Console', Icons.terminal, () => _tabs.index = 1),
+              _qa('Start Logcat', Icons.play_arrow, () async {
+                if (!_adb.logcatActive) {
+                  await _adb.startLogcat();
+                  setState(() => _tabs.index = 2);
+                }
+              }, enabled: !_adb.logcatActive),
+              _qa('Stop Logcat', Icons.stop, () async {
+                await _adb.stopLogcat();
+                setState(() {});
+              }, enabled: _adb.logcatActive),
+              _qa('Files', Icons.folder_copy, () => _tabs.index = 4),
+              _qa('WebADB', Icons.public, () => _tabs.index = 5),
+              _qa('Info', Icons.info_outline, () => _tabs.index = 6),
+            ])
+          ]),
+        ),
+      );
+
+  Widget _savedDevicesWidget() {
+    if (_savedDevices.isEmpty) {
+      return const Card(
+          child: Padding(
+              padding: EdgeInsets.all(12), child: Text('No saved devices')));
+    }
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Saved Devices',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Expanded(
+            child: ListView.builder(
+              itemCount: _savedDevices.length,
+              itemBuilder: (c, i) {
+                final d = _savedDevices[i];
+                return ListTile(
+                  selected: _selectedSaved?.name == d.name,
+                  leading: const Icon(Icons.memory),
+                  title: Text(d.name, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(d.connectionType.displayName, maxLines: 1),
+                  onTap: () => _loadDevice(d),
+                  trailing: IconButton(
+                      icon: const Icon(Icons.delete, size: 18),
+                      onPressed: () async {
+                        _savedDevices.removeAt(i);
+                        final prefs = await SharedPreferences.getInstance();
+                        await prefs.setStringList(
+                            'adb_devices',
+                            _savedDevices
+                                .map((d) => jsonEncode(d.toJson()))
+                                .toList());
+                        setState(() {});
+                      }),
+                );
+              },
+            ),
+          )
+        ]),
+      ),
+    );
+  }
+
+  Widget _qa(String label, IconData icon, VoidCallback onTap,
+          {bool enabled = true}) =>
+      SizedBox(
+        height: 36,
+        child: ElevatedButton.icon(
+            onPressed: enabled ? onTap : null,
+            icon: Icon(icon, size: 16),
+            label: Text(label)),
+      );
+
+  Widget _consoleTab() {
+    return Column(children: [
+      Expanded(
+        child: StreamBuilder<String>(
+          stream: _adb.output,
+          builder: (ctx, snap) {
+            // Fallback: maintain a simple local snapshot if manager lacks collectedOutput.
+            final lines = _bufferSnapshot();
+            return ListView.builder(
+              controller: _consoleScroll,
+              itemCount: lines.length,
+              itemBuilder: (_, i) => Text(lines[i],
+                  style:
+                      const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+            );
+          },
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Row(children: [
+          Expanded(
+              child: TextField(
+                  controller: _cmd,
+                  decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                      labelText: 'Command'))),
+          const SizedBox(width: 8),
+          ElevatedButton(
+              onPressed: () async {
+                final c = _cmd.text.trim();
+                if (c.isEmpty) return;
+                _cmd.clear();
+                await _adb.executeCommand(c);
+              },
+              child: const Text('Run'))
+        ]),
+      )
+    ]);
+  }
+
+  Widget _webadbTab() {
+    return Consumer<WebAdbController>(builder: (ctx, w, _) {
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                SizedBox(
+                  width: 110,
+                  child: TextField(
+                    controller: _webPort,
+                    enabled: !w.running,
+                    decoration: const InputDecoration(
+                        labelText: 'Port',
+                        isDense: true,
+                        border: OutlineInputBorder()),
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _webToken,
+                    enabled: !w.running,
+                    decoration: const InputDecoration(
+                        labelText: 'Auth Token',
+                        isDense: true,
+                        border: OutlineInputBorder()),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    if (w.running) {
+                      await w.stop();
+                    } else {
+                      final p = int.tryParse(_webPort.text) ?? w.port;
+                      await w.configure(port: p, token: _webToken.text.trim());
+                      await w.start();
+                    }
+                  },
+                  icon: Icon(w.running ? Icons.stop : Icons.play_arrow),
+                  label: Text(w.running ? 'Stop' : 'Start'),
+                ),
+              ]),
+              const SizedBox(height: 8),
+              _webAdbStatus(w),
+              const Divider(),
+              Row(children: [
+                ElevatedButton.icon(
+                    onPressed: w.running ? w.fetchHealth : null,
+                    icon: const Icon(Icons.monitor_heart),
+                    label: const Text('Health Now')),
+                const SizedBox(width: 8),
+                if (w.lastHealth != null)
+                  Text(
+                    _healthSummary(w.lastHealth!),
+                    style: TextStyle(
+                        color: (w.lastHealth!['error'] != null)
+                            ? Colors.red
+                            : Colors.green,
+                        fontSize: 12),
+                  ),
+              ]),
+              const SizedBox(height: 12),
+              SelectableText('Base URL: http://localhost:${w.port}',
+                  style: const TextStyle(fontSize: 12)),
+              if (w.lastError != null && !w.running)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(w.lastError!,
+                      style: const TextStyle(color: Colors.red, fontSize: 12)),
+                ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _logcatTab() {
+    return Column(children: [
+      Expanded(
+        child: Container(
+          color: Colors.black,
+          child: StreamBuilder<String>(
+            stream: _adb.logcatStream,
+            builder: (c, s) {
+              final buffer = _adb.logcatBuffer;
+              if (_logcatLinesShown != buffer.length)
+                _logcatLinesShown = buffer.length;
+              return ListView.builder(
+                padding: const EdgeInsets.all(4),
+                itemCount: buffer.length,
+                itemBuilder: (ctx, i) {
+                  final line = buffer[i];
+                  if (_activeLogcatFilter.isNotEmpty &&
+                      !line
+                          .toLowerCase()
+                          .contains(_activeLogcatFilter.toLowerCase()))
+                    return const SizedBox.shrink();
+                  Color color = Colors.white;
+                  if (line.contains(' E '))
+                    color = Colors.redAccent;
+                  else if (line.contains(' W '))
+                    color = Colors.orangeAccent;
+                  else if (line.contains(' I ')) color = Colors.lightBlueAccent;
+                  return Text(line,
+                      style: TextStyle(
+                          color: color, fontSize: 11, fontFamily: 'monospace'));
+                },
+              );
+            },
+          ),
+        ),
+      ),
+      Container(
+        color: Colors.grey[200],
+        padding: const EdgeInsets.all(6),
+        child: Row(children: [
+          ElevatedButton.icon(
+              onPressed: _adb.logcatActive
+                  ? null
+                  : () async {
+                      await _adb.startLogcat();
+                      setState(() {});
+                    },
+              icon: const Icon(Icons.play_arrow),
+              label: const Text('Start')),
+          const SizedBox(width: 6),
+          ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: _adb.logcatActive
+                  ? () async {
+                      await _adb.stopLogcat();
+                      setState(() {});
+                    }
+                  : null,
+              icon: const Icon(Icons.stop),
+              label: const Text('Stop')),
+          const SizedBox(width: 6),
+          ElevatedButton.icon(
+              onPressed: () {
+                _adb.clearLogcat();
+                setState(() {});
+              },
+              icon: const Icon(Icons.cleaning_services),
+              label: const Text('Clear')),
+          const SizedBox(width: 12),
+          Expanded(
+              child: TextField(
+            controller: _logcatFilter,
+            decoration: InputDecoration(
+                isDense: true,
+                border: const OutlineInputBorder(),
+                hintText: 'Filter...',
+                suffixIcon: IconButton(
+                    icon: const Icon(Icons.search),
+                    onPressed: () => setState(() =>
+                        _activeLogcatFilter = _logcatFilter.text.trim()))),
+            onSubmitted: (_) =>
+                setState(() => _activeLogcatFilter = _logcatFilter.text.trim()),
+          )),
+          if (_activeLogcatFilter.isNotEmpty)
+            IconButton(
+                onPressed: () {
+                  _logcatFilter.clear();
+                  setState(() => _activeLogcatFilter = '');
+                },
+                icon: const Icon(Icons.close)),
+          const SizedBox(width: 8),
+          Text('${_adb.logcatBuffer.length} lines',
+              style: const TextStyle(fontSize: 12))
+        ]),
+      )
+    ]);
+  }
+
+  Widget _commandsTab() => ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text('Quick Commands',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          ...ADBCommands.commandCategories.entries.map((e) => ExpansionTile(
+                title: Text(e.key,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                children: e.value
+                    .map((cmd) => ListTile(
+                          title: Text(cmd,
+                              style: const TextStyle(
+                                  fontFamily: 'monospace', fontSize: 12)),
+                          subtitle:
+                              Text(ADBCommands.getCommandDescription(cmd)),
+                          trailing: ElevatedButton(
+                              onPressed: _adb.currentState ==
+                                      ADBConnectionState.connected
+                                  ? () async => await _adb.executeCommand(cmd)
+                                  : null,
+                              child: const Text('Run')),
+                          onTap: () {
+                            _cmd.text = cmd;
+                            _tabs.index = 1;
+                          },
+                        ))
+                    .toList(),
+              ))
+        ],
+      );
+
+  Widget _filesTab() => SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _sectionTitle('Install APK', Icons.install_mobile),
+          Row(children: [
+            Expanded(
+                child: TextField(
+                    controller: _apkPath,
+                    decoration: const InputDecoration(
+                        labelText: 'APK Path',
+                        border: OutlineInputBorder(),
+                        isDense: true))),
+            const SizedBox(width: 8),
+            ElevatedButton(
+                onPressed: _adb.currentState == ADBConnectionState.connected
+                    ? () async {
+                        final ok = await _adb.installApk(_apkPath.text.trim());
+                        if (_apkPath.text.isNotEmpty) {
+                          _recentApk.remove(_apkPath.text.trim());
+                          _recentApk.insert(0, _apkPath.text.trim());
+                          _persistRecents();
+                        }
+                        if (mounted)
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(ok ? 'Installed' : 'Failed')));
+                      }
+                    : null,
+                child: const Text('Install'))
+          ]),
+          _recentChips(_recentApk, (v) => _apkPath.text = v),
+          const SizedBox(height: 16),
+          _sectionTitle('Push File', Icons.upload_file),
+          Row(children: [
+            Expanded(
+                child: TextField(
+                    controller: _pushLocal,
+                    decoration: const InputDecoration(
+                        labelText: 'Local Path',
+                        border: OutlineInputBorder(),
+                        isDense: true))),
+            const SizedBox(width: 8),
+            Expanded(
+                child: TextField(
+                    controller: _pushRemote,
+                    decoration: const InputDecoration(
+                        labelText: 'Remote Path',
+                        border: OutlineInputBorder(),
+                        isDense: true))),
+            const SizedBox(width: 8),
+            ElevatedButton(
+                onPressed: _adb.currentState == ADBConnectionState.connected
+                    ? () async {
+                        final ok = await _adb.pushFile(
+                            _pushLocal.text.trim(), _pushRemote.text.trim());
+                        if (_pushLocal.text.isNotEmpty) {
+                          _recentLocal.remove(_pushLocal.text.trim());
+                          _recentLocal.insert(0, _pushLocal.text.trim());
+                        }
+                        if (_pushRemote.text.isNotEmpty) {
+                          _recentRemote.remove(_pushRemote.text.trim());
+                          _recentRemote.insert(0, _pushRemote.text.trim());
+                        }
+                        _persistRecents();
+                        if (mounted)
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(ok ? 'Pushed' : 'Failed')));
+                      }
+                    : null,
+                child: const Text('Push'))
+          ]),
+          _recentChips(_recentLocal, (v) => _pushLocal.text = v,
+              label: 'Recent Local'),
+          _recentChips(_recentRemote, (v) => _pushRemote.text = v,
+              label: 'Recent Remote'),
+          const SizedBox(height: 16),
+          _sectionTitle('Pull File', Icons.download),
+          Row(children: [
+            Expanded(
+                child: TextField(
+                    controller: _pullRemote,
+                    decoration: const InputDecoration(
+                        labelText: 'Remote Path',
+                        border: OutlineInputBorder(),
+                        isDense: true))),
+            const SizedBox(width: 8),
+            Expanded(
+                child: TextField(
+                    controller: _pullLocal,
+                    decoration: const InputDecoration(
+                        labelText: 'Local Path',
+                        border: OutlineInputBorder(),
+                        isDense: true))),
+            const SizedBox(width: 8),
+            ElevatedButton(
+                onPressed: _adb.currentState == ADBConnectionState.connected
+                    ? () async {
+                        final ok = await _adb.pullFile(
+                            _pullRemote.text.trim(), _pullLocal.text.trim());
+                        if (mounted)
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(ok ? 'Pulled' : 'Failed')));
+                      }
+                    : null,
+                child: const Text('Pull'))
+          ]),
+          const SizedBox(height: 16),
+          _sectionTitle('Port Forward', Icons.cable),
+          Row(children: [
+            SizedBox(
+                width: 100,
+                child: TextField(
+                    controller: _forwardLocalPort,
+                    decoration: const InputDecoration(
+                        labelText: 'Local',
+                        border: OutlineInputBorder(),
+                        isDense: true),
+                    keyboardType: TextInputType.number)),
+            const SizedBox(width: 8),
+            Expanded(
+                child: TextField(
+                    controller: _forwardRemoteSpec,
+                    decoration: const InputDecoration(
+                        labelText: 'Remote Spec',
+                        border: OutlineInputBorder(),
+                        isDense: true))),
+            const SizedBox(width: 8),
+            ElevatedButton(
+                onPressed: _adb.currentState == ADBConnectionState.connected
+                    ? () async {
+                        final lp = int.tryParse(_forwardLocalPort.text) ?? 0;
+                        final ok = await _adb.forwardPort(
+                            lp, _forwardRemoteSpec.text.trim());
+                        if (ok) {
+                          final fr =
+                              '${_forwardLocalPort.text}:${_forwardRemoteSpec.text}';
+                          _recentForwards.remove(fr);
+                          _recentForwards.insert(0, fr);
+                          _persistRecents();
+                        }
+                        if (mounted)
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(ok ? 'Forward Added' : 'Failed')));
+                      }
+                    : null,
+                child: const Text('Add')),
+            const SizedBox(width: 4),
+            ElevatedButton(
+                onPressed: _adb.currentState == ADBConnectionState.connected
+                    ? () async {
+                        final lp = int.tryParse(_forwardLocalPort.text) ?? 0;
+                        final ok = await _adb.removeForward(lp);
+                        if (mounted)
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(ok ? 'Removed' : 'Failed')));
+                      }
+                    : null,
+                child: const Text('Remove'))
+          ]),
+          _recentChips(_recentForwards, (v) {
+            final parts = v.split(':');
+            if (parts.length >= 2) {
+              _forwardLocalPort.text = parts[0];
+              _forwardRemoteSpec.text = parts.sublist(1).join(':');
+            }
+          }, label: 'Recent Forwards'),
+        ]),
+      );
+
+  Widget _recentChips(List<String> items, ValueChanged<String> onTap,
+      {String? label}) {
+    if (items.isEmpty) return const SizedBox();
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (label != null)
+          Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(label,
+                  style: const TextStyle(
+                      fontSize: 11, fontWeight: FontWeight.bold))),
+        Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: items
+                .map((p) => ActionChip(
+                    label: Text(p.split('/').last,
+                        overflow: TextOverflow.ellipsis),
+                    onPressed: () => onTap(p)))
+                .toList())
+      ]),
+    );
+  }
+
+  Widget _sectionTitle(String title, IconData icon) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(children: [
+          Icon(icon, size: 18),
+          const SizedBox(width: 6),
+          Text(title, style: const TextStyle(fontWeight: FontWeight.bold))
+        ]),
+      );
+
+  Widget _infoTab() {
+    final sections = [
+      (
+        'ADB Server Setup',
+        Icons.settings_system_daydream,
+        [
+          'Install Platform Tools & add to PATH',
+          'adb start-server',
+          'Check devices: adb devices'
+        ]
+      ),
+      (
+        'Wireless Debugging',
+        Icons.wifi,
+        [
+          'Enable Developer Options',
+          'Enable Wireless debugging',
+          'Pair with code (Android 11+)',
+          'Connect via IP:5555'
+        ]
+      ),
+      (
+        'USB Debugging',
+        Icons.usb,
+        [
+          'Enable USB debugging on device',
+          'Connect cable & authorize',
+          'adb devices should list device'
+        ]
+      ),
+      (
+        'Tips',
+        Icons.info_outline,
+        [
+          'Use verbose mode for timestamps',
+          'Interactive shell for multi-line tasks',
+          'Forward ports for local web debugging'
+        ]
+      )
+    ];
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: sections.length,
+      itemBuilder: (c, i) {
+        final s = sections[i];
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(s.$2),
+                const SizedBox(width: 8),
+                Text(s.$1,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold))
+              ]),
+              const SizedBox(height: 8),
+              ...s.$3.map((l) => Text('• $l'))
+            ]),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _webAdbStatus(WebAdbController c) {
+    final text = switch (c.state) {
+      WebAdbState.starting => 'Starting…',
+      WebAdbState.running => 'Running on port ${c.port}',
+      WebAdbState.error => 'Error',
+      WebAdbState.stopped => 'Stopped'
+    };
+    final color = switch (c.state) {
+      WebAdbState.running => Colors.green,
+      WebAdbState.error => Colors.red,
+      WebAdbState.starting => Colors.orange,
+      _ => Colors.grey,
+    };
+    return Row(children: [
+      Icon(Icons.circle, size: 10, color: color),
+      const SizedBox(width: 6),
+      Text(text, style: TextStyle(color: color, fontSize: 12)),
+    ]);
+  }
+
+  String _healthSummary(Map<String, dynamic> h) {
+    if (h['error'] != null) return 'Health ERROR (${h['error']})';
+    final dc = h['deviceCount'];
+    return 'Health OK devices=$dc';
+  }
+
+  Color _stateColor(ADBConnectionState s) {
+    switch (s) {
+      case ADBConnectionState.connected:
+        return Colors.green;
+      case ADBConnectionState.connecting:
+        return Colors.orange;
+      case ADBConnectionState.failed:
+        return Colors.red;
+      case ADBConnectionState.disconnected:
+        return Colors.grey;
+    }
+  }
+}
