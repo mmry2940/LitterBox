@@ -49,6 +49,9 @@ dependencies:
   pointycastle: ^3.7.3
   file_picker: ^8.0.0
   provider: ^6.0.5
+  multicast_dns: ^0.3.2
+  # Optional: flutter_adb (if published). Uncomment when available.
+  # flutter_adb: ^0.0.1
 
 
 dev_dependencies:
@@ -62,17 +65,17 @@ dev_dependencies:
 # following page: https://dart.dev/tools/pub/pubspec
 
 # The following section is specific to Flutter packages.
+
 flutter:
-
-  # The following line ensures that the Material Icons font is
-  # included with your application, so that you can use the icons in
-  # the material Icons class.
   uses-material-design: true
-
   assets:
     - assets/splash_1.jpg
     - assets/splash_2.jpg
     - assets/splash_3.jpg
+    # Embedded adb/fastboot binaries (placeholders – add actual binaries per ABI)
+    - assets/adb/bin/armeabi-v7a/
+    - assets/adb/bin/arm64-v8a/
+    - assets/adb/bin/x86_64/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

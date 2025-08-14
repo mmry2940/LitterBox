@@ -1,11 +1,17 @@
 import 'dart:convert';
+import 'dart:async';
+import 'dart:io' show Process;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:xterm/xterm.dart';
 import '../adb_client.dart';
 import '../controllers/webadb_controller.dart';
 import '../models/saved_adb_device.dart';
+import '../adb/embedded_adb_manager.dart';
+import '../adb/adb_mdns_discovery.dart';
+import '../adb/usb_bridge.dart';
 
 /// Modular refactored ADB & WebADB UI.
 class AdbRefactoredScreen extends StatefulWidget {
@@ -19,6 +25,12 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   late final ADBClientManager _adb;
   late final TabController _tabs;
   late final WebAdbController _webAdb;
+  // Terminal (xterm) integration
+  Terminal? _terminal;
+  Process? _shellProcess;
+  StreamSubscription<List<int>>? _shellStdoutSub;
+  StreamSubscription<List<int>>? _shellStderrSub;
+  final _terminalFocusNode = FocusNode();
 
   // Connection & pairing
   final _host = TextEditingController();
@@ -26,6 +38,14 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   final _pairingPort = TextEditingController(text: '37205');
   final _pairingCode = TextEditingController();
   ADBConnectionType _connectionType = ADBConnectionType.wifi;
+  // mDNS discovery
+  final AdbMdnsDiscovery _mdns = AdbMdnsDiscovery();
+  List<AdbMdnsServiceInfo> _mdnsServices = [];
+  bool _mdnsScanning = false;
+  DateTime? _lastMdnsScan;
+  // USB devices
+  List<UsbDeviceInfo> _usbDevices = [];
+  StreamSubscription? _usbEventsSub;
 
   // Console
   final _cmd = TextEditingController();
@@ -69,7 +89,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     _adb = ADBClientManager();
     _adb.enableExternalAdbBackend();
     _webAdb = WebAdbController(_adb);
-    _tabs = TabController(length: 7, vsync: this);
+    _tabs = TabController(length: 8, vsync: this);
     _adb.output.listen((line) {
       if (_localBuffer.length > 1500) _localBuffer.removeRange(0, 800);
       _localBuffer.add(line);
@@ -88,7 +108,18 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       _savedDevices = (prefs.getStringList('adb_devices') ?? [])
           .map((j) => SavedADBDevice.fromJson(jsonDecode(j)))
           .toList();
+      final cachedMdns = prefs.getString('mdns_cache');
+      if (cachedMdns != null) {
+        try {
+          final list = (jsonDecode(cachedMdns) as List)
+              .map(
+                  (e) => AdbMdnsServiceInfo.fromJson(e as Map<String, dynamic>))
+              .toList();
+          _mdnsServices = list;
+        } catch (_) {}
+      }
     });
+    _startUsbEvents();
   }
 
   Future<void> _persistRecents() async {
@@ -161,6 +192,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     _logcatFilter.dispose();
     _webPort.dispose();
     _webToken.dispose();
+    _usbEventsSub?.cancel();
     super.dispose();
   }
 
@@ -177,6 +209,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
             tabs: const [
               Tab(text: 'Dashboard'),
               Tab(text: 'Console'),
+              Tab(text: 'Terminal'),
               Tab(text: 'Logcat'),
               Tab(text: 'Commands'),
               Tab(text: 'Files'),
@@ -232,6 +265,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
           children: [
             _dashboardTab(),
             _consoleTab(),
+            _terminalTab(),
             _logcatTab(),
             _commandsTab(),
             _filesTab(),
@@ -243,31 +277,135 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     );
   }
 
+  Future<void> _openInteractiveShellInTerminal() async {
+    if (_shellProcess != null) return;
+    final adbPath = await EmbeddedAdbManager.instance.adbPath; // may be ''
+    final deviceId = _adb.currentState == ADBConnectionState.connected
+        ? _adb.connectedDeviceId
+        : '';
+    final args = <String>[];
+    if (deviceId.isNotEmpty) {
+      args.addAll(['-s', deviceId]);
+    }
+    args.add('shell');
+    try {
+      _terminal ??= Terminal(maxLines: 2000);
+      _terminal!.write('Starting shell...\r\n');
+      _shellProcess = await Process.start(
+          adbPath != null && adbPath.isNotEmpty ? adbPath : 'adb', args);
+      _shellStdoutSub = _shellProcess!.stdout.listen((data) {
+        _terminal?.write(String.fromCharCodes(data));
+      });
+      _shellStderrSub = _shellProcess!.stderr.listen((data) {
+        _terminal?.write(String.fromCharCodes(data));
+      });
+      _terminal!.onOutput = (String text) {
+        if (_shellProcess != null) {
+          _shellProcess!.stdin.write(text);
+        }
+      };
+      _shellProcess!.exitCode.then((code) {
+        _terminal?.write('\r\nShell exited (code $code)\r\n');
+        _disposeShell();
+      });
+      setState(() {});
+    } catch (e) {
+      _terminal?.write('Failed to start shell: $e\r\n');
+    }
+  }
+
+  void _disposeShell() {
+    _shellStdoutSub?.cancel();
+    _shellStderrSub?.cancel();
+    _shellStdoutSub = null;
+    _shellStderrSub = null;
+    _shellProcess = null;
+  }
+
+  Widget _terminalTab() {
+    return Column(children: [
+      Expanded(
+        child: _terminal == null
+            ? Center(
+                child: Text('No shell session. Press Open Shell.'),
+              )
+            : Focus(
+                focusNode: _terminalFocusNode,
+                child: TerminalView(
+                  _terminal!,
+                  autofocus: true,
+                  padding: const EdgeInsets.all(4),
+                ),
+              ),
+      ),
+      Container(
+        color: Colors.grey[200],
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(children: [
+          ElevatedButton.icon(
+            onPressed:
+                _shellProcess == null ? _openInteractiveShellInTerminal : null,
+            icon: const Icon(Icons.play_arrow),
+            label: const Text('Open Shell'),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            onPressed: _shellProcess != null
+                ? () {
+                    _shellProcess!.kill();
+                  }
+                : null,
+            icon: const Icon(Icons.stop),
+            label: const Text('Stop'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          ),
+          const SizedBox(width: 8),
+          if (_terminal != null)
+            ElevatedButton.icon(
+              onPressed: () {
+                _terminal!.write('\x1b[2J\x1b[H');
+              },
+              icon: const Icon(Icons.cleaning_services),
+              label: const Text('Clear'),
+            ),
+        ]),
+      )
+    ]);
+  }
+
   // Dashboard (connection + saved devices + quick actions)
   Widget _dashboardTab() {
     return LayoutBuilder(builder: (context, c) {
       final wide = c.maxWidth > 950;
       final left = _connectionCard();
-      final right = Column(children: [
-        _currentDeviceCard(),
-        const SizedBox(height: 8),
-        _quickActionsCard(),
-        const SizedBox(height: 8),
-        Expanded(child: _savedDevicesWidget()),
-      ]);
       return Padding(
         padding: const EdgeInsets.all(12),
         child: wide
             ? Row(children: [
                 Expanded(child: left),
                 const SizedBox(width: 12),
-                Expanded(child: right)
+                Expanded(
+                  child: Column(children: [
+                    _currentDeviceCard(),
+                    const SizedBox(height: 8),
+                    _quickActionsCard(),
+                    const SizedBox(height: 8),
+                    Expanded(
+                        child: _savedDevicesWidget(scrollableParent: false)),
+                  ]),
+                )
               ])
-            : Column(children: [
-                left,
-                const SizedBox(height: 12),
-                SizedBox(height: 420, child: right)
-              ]),
+            : SingleChildScrollView(
+                child: Column(children: [
+                  left,
+                  const SizedBox(height: 12),
+                  _currentDeviceCard(),
+                  const SizedBox(height: 8),
+                  _quickActionsCard(),
+                  const SizedBox(height: 8),
+                  _savedDevicesWidget(scrollableParent: true),
+                ]),
+              ),
       );
     });
   }
@@ -289,6 +427,39 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                   style: TextStyle(
                       color: _stateColor(_adb.currentState), fontSize: 12)),
             ]),
+            const SizedBox(height: 12),
+            // Discovery rows
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: _mdnsScanning
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.wifi_tethering),
+                  label: Text(
+                      _mdnsScanning ? 'Scanning mDNS...' : 'Discover Wi‑Fi'),
+                  onPressed: _mdnsScanning ? null : _runMdnsScan,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.usb),
+                  label: const Text('Refresh USB'),
+                  onPressed: _refreshUsb,
+                ),
+              )
+            ]),
+            if (_mdnsServices.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _mdnsListWidget(),
+            ],
+            if (_usbDevices.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _usbListWidget(),
+            ],
             const SizedBox(height: 12),
             DropdownButtonFormField<ADBConnectionType>(
               value: _connectionType,
@@ -448,6 +619,181 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     );
   }
 
+  Future<void> _runMdnsScan() async {
+    setState(() {
+      _mdnsScanning = true;
+    });
+    try {
+      await _mdns.scanOnce();
+      final results = _mdns.currentCache();
+      setState(() {
+        _mdnsServices = results;
+        _lastMdnsScan = DateTime.now();
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+          'mdns_cache', jsonEncode(results.map((e) => e.toJson()).toList()));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('mDNS error: $e')));
+      }
+    } finally {
+      if (mounted)
+        setState(() {
+          _mdnsScanning = false;
+        });
+    }
+  }
+
+  Widget _mdnsListWidget() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Icon(Icons.wifi, size: 16),
+        const SizedBox(width: 4),
+        const Text('Discovered Wi‑Fi Devices',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        const Spacer(),
+        if (_lastMdnsScan != null)
+          Text(_timeAgo(_lastMdnsScan!), style: const TextStyle(fontSize: 10))
+      ]),
+      const SizedBox(height: 4),
+      SizedBox(
+        height: 120,
+        child: ListView.builder(
+          itemCount: _mdnsServices.length,
+          itemBuilder: (c, i) {
+            final s = _mdnsServices[i];
+            final host = s.ip ?? s.ipv6 ?? s.host;
+            final statusIcon = s.reachable == null
+                ? const Icon(Icons.help_outline, size: 14, color: Colors.grey)
+                : s.reachable == true
+                    ? const Icon(Icons.check_circle,
+                        size: 14, color: Colors.green)
+                    : const Icon(Icons.error,
+                        size: 14, color: Colors.redAccent);
+            return ListTile(
+              dense: true,
+              leading: statusIcon,
+              title: Text('$host:${s.port}',
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13)),
+              subtitle: Text(
+                [
+                  if (s.txt['device'] != null) s.txt['device']!,
+                  if (s.ip != null) 'v4:${s.ip}',
+                  if (s.ipv6 != null) 'v6:${s.ipv6}'
+                ].join(' • '),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 10),
+              ),
+              trailing: IconButton(
+                  icon: const Icon(Icons.play_arrow, size: 18),
+                  onPressed: () {
+                    _host.text = host;
+                    _port.text = s.port.toString();
+                    setState(() => _connectionType = ADBConnectionType.wifi);
+                  }),
+            );
+          },
+        ),
+      ),
+    ]);
+  }
+
+  Future<void> _refreshUsb() async {
+    try {
+      final list = await UsbBridge.listDevices();
+      setState(() => _usbDevices = list);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('USB error: $e')));
+      }
+    }
+  }
+
+  void _startUsbEvents() async {
+    // Platform side handles events over EventChannel name adb_usb_events
+    const events = EventChannel('adb_usb_events');
+    _usbEventsSub = events.receiveBroadcastStream().listen((event) async {
+      if (event is Map) {
+        final devices = (event['devices'] as List?) ?? [];
+        final parsed = devices.map((d) {
+          final m = Map<String, dynamic>.from(d as Map);
+          return UsbDeviceInfo(
+            deviceId: (m['deviceId'] as int?) ?? -1,
+            vendorId: (m['vendorId'] as int?) ?? 0,
+            productId: (m['productId'] as int?) ?? 0,
+            serial: m['serial'] as String?,
+            name: m['name'] as String? ?? '',
+            hasPermission: (m['hasPermission'] as bool?) ?? false,
+          );
+        }).toList();
+        setState(() => _usbDevices = parsed);
+      }
+    });
+    // initial manual load
+    await _refreshUsb();
+  }
+
+  Widget _usbListWidget() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Icon(Icons.usb, size: 16),
+        const SizedBox(width: 4),
+        const Text('USB Devices', style: TextStyle(fontWeight: FontWeight.bold))
+      ]),
+      const SizedBox(height: 4),
+      SizedBox(
+        height: 110,
+        child: ListView.builder(
+          itemCount: _usbDevices.length,
+          itemBuilder: (c, i) {
+            final d = _usbDevices[i];
+            return ListTile(
+              dense: true,
+              leading: Icon(d.hasPermission ? Icons.usb : Icons.usb_off,
+                  size: 16,
+                  color: d.hasPermission ? Colors.green : Colors.orange),
+              title: Text(d.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13)),
+              subtitle: Text(d.serial ?? 'VID:${d.vendorId} PID:${d.productId}',
+                  style: const TextStyle(fontSize: 11)),
+              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                if (!d.hasPermission)
+                  IconButton(
+                      icon: const Icon(Icons.lock_open, size: 18),
+                      onPressed: () async {
+                        final ok =
+                            await UsbBridge.requestPermission(d.deviceId);
+                        if (ok) _refreshUsb();
+                      }),
+                IconButton(
+                    icon: const Icon(Icons.play_arrow, size: 18),
+                    onPressed: () {
+                      setState(() => _connectionType = ADBConnectionType.usb);
+                    })
+              ]),
+              onTap: () {
+                setState(() => _connectionType = ADBConnectionType.usb);
+              },
+            );
+          },
+        ),
+      ),
+    ]);
+  }
+
+  String _timeAgo(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inSeconds < 60) return '${diff.inSeconds}s ago';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    return '${diff.inHours}h ago';
+  }
+
   Card _currentDeviceCard() => Card(
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -491,7 +837,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
         ),
       );
 
-  Widget _savedDevicesWidget() {
+  Widget _savedDevicesWidget({required bool scrollableParent}) {
     if (_savedDevices.isEmpty) {
       return const Card(
           child: Padding(
@@ -504,37 +850,45 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
           const Text('Saved Devices',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _savedDevices.length,
-              itemBuilder: (c, i) {
-                final d = _savedDevices[i];
-                return ListTile(
-                  selected: _selectedSaved?.name == d.name,
-                  leading: const Icon(Icons.memory),
-                  title: Text(d.name, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(d.connectionType.displayName, maxLines: 1),
-                  onTap: () => _loadDevice(d),
-                  trailing: IconButton(
-                      icon: const Icon(Icons.delete, size: 18),
-                      onPressed: () async {
-                        _savedDevices.removeAt(i);
-                        final prefs = await SharedPreferences.getInstance();
-                        await prefs.setStringList(
-                            'adb_devices',
-                            _savedDevices
-                                .map((d) => jsonEncode(d.toJson()))
-                                .toList());
-                        setState(() {});
-                      }),
-                );
-              },
-            ),
-          )
+          if (scrollableParent)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 260),
+              child: _savedDevicesList(shrinkWrap: true),
+            )
+          else
+            Expanded(child: _savedDevicesList()),
         ]),
       ),
     );
   }
+
+  Widget _savedDevicesList({bool shrinkWrap = false}) => ListView.builder(
+        shrinkWrap: shrinkWrap,
+        physics: shrinkWrap ? const ClampingScrollPhysics() : null,
+        itemCount: _savedDevices.length,
+        itemBuilder: (c, i) {
+          final d = _savedDevices[i];
+          return ListTile(
+            selected: _selectedSaved?.name == d.name,
+            leading: const Icon(Icons.memory),
+            title: Text(d.name, overflow: TextOverflow.ellipsis),
+            subtitle: Text(d.connectionType.displayName, maxLines: 1),
+            onTap: () => _loadDevice(d),
+            trailing: IconButton(
+                icon: const Icon(Icons.delete, size: 18),
+                onPressed: () async {
+                  _savedDevices.removeAt(i);
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setStringList(
+                      'adb_devices',
+                      _savedDevices
+                          .map((d) => jsonEncode(d.toJson()))
+                          .toList());
+                  setState(() {});
+                }),
+          );
+        },
+      );
 
   Widget _qa(String label, IconData icon, VoidCallback onTap,
           {bool enabled = true}) =>

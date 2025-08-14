@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'adb_backend.dart';
+import 'adb/usb_bridge.dart';
 
 enum ADBConnectionState {
   disconnected,
@@ -574,6 +575,7 @@ class ADBClientManager {
   Stream<String> get logcatStream => _logcatController.stream;
   List<String> get logcatBuffer => List.unmodifiable(_logcatBuffer);
   ADBBackend? get backend => _externalBackend; // expose for WebADB server
+  String get connectedDeviceId => _connectedDeviceId;
   // Public wrapper so auxiliary helpers (e.g. WebAdbServer) can append to console
   void addOutput(String line, {bool deviceOutput = false}) =>
       _addOutput(line, deviceOutput: deviceOutput);
@@ -813,6 +815,27 @@ class ADBClientManager {
 
       _addOutput('❌ No ready USB devices found');
       _updateState(ADBConnectionState.failed);
+      // Attempt platform USB enumeration as last resort
+      final usbDevices = await UsbBridge.listDevices();
+      if (usbDevices.isNotEmpty) {
+        _addOutput('🔍 Platform USB devices: ${usbDevices.length}');
+        final withPerm = usbDevices.where((d) => d.hasPermission).toList();
+        if (withPerm.isEmpty) {
+          _addOutput('⚠️ No permission yet; requesting for first device');
+          final granted =
+              await UsbBridge.requestPermission(usbDevices.first.deviceId);
+          _addOutput(granted
+              ? '✅ Permission granted (re-run connect)'
+              : '❌ Permission denied');
+        } else {
+          _addOutput(
+              '✅ Using platform USB device ${withPerm.first.name} (serial=${withPerm.first.serial ?? 'unknown'})');
+          _connectedDeviceId = withPerm.first.serial ?? withPerm.first.name;
+          _connectionMode = ADBConnectionMode.server;
+          _updateState(ADBConnectionState.connected);
+          return true;
+        }
+      }
       return false;
     } catch (e) {
       _updateState(ADBConnectionState.failed);
