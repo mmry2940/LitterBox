@@ -71,7 +71,7 @@ class VNCClient {
   VNCConnectionState _state = VNCConnectionState.disconnected;
   VNCFrameBuffer? _frameBuffer;
   Timer? _frameRequestTimer;
-  bool _firstFullFrameReceived = false;
+  final bool _firstFullFrameReceived = false;
   Duration frameRequestIntervalFast = const Duration(milliseconds: 120);
   Duration frameRequestIntervalSlow = const Duration(milliseconds: 750);
 
@@ -1990,7 +1990,7 @@ class VNCClient {
       final frameBufferWidth = (serverInit[0] << 8) | serverInit[1];
       final frameBufferHeight = (serverInit[2] << 8) | serverInit[3];
 
-      _log('Frame buffer size: ${frameBufferWidth}x${frameBufferHeight}');
+      _log('Frame buffer size: ${frameBufferWidth}x$frameBufferHeight');
 
       // Create or update frame buffer
       final pixelFormat = VNCPixelFormat(
@@ -2105,7 +2105,7 @@ class VNCClient {
 
     _socket!.add(request);
     _log(
-        'Requested frame update (incremental: $incremental, ${width}x${height})');
+        'Requested frame update (incremental: $incremental, ${width}x$height)');
   }
 
   void _startListening() {
@@ -2236,7 +2236,7 @@ class VNCClient {
           _buffer[offset + 11];
 
       _log(
-          'Rectangle $i: ${width}x${height}, encoding=$encoding, offset=$offset');
+          'Rectangle $i: ${width}x$height, encoding=$encoding, offset=$offset');
 
       length += 12; // Rectangle header
       offset += 12;
@@ -2326,7 +2326,7 @@ class VNCClient {
             data[offset + 3];
         offset += 4;
 
-        _log('Rectangle $i: ${x},${y} ${width}x${height} encoding=$encoding');
+        _log('Rectangle $i: $x,$y ${width}x$height encoding=$encoding');
 
         if (encoding == 0) {
           // Raw encoding - pixel data follows
@@ -2334,9 +2334,9 @@ class VNCClient {
           final pixelDataSize = width * height * (bytesPerPixel ~/ 8);
 
           _log(
-              'Processing ${pixelDataSize} bytes of pixel data for ${width}x${height} rectangle');
+              'Processing $pixelDataSize bytes of pixel data for ${width}x$height rectangle');
           _log(
-              'Bytes per pixel from frameBuffer: ${bytesPerPixel ~/ 8}, bitsPerPixel: ${bytesPerPixel}');
+              'Bytes per pixel from frameBuffer: ${bytesPerPixel ~/ 8}, bitsPerPixel: $bytesPerPixel');
 
           if (offset + pixelDataSize > data.length) {
             _log(
@@ -2348,7 +2348,7 @@ class VNCClient {
           offset += pixelDataSize;
 
           _log(
-              'Processing ${pixels.length} bytes of pixel data for ${width}x${height} rectangle');
+              'Processing ${pixels.length} bytes of pixel data for ${width}x$height rectangle');
 
           // Update frame buffer with this rectangle
           _updateFrameBufferRectangle(x, y, width, height, pixels);
@@ -2397,7 +2397,7 @@ class VNCClient {
     if (_frameBuffer == null) return;
 
     _log(
-        'Updated rectangle: ${x},${y} ${width}x${height} (${pixels.length} bytes)');
+        'Updated rectangle: $x,$y ${width}x$height (${pixels.length} bytes)');
 
     // Create frame buffer if not exists
     if (_frameBuffer!.pixels == null) {
@@ -2418,7 +2418,7 @@ class VNCClient {
     final serverBytesPerPixel = serverBpp ~/ 8;
 
     _log(
-        'Server pixel format: ${serverBpp}bpp, ${serverBytesPerPixel} bytes per pixel');
+        'Server pixel format: ${serverBpp}bpp, $serverBytesPerPixel bytes per pixel');
     _log(
         'Expected pixel data: ${width * height * serverBytesPerPixel} bytes, got: ${pixels.length} bytes');
 
@@ -2518,7 +2518,7 @@ class VNCClient {
       message[9] = 0; // Padding
 
       _socket!.add(message);
-      _log('Requested desktop size change to ${width}x${height}');
+      _log('Requested desktop size change to ${width}x$height');
     } catch (e) {
       _log('Error sending desktop size request: $e');
     }
@@ -2564,7 +2564,7 @@ class VNCClient {
       message[15] = 0;
 
       _socket!.add(message);
-      _log('Sent SetDesktopSize request: ${width}x${height}');
+      _log('Sent SetDesktopSize request: ${width}x$height');
     } catch (e) {
       _log('Error sending SetDesktopSize: $e');
     }
@@ -3204,7 +3204,7 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(
-                              'Requested resolution change to ${width}x${height}'),
+                              'Requested resolution change to ${width}x$height'),
                           duration: const Duration(seconds: 2),
                         ),
                       );
@@ -3242,7 +3242,7 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(
-                              'Requested resolution change to ${width}x${height} (1:2)'),
+                              'Requested resolution change to ${width}x$height (1:2)'),
                           duration: const Duration(seconds: 2),
                         ),
                       );

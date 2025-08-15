@@ -109,12 +109,15 @@ class _VNCViewerScreenState extends State<VNCViewerScreen> {
                       final state =
                           snapshot.data ?? VNCConnectionState.connected;
                       Color statusColor = Colors.grey;
-                      if (state == VNCConnectionState.connected)
+                      if (state == VNCConnectionState.connected) {
                         statusColor = Colors.green;
-                      if (state == VNCConnectionState.connecting)
+                      }
+                      if (state == VNCConnectionState.connecting) {
                         statusColor = Colors.orange;
-                      if (state == VNCConnectionState.failed)
+                      }
+                      if (state == VNCConnectionState.failed) {
                         statusColor = Colors.red;
+                      }
 
                       return Text('Status: ${state.name}',
                           style: TextStyle(

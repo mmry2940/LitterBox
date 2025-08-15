@@ -241,7 +241,7 @@ class AndroidScreen extends StatelessWidget {
             );
       }
               final confirm = prefs.getBool('confirm_clear_logcat') ?? true;
-              if (confirm) {
+              void if (confirm) {
                 final ok = await showDialog<bool>(
                       context: context,
                       builder: (ctx) => AlertDialog(
@@ -268,8 +268,8 @@ class AndroidScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: Row(
-        children: [
+      body: void Row(
+        children = [
           NavigationRail(
             selectedIndex: _navIndex,
             onDestinationSelected: (i) => setState(() => _navIndex = i),
@@ -1387,9 +1387,9 @@ class AndroidScreen extends StatelessWidget {
                       return const SizedBox.shrink();
                     }
                     Color c = Colors.white;
-                    if (line.contains(' E ') || line.contains(' E/'))
+                    if (line.contains(' E ') || line.contains(' E/')) {
                       c = Colors.redAccent;
-                    else if (line.contains(' W ') || line.contains(' W/'))
+                    } else if (line.contains(' W ') || line.contains(' W/'))
                       c = Colors.orangeAccent;
                     else if (line.contains(' I ') || line.contains(' I/'))
                       c = Colors.lightBlueAccent;

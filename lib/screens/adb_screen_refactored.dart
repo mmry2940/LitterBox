@@ -201,7 +201,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       child: LayoutBuilder(
         builder: (context, constraints) {
           final isWideScreen = constraints.maxWidth >= 800;
-          
+
           return Scaffold(
             appBar: AppBar(
               title: const Text('ADB Manager'),
@@ -211,9 +211,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                     switch (v) {
                       case 'output_mode':
                         setState(() {
-                          _adb.setOutputMode(_adb.outputMode == ADBOutputMode.raw
-                              ? ADBOutputMode.verbose
-                              : ADBOutputMode.raw);
+                          _adb.setOutputMode(
+                              _adb.outputMode == ADBOutputMode.raw
+                                  ? ADBOutputMode.verbose
+                                  : ADBOutputMode.raw);
                         });
                         break;
                       case 'clear_output':
@@ -254,37 +255,56 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                   // Desktop/Tablet: NavigationRail + Device Panel
                   NavigationRail(
                     selectedIndex: _selectedIndex,
-                    onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+                    onDestinationSelected: (index) =>
+                        setState(() => _selectedIndex = index),
                     labelType: NavigationRailLabelType.selected,
                     destinations: const [
-                      NavigationRailDestination(icon: Icon(Icons.dashboard), label: Text('Dashboard')),
-                      NavigationRailDestination(icon: Icon(Icons.terminal), label: Text('Console')),
-                      NavigationRailDestination(icon: Icon(Icons.code), label: Text('Terminal')),
-                      NavigationRailDestination(icon: Icon(Icons.list_alt), label: Text('Logcat')),
-                      NavigationRailDestination(icon: Icon(Icons.play_arrow), label: Text('Commands')),
-                      NavigationRailDestination(icon: Icon(Icons.folder), label: Text('Files')),
-                      NavigationRailDestination(icon: Icon(Icons.public), label: Text('WebADB')),
-                      NavigationRailDestination(icon: Icon(Icons.info), label: Text('Info')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.dashboard),
+                          label: Text('Dashboard')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.terminal), label: Text('Console')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.code), label: Text('Terminal')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.list_alt), label: Text('Logcat')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.play_arrow),
+                          label: Text('Commands')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.folder), label: Text('Files')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.public), label: Text('WebADB')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.info), label: Text('Info')),
                     ],
                   ),
-                  Container(width: 250, child: _devicePanel()),
+                  SizedBox(width: 250, child: _devicePanel()),
                 ],
                 // Main content area
                 Expanded(child: _buildSelectedContent()),
               ],
             ),
-            bottomNavigationBar: isWideScreen ? null : BottomNavigationBar(
-              currentIndex: _selectedIndex.clamp(0, 4), // Limit for mobile
-              onTap: (index) => setState(() => _selectedIndex = index),
-              type: BottomNavigationBarType.fixed,
-              items: const [
-                BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Dashboard'),
-                BottomNavigationBarItem(icon: Icon(Icons.terminal), label: 'Console'),
-                BottomNavigationBarItem(icon: Icon(Icons.code), label: 'Terminal'),
-                BottomNavigationBarItem(icon: Icon(Icons.list_alt), label: 'Logcat'),
-                BottomNavigationBarItem(icon: Icon(Icons.more_horiz), label: 'More'),
-              ],
-            ),
+            bottomNavigationBar: isWideScreen
+                ? null
+                : BottomNavigationBar(
+                    currentIndex:
+                        _selectedIndex.clamp(0, 4), // Limit for mobile
+                    onTap: (index) => setState(() => _selectedIndex = index),
+                    type: BottomNavigationBarType.fixed,
+                    items: const [
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.dashboard), label: 'Dashboard'),
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.terminal), label: 'Console'),
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.code), label: 'Terminal'),
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.list_alt), label: 'Logcat'),
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.more_horiz), label: 'More'),
+                    ],
+                  ),
           );
         },
       ),
@@ -293,15 +313,24 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
 
   Widget _buildSelectedContent() {
     switch (_selectedIndex) {
-      case 0: return _dashboardTab();
-      case 1: return _consoleTab();
-      case 2: return _terminalTab();
-      case 3: return _logcatTab();
-      case 4: return _commandsTab();
-      case 5: return _filesTab();
-      case 6: return _webadbTab();
-      case 7: return _infoTab();
-      default: return _dashboardTab();
+      case 0:
+        return _dashboardTab();
+      case 1:
+        return _consoleTab();
+      case 2:
+        return _terminalTab();
+      case 3:
+        return _logcatTab();
+      case 4:
+        return _commandsTab();
+      case 5:
+        return _filesTab();
+      case 6:
+        return _webadbTab();
+      case 7:
+        return _infoTab();
+      default:
+        return _dashboardTab();
     }
   }
 
@@ -322,13 +351,19 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                 // Connection Status
                 ListTile(
                   leading: Icon(
-                    _adb.currentState == ADBConnectionState.connected ? Icons.check_circle : Icons.error,
-                    color: _adb.currentState == ADBConnectionState.connected ? Colors.green : Colors.red,
+                    _adb.currentState == ADBConnectionState.connected
+                        ? Icons.check_circle
+                        : Icons.error,
+                    color: _adb.currentState == ADBConnectionState.connected
+                        ? Colors.green
+                        : Colors.red,
                   ),
-                  title: Text(_adb.currentState == ADBConnectionState.connected ? 'Connected' : 'Disconnected'),
-                  subtitle: _adb.currentState == ADBConnectionState.connected 
-                    ? Text(_adb.connectedDeviceId) 
-                    : null,
+                  title: Text(_adb.currentState == ADBConnectionState.connected
+                      ? 'Connected'
+                      : 'Disconnected'),
+                  subtitle: _adb.currentState == ADBConnectionState.connected
+                      ? Text(_adb.connectedDeviceId)
+                      : null,
                 ),
                 // Quick Actions
                 if (_adb.currentState == ADBConnectionState.connected) ...[
@@ -341,7 +376,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                     leading: const Icon(Icons.screenshot),
                     title: const Text('Screenshot'),
                     onTap: () async {
-                      await _adb.executeCommand('shell screencap /sdcard/screenshot.png');
+                      await _adb.executeCommand(
+                          'shell screencap /sdcard/screenshot.png');
                       await _adb.executeCommand('pull /sdcard/screenshot.png');
                     },
                   ),
@@ -721,10 +757,11 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
             .showSnackBar(SnackBar(content: Text('mDNS error: $e')));
       }
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _mdnsScanning = false;
         });
+      }
     }
   }
 
@@ -900,7 +937,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                 style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Wrap(spacing: 8, runSpacing: 8, children: [
-              _qa('Console', Icons.terminal, () => setState(() => _selectedIndex = 1)),
+              _qa('Console', Icons.terminal,
+                  () => setState(() => _selectedIndex = 1)),
               _qa('Start Logcat', Icons.play_arrow, () async {
                 if (!_adb.logcatActive) {
                   await _adb.startLogcat();
@@ -911,9 +949,12 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                 await _adb.stopLogcat();
                 setState(() {});
               }, enabled: _adb.logcatActive),
-              _qa('Files', Icons.folder_copy, () => setState(() => _selectedIndex = 5)),
-              _qa('WebADB', Icons.public, () => setState(() => _selectedIndex = 6)),
-              _qa('Info', Icons.info_outline, () => setState(() => _selectedIndex = 7)),
+              _qa('Files', Icons.folder_copy,
+                  () => setState(() => _selectedIndex = 5)),
+              _qa('WebADB', Icons.public,
+                  () => setState(() => _selectedIndex = 6)),
+              _qa('Info', Icons.info_outline,
+                  () => setState(() => _selectedIndex = 7)),
             ])
           ]),
         ),
@@ -1115,8 +1156,9 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
             stream: _adb.logcatStream,
             builder: (c, s) {
               final buffer = _adb.logcatBuffer;
-              if (_logcatLinesShown != buffer.length)
+              if (_logcatLinesShown != buffer.length) {
                 _logcatLinesShown = buffer.length;
+              }
               return ListView.builder(
                 padding: const EdgeInsets.all(4),
                 itemCount: buffer.length,
@@ -1125,12 +1167,13 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                   if (_activeLogcatFilter.isNotEmpty &&
                       !line
                           .toLowerCase()
-                          .contains(_activeLogcatFilter.toLowerCase()))
+                          .contains(_activeLogcatFilter.toLowerCase())) {
                     return const SizedBox.shrink();
+                  }
                   Color color = Colors.white;
-                  if (line.contains(' E '))
+                  if (line.contains(' E ')) {
                     color = Colors.redAccent;
-                  else if (line.contains(' W '))
+                  } else if (line.contains(' W '))
                     color = Colors.orangeAccent;
                   else if (line.contains(' I ')) color = Colors.lightBlueAccent;
                   return Text(line,
@@ -1258,9 +1301,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                           _recentApk.insert(0, _apkPath.text.trim());
                           _persistRecents();
                         }
-                        if (mounted)
+                        if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                               content: Text(ok ? 'Installed' : 'Failed')));
+                        }
                       }
                     : null,
                 child: const Text('Install'))
@@ -1299,9 +1343,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                           _recentRemote.insert(0, _pushRemote.text.trim());
                         }
                         _persistRecents();
-                        if (mounted)
+                        if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                               content: Text(ok ? 'Pushed' : 'Failed')));
+                        }
                       }
                     : null,
                 child: const Text('Push'))
@@ -1334,9 +1379,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                     ? () async {
                         final ok = await _adb.pullFile(
                             _pullRemote.text.trim(), _pullLocal.text.trim());
-                        if (mounted)
+                        if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                               content: Text(ok ? 'Pulled' : 'Failed')));
+                        }
                       }
                     : null,
                 child: const Text('Pull'))
@@ -1375,9 +1421,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                           _recentForwards.insert(0, fr);
                           _persistRecents();
                         }
-                        if (mounted)
+                        if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                               content: Text(ok ? 'Forward Added' : 'Failed')));
+                        }
                       }
                     : null,
                 child: const Text('Add')),
@@ -1387,9 +1434,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                     ? () async {
                         final lp = int.tryParse(_forwardLocalPort.text) ?? 0;
                         final ok = await _adb.removeForward(lp);
-                        if (mounted)
+                        if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                               content: Text(ok ? 'Removed' : 'Failed')));
+                        }
                       }
                     : null,
                 child: const Text('Remove'))

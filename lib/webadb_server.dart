@@ -43,7 +43,8 @@ class WebAdbServer {
     // quick capability probe
     try {
       // Skip the reusePort option which causes issues on Android
-      final test = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0, shared: false);
+      final test = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0,
+          shared: false);
       await test.close();
     } catch (e) {
       lastError = 'Loopback bind failed: $e';
@@ -57,7 +58,8 @@ class WebAdbServer {
           .addOutput('➡️  WebADB bind attempt ${attempt + 1} on $attemptPort');
       print('WEBADB: attempt ${attempt + 1} binding $attemptPort');
       try {
-        _http = await HttpServer.bind(InternetAddress.anyIPv4, attemptPort, shared: false);
+        _http = await HttpServer.bind(InternetAddress.anyIPv4, attemptPort,
+            shared: false);
         port = _http!.port; // update to actual bound port
         if (attempt > 0 || port != lastRequestedPort) fallbackUsed = true;
         _wireOutputBroadcast();
@@ -130,9 +132,9 @@ class WebAdbServer {
     }
     // If we reach here all attempts failed without triggering return
     if (_starting) _starting = false;
-    if (lastError == null) lastError = 'Unknown bind failure after attempts';
-    client.addOutput('❌ WebADB final failure: ${lastError}');
-    print('WEBADB: final failure ${lastError}');
+    lastError ??= 'Unknown bind failure after attempts';
+    client.addOutput('❌ WebADB final failure: $lastError');
+    print('WEBADB: final failure $lastError');
     return false;
   }
 
@@ -394,7 +396,7 @@ class WebAdbServer {
 <script>
 let ws;
 function authHeaders(){ const t=document.getElementById('token').value.trim(); return t?{'Authorization':'Bearer '+t}:{}}
-  function base(){const u=new URL(window.location.href); return u.protocol+'//'+u.hostname+':${port}'}
+  function base(){const u=new URL(window.location.href); return u.protocol+'//'+u.hostname+':$port'}
 async function loadDevices(){
   const r=await fetch(base()+'/devices',{headers:authHeaders()});
   const j=await r.json();
@@ -409,7 +411,7 @@ async function getProps(){
 }
 function openWs(){
   const t=document.getElementById('token').value.trim();
-  const url = 'ws://'+location.hostname+':${port}/shell'+(t?'?token='+encodeURIComponent(t):'');
+  const url = 'ws://'+location.hostname+':$port/shell'+(t?'?token='+encodeURIComponent(t):'');
   ws=new WebSocket(url);
   ws.onmessage=e=>{ const data=JSON.parse(e.data); const log=document.getElementById('log'); log.textContent += JSON.stringify(data)+"\n"; log.scrollTop=log.scrollHeight; };
   ws.onopen=()=>{ const log=document.getElementById('log'); log.textContent+='[ws opened]\n'; };

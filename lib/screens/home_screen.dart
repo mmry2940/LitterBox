@@ -564,7 +564,7 @@ class _ScanDialogState extends State<_ScanDialog> {
     if (_subnet == null) return;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final key = 'scan_cache_${_subnet}';
+      final key = 'scan_cache_$_subnet';
       final jsonStr = prefs.getString(key);
       if (jsonStr == null) return;
       final data = json.decode(jsonStr) as Map<String, dynamic>;
@@ -586,7 +586,7 @@ class _ScanDialogState extends State<_ScanDialog> {
     if (_subnet == null || _foundHosts.isEmpty) return;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final key = 'scan_cache_${_subnet}';
+      final key = 'scan_cache_$_subnet';
       final data = {
         'timestamp': DateTime.now().toIso8601String(),
         'ips': _foundHosts.map((h) => h.address).toList(),
@@ -641,23 +641,26 @@ class _ScanDialogState extends State<_ScanDialog> {
         }
       }, onDone: () {
         _cacheResults();
-        if (mounted)
+        if (mounted) {
           setState(() {
             _scanning = false;
           });
+        }
       }, onError: (e) {
-        if (mounted)
+        if (mounted) {
           setState(() {
             _scanning = false;
             _errorMessage = 'Scan error: $e';
           });
+        }
       });
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _scanning = false;
           _errorMessage = 'Failed to start scan: $e';
         });
+      }
     }
   }
 

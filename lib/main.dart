@@ -152,9 +152,9 @@ class SplashScreen extends StatelessWidget {
       try {
         final prefs = await SharedPreferences.getInstance();
         final startup = prefs.getString('startup_page');
-        if (startup == 'android')
+        if (startup == 'android') {
           route = '/android';
-        else if (startup == 'settings') route = '/settings';
+        } else if (startup == 'settings') route = '/settings';
       } catch (_) {}
       if (!context.mounted) return;
       // Use named routes when possible else direct widget

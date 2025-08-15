@@ -23,8 +23,8 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
   String? _error;
   bool _loading = false;
   String _search = '';
-  String _sortColumn = 'Name';
-  bool _sortAsc = true;
+  final String _sortColumn = 'Name';
+  final bool _sortAsc = true;
   late final TextEditingController _searchController;
   final Set<int> _selectedRows = {};
 

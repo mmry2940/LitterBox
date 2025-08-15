@@ -528,6 +528,7 @@ class ExternalAdbBackend implements ADBBackend {
   }
 
   // -------- Newly added advanced operations --------
+  @override
   Future<Map<String, String>> getProps(String serial) async {
     final out = await shell(serial, 'getprop');
     final map = <String, String>{};
@@ -541,6 +542,7 @@ class ExternalAdbBackend implements ADBBackend {
     return map;
   }
 
+  @override
   Future<bool> uninstallApk(String serial, String packageName) async {
     final res = await _run(['-s', serial, 'uninstall', packageName]);
     if (res.exitCode != 0) return false;
@@ -548,6 +550,7 @@ class ExternalAdbBackend implements ADBBackend {
     return out.contains('success');
   }
 
+  @override
   Future<bool> reboot(String serial, {String? mode}) async {
     final args = ['-s', serial, 'reboot'];
     if (mode != null && mode.isNotEmpty) args.add(mode);
@@ -555,6 +558,7 @@ class ExternalAdbBackend implements ADBBackend {
     return res.exitCode == 0;
   }
 
+  @override
   Future<List<String>> listForwards(String serial) async {
     final res = await _run(['-s', serial, 'forward', '--list']);
     if (res.exitCode != 0) return [];
@@ -566,6 +570,7 @@ class ExternalAdbBackend implements ADBBackend {
     return lines.where((l) => l.startsWith(serial)).toList();
   }
 
+  @override
   Future<bool> pair(String host, int pairingPort, String code) async {
     final target = '$host:$pairingPort';
     final res = await _run(['pair', target, code]);
@@ -574,6 +579,7 @@ class ExternalAdbBackend implements ADBBackend {
     return out.contains('success') || out.contains('paired');
   }
 
+  @override
   Future<Uint8List?> screencap(String serial) async {
     try {
       final result = await Process.run(
@@ -590,6 +596,7 @@ class ExternalAdbBackend implements ADBBackend {
     }
   }
 
+  @override
   Future<String> execOut(String serial, List<String> args) async {
     final res = await _run(['-s', serial, 'exec-out', ...args]);
     if (res.exitCode != 0) return (res.stderr as String).trim();

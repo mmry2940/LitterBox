@@ -339,7 +339,7 @@ class ADBProtocolClient {
   static const int A_WRTE = 0x45545257;
 
   Socket? _socket;
-  int _localId = 1;
+  final int _localId = 1;
   bool _authenticated = false;
 
   Future<bool> connect(String host, int port) async {
@@ -347,7 +347,7 @@ class ADBProtocolClient {
       print('Attempting ADB protocol connection to $host:$port');
       _socket = await Socket.connect(host, port,
           timeout: const Duration(seconds: 10));
-          
+
       // Set socket options for better reliability
       try {
         _socket?.setOption(SocketOption.tcpNoDelay, true);
@@ -355,17 +355,17 @@ class ADBProtocolClient {
         print('Warning: Could not set socket options: $e');
         // Continue anyway
       }
-      
+
       final handshakeSuccess = await _performHandshake()
           .timeout(const Duration(seconds: 5), onTimeout: () {
         print('ADB handshake timed out');
         return false;
       });
-      
+
       if (!handshakeSuccess) {
         await close();
       }
-      
+
       return handshakeSuccess;
     } catch (e) {
       print('ADB Protocol connection failed: $e');
@@ -398,7 +398,7 @@ class ADBProtocolClient {
 
   Future<String?> executeShellCommand(String command) async {
     if (!_authenticated || _socket == null) return null;
-    
+
     try {
       // Open shell service
       final service = 'shell:$command';
@@ -410,43 +410,42 @@ class ADBProtocolClient {
       }
 
       // Wait for OKAY response with timeout
-      final openResponse = await _readMessage().timeout(
-        const Duration(seconds: 3),
-        onTimeout: () {
-          print('Timeout waiting for shell OKAY response');
-          return null;
-        }
-      );
-      
+      final openResponse = await _readMessage()
+          .timeout(const Duration(seconds: 3), onTimeout: () {
+        print('Timeout waiting for shell OKAY response');
+        return null;
+      });
+
       if (openResponse == null || openResponse['command'] != A_OKAY) {
-        print('Failed to get OKAY response for shell: ${openResponse?['command']}');
+        print(
+            'Failed to get OKAY response for shell: ${openResponse?['command']}');
         return null;
       }
 
       // Read command output with timeout protection
       final output = StringBuffer();
       final completer = Completer<String?>();
-      
+
       // Overall timeout for the entire read operation
       Timer(const Duration(seconds: 8), () {
         if (!completer.isCompleted) {
           completer.complete(output.toString());
         }
       });
-      
+
       // Start message reading loop
       _readShellOutput(output, completer);
-      
+
       return await completer.future;
     } catch (e) {
       print('Shell command execution failed: $e');
       return null;
     }
   }
-  
+
   void _readShellOutput(StringBuffer output, Completer<String?> completer) {
     if (completer.isCompleted) return;
-    
+
     _readMessage().timeout(const Duration(seconds: 2), onTimeout: () {
       // On timeout, return what we have
       if (!completer.isCompleted) {
@@ -538,7 +537,7 @@ class ADBProtocolClient {
     final completer = Completer<List<int>>();
     final buffer = <int>[];
     late StreamSubscription<List<int>> subscription;
-    
+
     try {
       // Safely subscribe to socket only once
       subscription = _socket!.listen(
@@ -569,7 +568,7 @@ class ADBProtocolClient {
         },
         cancelOnError: true,
       );
-      
+
       // Set timeout to avoid hanging forever
       Timer(const Duration(seconds: 5), () {
         if (!completer.isCompleted) {
@@ -582,7 +581,7 @@ class ADBProtocolClient {
           }
         }
       });
-      
+
       return await completer.future;
     } catch (e) {
       print('Error reading socket bytes: $e');
@@ -638,7 +637,7 @@ class ADBClientManager {
   final StreamController<String> _logcatController =
       StreamController<String>.broadcast();
   bool _logcatActive = false;
-  List<String> _logcatBuffer = [];
+  final List<String> _logcatBuffer = [];
 
   final List<String> _commandHistory = [];
   final List<String> _outputBuffer = [];
@@ -1220,7 +1219,8 @@ class ADBClientManager {
                 response = utf8.decode(responseBytes);
               } catch (_) {
                 // Handle invalid UTF-8
-                response = String.fromCharCodes(responseBytes.where((b) => b > 0 && b < 128));
+                response = String.fromCharCodes(
+                    responseBytes.where((b) => b > 0 && b < 128));
               }
               cleanupResources();
               if (!completer.isCompleted) {
@@ -1245,7 +1245,8 @@ class ADBClientManager {
               try {
                 response = utf8.decode(buffer);
               } catch (_) {
-                response = String.fromCharCodes(buffer.where((b) => b > 0 && b < 128));
+                response =
+                    String.fromCharCodes(buffer.where((b) => b > 0 && b < 128));
               }
             }
             cleanupResources();
@@ -1263,7 +1264,8 @@ class ADBClientManager {
             try {
               response = utf8.decode(buffer);
             } catch (_) {
-              response = String.fromCharCodes(buffer.where((b) => b > 0 && b < 128));
+              response =
+                  String.fromCharCodes(buffer.where((b) => b > 0 && b < 128));
             }
           }
           cleanupResources();
