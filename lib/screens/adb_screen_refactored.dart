@@ -23,7 +23,7 @@ class AdbRefactoredScreen extends StatefulWidget {
 class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     with TickerProviderStateMixin {
   late final ADBClientManager _adb;
-  late final TabController _tabs;
+  int _selectedIndex = 0; // Replace TabController with index-based navigation
   late final WebAdbController _webAdb;
   // Terminal (xterm) integration
   Terminal? _terminal;
@@ -89,7 +89,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     _adb = ADBClientManager();
     _adb.enableExternalAdbBackend();
     _webAdb = WebAdbController(_adb);
-    _tabs = TabController(length: 8, vsync: this);
     _adb.output.listen((line) {
       if (_localBuffer.length > 1500) _localBuffer.removeRange(0, 800);
       _localBuffer.add(line);
@@ -174,7 +173,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
 
   @override
   void dispose() {
-    _tabs.dispose();
     _webAdb.dispose();
     _adb.dispose();
     _cmd.dispose();
@@ -200,79 +198,163 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [ChangeNotifierProvider.value(value: _webAdb)],
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('ADB Manager'),
-          bottom: TabBar(
-            controller: _tabs,
-            isScrollable: true,
-            tabs: const [
-              Tab(text: 'Dashboard'),
-              Tab(text: 'Console'),
-              Tab(text: 'Terminal'),
-              Tab(text: 'Logcat'),
-              Tab(text: 'Commands'),
-              Tab(text: 'Files'),
-              Tab(text: 'WebADB'),
-              Tab(text: 'Info'),
-            ],
-          ),
-          actions: [
-            PopupMenuButton<String>(
-              onSelected: (v) async {
-                switch (v) {
-                  case 'output_mode':
-                    setState(() {
-                      _adb.setOutputMode(_adb.outputMode == ADBOutputMode.raw
-                          ? ADBOutputMode.verbose
-                          : ADBOutputMode.raw);
-                    });
-                    break;
-                  case 'clear_output':
-                    _adb.clearOutput();
-                    break;
-                  case 'clear_history':
-                    _adb.clearHistory();
-                    break;
-                  case 'restart_webadb':
-                    await _webAdb.stop();
-                    await _webAdb.start();
-                }
-              },
-              itemBuilder: (c) => [
-                PopupMenuItem(
-                  value: 'output_mode',
-                  child: Text('Mode: ${_adb.outputMode.name}'),
-                ),
-                const PopupMenuItem(
-                  value: 'clear_output',
-                  child: Text('Clear Output'),
-                ),
-                const PopupMenuItem(
-                  value: 'clear_history',
-                  child: Text('Clear History'),
-                ),
-                const PopupMenuItem(
-                  value: 'restart_webadb',
-                  child: Text('Restart WebADB'),
-                ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWideScreen = constraints.maxWidth >= 800;
+          
+          return Scaffold(
+            appBar: AppBar(
+              title: const Text('ADB Manager'),
+              actions: [
+                PopupMenuButton<String>(
+                  onSelected: (v) async {
+                    switch (v) {
+                      case 'output_mode':
+                        setState(() {
+                          _adb.setOutputMode(_adb.outputMode == ADBOutputMode.raw
+                              ? ADBOutputMode.verbose
+                              : ADBOutputMode.raw);
+                        });
+                        break;
+                      case 'clear_output':
+                        _adb.clearOutput();
+                        break;
+                      case 'clear_history':
+                        _adb.clearHistory();
+                        break;
+                      case 'restart_webadb':
+                        await _webAdb.stop();
+                        await _webAdb.start();
+                    }
+                  },
+                  itemBuilder: (c) => [
+                    PopupMenuItem(
+                      value: 'output_mode',
+                      child: Text('Mode: ${_adb.outputMode.name}'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'clear_output',
+                      child: Text('Clear Output'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'clear_history',
+                      child: Text('Clear History'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'restart_webadb',
+                      child: Text('Restart WebADB'),
+                    ),
+                  ],
+                )
               ],
-            )
-          ],
-        ),
-        body: TabBarView(
-          controller: _tabs,
-          children: [
-            _dashboardTab(),
-            _consoleTab(),
-            _terminalTab(),
-            _logcatTab(),
-            _commandsTab(),
-            _filesTab(),
-            _webadbTab(),
-            _infoTab(),
-          ],
-        ),
+            ),
+            body: Row(
+              children: [
+                if (isWideScreen) ...[
+                  // Desktop/Tablet: NavigationRail + Device Panel
+                  NavigationRail(
+                    selectedIndex: _selectedIndex,
+                    onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+                    labelType: NavigationRailLabelType.selected,
+                    destinations: const [
+                      NavigationRailDestination(icon: Icon(Icons.dashboard), label: Text('Dashboard')),
+                      NavigationRailDestination(icon: Icon(Icons.terminal), label: Text('Console')),
+                      NavigationRailDestination(icon: Icon(Icons.code), label: Text('Terminal')),
+                      NavigationRailDestination(icon: Icon(Icons.list_alt), label: Text('Logcat')),
+                      NavigationRailDestination(icon: Icon(Icons.play_arrow), label: Text('Commands')),
+                      NavigationRailDestination(icon: Icon(Icons.folder), label: Text('Files')),
+                      NavigationRailDestination(icon: Icon(Icons.public), label: Text('WebADB')),
+                      NavigationRailDestination(icon: Icon(Icons.info), label: Text('Info')),
+                    ],
+                  ),
+                  Container(width: 250, child: _devicePanel()),
+                ],
+                // Main content area
+                Expanded(child: _buildSelectedContent()),
+              ],
+            ),
+            bottomNavigationBar: isWideScreen ? null : BottomNavigationBar(
+              currentIndex: _selectedIndex.clamp(0, 4), // Limit for mobile
+              onTap: (index) => setState(() => _selectedIndex = index),
+              type: BottomNavigationBarType.fixed,
+              items: const [
+                BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Dashboard'),
+                BottomNavigationBarItem(icon: Icon(Icons.terminal), label: 'Console'),
+                BottomNavigationBarItem(icon: Icon(Icons.code), label: 'Terminal'),
+                BottomNavigationBarItem(icon: Icon(Icons.list_alt), label: 'Logcat'),
+                BottomNavigationBarItem(icon: Icon(Icons.more_horiz), label: 'More'),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSelectedContent() {
+    switch (_selectedIndex) {
+      case 0: return _dashboardTab();
+      case 1: return _consoleTab();
+      case 2: return _terminalTab();
+      case 3: return _logcatTab();
+      case 4: return _commandsTab();
+      case 5: return _filesTab();
+      case 6: return _webadbTab();
+      case 7: return _infoTab();
+      default: return _dashboardTab();
+    }
+  }
+
+  Widget _devicePanel() {
+    return Card(
+      margin: const EdgeInsets.all(8),
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.phone_android),
+            title: const Text('Device Panel'),
+            subtitle: Text(_adb.currentState.name),
+          ),
+          const Divider(),
+          Expanded(
+            child: Column(
+              children: [
+                // Connection Status
+                ListTile(
+                  leading: Icon(
+                    _adb.currentState == ADBConnectionState.connected ? Icons.check_circle : Icons.error,
+                    color: _adb.currentState == ADBConnectionState.connected ? Colors.green : Colors.red,
+                  ),
+                  title: Text(_adb.currentState == ADBConnectionState.connected ? 'Connected' : 'Disconnected'),
+                  subtitle: _adb.currentState == ADBConnectionState.connected 
+                    ? Text(_adb.connectedDeviceId) 
+                    : null,
+                ),
+                // Quick Actions
+                if (_adb.currentState == ADBConnectionState.connected) ...[
+                  const Divider(),
+                  const ListTile(
+                    leading: Icon(Icons.flash_on),
+                    title: Text('Quick Actions'),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.screenshot),
+                    title: const Text('Screenshot'),
+                    onTap: () async {
+                      await _adb.executeCommand('shell screencap /sdcard/screenshot.png');
+                      await _adb.executeCommand('pull /sdcard/screenshot.png');
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.info),
+                    title: const Text('Device Info'),
+                    onTap: () => setState(() => _selectedIndex = 7),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -818,20 +900,20 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                 style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Wrap(spacing: 8, runSpacing: 8, children: [
-              _qa('Console', Icons.terminal, () => _tabs.index = 1),
+              _qa('Console', Icons.terminal, () => setState(() => _selectedIndex = 1)),
               _qa('Start Logcat', Icons.play_arrow, () async {
                 if (!_adb.logcatActive) {
                   await _adb.startLogcat();
-                  setState(() => _tabs.index = 2);
+                  setState(() => _selectedIndex = 3);
                 }
               }, enabled: !_adb.logcatActive),
               _qa('Stop Logcat', Icons.stop, () async {
                 await _adb.stopLogcat();
                 setState(() {});
               }, enabled: _adb.logcatActive),
-              _qa('Files', Icons.folder_copy, () => _tabs.index = 4),
-              _qa('WebADB', Icons.public, () => _tabs.index = 5),
-              _qa('Info', Icons.info_outline, () => _tabs.index = 6),
+              _qa('Files', Icons.folder_copy, () => setState(() => _selectedIndex = 5)),
+              _qa('WebADB', Icons.public, () => setState(() => _selectedIndex = 6)),
+              _qa('Info', Icons.info_outline, () => setState(() => _selectedIndex = 7)),
             ])
           ]),
         ),
@@ -1146,7 +1228,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                               child: const Text('Run')),
                           onTap: () {
                             _cmd.text = cmd;
-                            _tabs.index = 1;
+                            setState(() => _selectedIndex = 1);
                           },
                         ))
                     .toList(),

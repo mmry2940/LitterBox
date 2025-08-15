@@ -111,8 +111,8 @@ class ADBServer {
       _updateState(ADBServerState.stopping);
       _log('Stopping ADB Server...');
 
-      // Close all client connections
-      for (final client in _clientConnections) {
+      // Close all client connections with proper error handling
+      for (final client in List<Socket>.from(_clientConnections)) {
         try {
           await client.close();
         } catch (e) {
@@ -125,9 +125,14 @@ class ADBServer {
       _deviceDiscoveryTimer?.cancel();
       _deviceDiscoveryTimer = null;
 
-      // Close server socket
-      await _serverSocket?.close();
-      _serverSocket = null;
+      // Close server socket with proper error handling
+      try {
+        await _serverSocket?.close();
+      } catch (e) {
+        _log('Error closing server socket: $e');
+      } finally {
+        _serverSocket = null;
+      }
 
       // Clear devices
       _devices.clear();
@@ -339,11 +344,32 @@ class ADBProtocolClient {
 
   Future<bool> connect(String host, int port) async {
     try {
+      print('Attempting ADB protocol connection to $host:$port');
       _socket = await Socket.connect(host, port,
           timeout: const Duration(seconds: 10));
-      return await _performHandshake();
+          
+      // Set socket options for better reliability
+      try {
+        _socket?.setOption(SocketOption.tcpNoDelay, true);
+      } catch (e) {
+        print('Warning: Could not set socket options: $e');
+        // Continue anyway
+      }
+      
+      final handshakeSuccess = await _performHandshake()
+          .timeout(const Duration(seconds: 5), onTimeout: () {
+        print('ADB handshake timed out');
+        return false;
+      });
+      
+      if (!handshakeSuccess) {
+        await close();
+      }
+      
+      return handshakeSuccess;
     } catch (e) {
       print('ADB Protocol connection failed: $e');
+      await close(); // Ensure socket is closed on error
       return false;
     }
   }
@@ -372,36 +398,87 @@ class ADBProtocolClient {
 
   Future<String?> executeShellCommand(String command) async {
     if (!_authenticated || _socket == null) return null;
-
+    
     try {
       // Open shell service
       final service = 'shell:$command';
-      await _sendMessage(A_OPEN, _localId, service.length, service);
-
-      // Wait for OKAY response
-      final openResponse = await _readMessage();
-      if (openResponse == null || openResponse['command'] != A_OKAY) {
+      try {
+        await _sendMessage(A_OPEN, _localId, service.length, service);
+      } catch (e) {
+        print('Error sending shell command open message: $e');
         return null;
       }
 
-      // Read command output
-      final output = StringBuffer();
-      while (true) {
-        final message = await _readMessage();
-        if (message == null) break;
-
-        if (message['command'] == A_WRTE) {
-          output.write(message['data']);
-        } else if (message['command'] == A_CLSE) {
-          break;
+      // Wait for OKAY response with timeout
+      final openResponse = await _readMessage().timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {
+          print('Timeout waiting for shell OKAY response');
+          return null;
         }
+      );
+      
+      if (openResponse == null || openResponse['command'] != A_OKAY) {
+        print('Failed to get OKAY response for shell: ${openResponse?['command']}');
+        return null;
       }
 
-      return output.toString();
+      // Read command output with timeout protection
+      final output = StringBuffer();
+      final completer = Completer<String?>();
+      
+      // Overall timeout for the entire read operation
+      Timer(const Duration(seconds: 8), () {
+        if (!completer.isCompleted) {
+          completer.complete(output.toString());
+        }
+      });
+      
+      // Start message reading loop
+      _readShellOutput(output, completer);
+      
+      return await completer.future;
     } catch (e) {
-      print('Command execution failed: $e');
+      print('Shell command execution failed: $e');
       return null;
     }
+  }
+  
+  void _readShellOutput(StringBuffer output, Completer<String?> completer) {
+    if (completer.isCompleted) return;
+    
+    _readMessage().timeout(const Duration(seconds: 2), onTimeout: () {
+      // On timeout, return what we have
+      if (!completer.isCompleted) {
+        completer.complete(output.toString());
+      }
+      return null;
+    }).then((message) {
+      if (message == null) {
+        if (!completer.isCompleted) {
+          completer.complete(output.toString());
+        }
+        return;
+      }
+
+      if (message['command'] == A_WRTE) {
+        output.write(message['data']);
+        // Continue reading
+        _readShellOutput(output, completer);
+      } else if (message['command'] == A_CLSE) {
+        if (!completer.isCompleted) {
+          completer.complete(output.toString());
+        }
+      } else {
+        // Continue reading for other command types
+        _readShellOutput(output, completer);
+      }
+    }).catchError((e) {
+      print('Error reading shell output: $e');
+      if (!completer.isCompleted) {
+        completer.complete(output.toString());
+      }
+    });
   }
 
   Future<void> _sendMessage(
@@ -457,33 +534,61 @@ class ADBProtocolClient {
   Future<List<int>> _readBytes(int count) async {
     if (_socket == null) return [];
 
-    final buffer = <int>[];
+    // Use completer pattern to safely handle single-stream socket reads
     final completer = Completer<List<int>>();
-    late StreamSubscription subscription;
-
-    subscription = _socket!.listen(
-      (data) {
-        buffer.addAll(data);
-        if (buffer.length >= count) {
+    final buffer = <int>[];
+    late StreamSubscription<List<int>> subscription;
+    
+    try {
+      // Safely subscribe to socket only once
+      subscription = _socket!.listen(
+        (data) {
+          buffer.addAll(data);
+          if (buffer.length >= count) {
+            final result = buffer.take(count).toList();
+            subscription.cancel();
+            if (!completer.isCompleted) {
+              completer.complete(result);
+            }
+          }
+        },
+        onError: (e) {
+          print('Error reading socket bytes: $e');
+          if (!completer.isCompleted) {
+            completer.completeError('Socket read error: $e');
+          }
+        },
+        onDone: () {
+          if (!completer.isCompleted) {
+            if (buffer.isEmpty) {
+              completer.completeError('Socket closed before reading data');
+            } else {
+              completer.complete(buffer);
+            }
+          }
+        },
+        cancelOnError: true,
+      );
+      
+      // Set timeout to avoid hanging forever
+      Timer(const Duration(seconds: 5), () {
+        if (!completer.isCompleted) {
           subscription.cancel();
-          completer.complete(buffer.take(count).toList());
+          if (buffer.isEmpty) {
+            completer.completeError('Socket read timed out');
+          } else {
+            // Return partial data if we have any
+            completer.complete(buffer);
+          }
         }
-      },
-      onError: (error) {
-        subscription.cancel();
-        completer.completeError(error);
-      },
-    );
-
-    // Timeout after 10 seconds
-    Timer(const Duration(seconds: 10), () {
-      if (!completer.isCompleted) {
-        subscription.cancel();
-        completer.complete(buffer);
-      }
-    });
-
-    return completer.future;
+      });
+      
+      return await completer.future;
+    } catch (e) {
+      print('Error reading socket bytes: $e');
+      // In case of error, return empty list as a fallback
+      return [];
+    }
   }
 
   int _calculateChecksum(String data) {
@@ -496,8 +601,17 @@ class ADBProtocolClient {
 
   Future<void> close() async {
     _authenticated = false;
-    await _socket?.close();
-    _socket = null;
+    try {
+      if (_socket != null) {
+        // Ensure clean socket shutdown
+        await _socket?.close();
+        _socket = null;
+      }
+    } catch (e) {
+      print('Error closing ADB protocol socket: $e');
+    } finally {
+      _socket = null;
+    }
   }
 }
 
@@ -1062,7 +1176,17 @@ class ADBClientManager {
     try {
       final completer = Completer<String>();
       final buffer = <int>[];
-      late StreamSubscription subscription;
+      StreamSubscription? subscription;
+      Timer? timeoutTimer;
+
+      void cleanupResources() {
+        timeoutTimer?.cancel();
+        timeoutTimer = null;
+        if (subscription != null) {
+          subscription!.cancel();
+          subscription = null;
+        }
+      }
 
       subscription = socket.listen(
         (data) {
@@ -1074,13 +1198,13 @@ class ADBClientManager {
 
             // Check for OKAY/FAIL responses
             if (lengthHex == 'OKAY') {
-              subscription.cancel();
+              cleanupResources();
               if (!completer.isCompleted) {
                 completer.complete('OKAY');
               }
               return;
             } else if (lengthHex == 'FAIL') {
-              subscription.cancel();
+              cleanupResources();
               if (!completer.isCompleted) {
                 completer.complete('FAIL');
               }
@@ -1091,42 +1215,65 @@ class ADBClientManager {
             final length = int.tryParse(lengthHex, radix: 16);
             if (length != null && buffer.length >= 4 + length) {
               final responseBytes = buffer.skip(4).take(length).toList();
-              final response = utf8.decode(responseBytes);
-              subscription.cancel();
+              String response;
+              try {
+                response = utf8.decode(responseBytes);
+              } catch (_) {
+                // Handle invalid UTF-8
+                response = String.fromCharCodes(responseBytes.where((b) => b > 0 && b < 128));
+              }
+              cleanupResources();
               if (!completer.isCompleted) {
                 completer.complete(response);
               }
               return;
             }
           }
-
-          // After reasonable delay, return what we have
-          Timer(const Duration(milliseconds: 1000), () {
-            if (!completer.isCompleted) {
-              subscription.cancel();
-              final response = utf8.decode(buffer);
-              completer.complete(response);
-            }
-          });
         },
         onError: (error) {
-          subscription.cancel();
+          print('Socket error in _readADBResponse: $error');
+          cleanupResources();
           if (!completer.isCompleted) {
-            completer.completeError(error);
+            completer.complete(''); // Return empty on error rather than crash
           }
         },
+        onDone: () {
+          if (!completer.isCompleted) {
+            // Return what we have if socket is closed
+            String response = '';
+            if (buffer.isNotEmpty) {
+              try {
+                response = utf8.decode(buffer);
+              } catch (_) {
+                response = String.fromCharCodes(buffer.where((b) => b > 0 && b < 128));
+              }
+            }
+            cleanupResources();
+            completer.complete(response);
+          }
+        },
+        cancelOnError: true,
       );
 
-      // Overall timeout
-      Timer(const Duration(seconds: 10), () {
-        subscription.cancel();
+      // Set timeout to avoid hanging
+      timeoutTimer = Timer(const Duration(seconds: 10), () {
         if (!completer.isCompleted) {
-          completer.complete(utf8.decode(buffer));
+          String response = '';
+          if (buffer.isNotEmpty) {
+            try {
+              response = utf8.decode(buffer);
+            } catch (_) {
+              response = String.fromCharCodes(buffer.where((b) => b > 0 && b < 128));
+            }
+          }
+          cleanupResources();
+          completer.complete(response);
         }
       });
 
       return await completer.future;
     } catch (e) {
+      print('Error in _readADBResponse: $e');
       return '';
     }
   }

@@ -42,11 +42,13 @@ class WebAdbServer {
     print('WEBADB: starting basePort=$port maxFallback=$maxFallbackPorts');
     // quick capability probe
     try {
-      final test = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      // Skip the reusePort option which causes issues on Android
+      final test = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0, shared: false);
       await test.close();
     } catch (e) {
       lastError = 'Loopback bind failed: $e';
       client.addOutput('❌ Loopback probe failed: $e');
+      print('WebADB loopback probe failed: $e');
       _starting = false; // ensure flag cleared on early failure
       return false;
     }
@@ -55,7 +57,7 @@ class WebAdbServer {
           .addOutput('➡️  WebADB bind attempt ${attempt + 1} on $attemptPort');
       print('WEBADB: attempt ${attempt + 1} binding $attemptPort');
       try {
-        _http = await HttpServer.bind(InternetAddress.anyIPv4, attemptPort);
+        _http = await HttpServer.bind(InternetAddress.anyIPv4, attemptPort, shared: false);
         port = _http!.port; // update to actual bound port
         if (attempt > 0 || port != lastRequestedPort) fallbackUsed = true;
         _wireOutputBroadcast();

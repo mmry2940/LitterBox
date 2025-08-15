@@ -35,14 +35,19 @@ class MainActivity : FlutterActivity() {
 
 	override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
 		super.configureFlutterEngine(flutterEngine)
-		usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
-		registerReceiver(usbReceiver, IntentFilter(ACTION_USB_PERMISSION))
+		
+		try {
+			usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
+			registerReceiver(usbReceiver, IntentFilter(ACTION_USB_PERMISSION))
 
-		// Hotplug (attach/detach) receiver
-		val hotplugFilter = IntentFilter()
-		hotplugFilter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
-		hotplugFilter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-		registerReceiver(hotplugReceiver, hotplugFilter)
+			// Hotplug (attach/detach) receiver
+			val hotplugFilter = IntentFilter()
+			hotplugFilter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+			hotplugFilter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+			registerReceiver(hotplugReceiver, hotplugFilter)
+		} catch (e: Exception) {
+			android.util.Log.e("MainActivity", "Error setting up USB: ${e.message}", e)
+		}
 
 		MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
 			when (call.method) {
