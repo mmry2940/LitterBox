@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_adb/flutter_adb.dart';
+import 'package:flutter_adb/adb_connection.dart';
+import 'package:flutter_adb/adb_crypto.dart';
+import 'package:flutter_adb/adb_stream.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../adb_client.dart';
 
@@ -112,7 +114,7 @@ class FlutterAdbClient {
       await closeShell();
 
       if (_connection != null) {
-        await _connection!.close();
+        await _connection!.disconnect();
         _connection = null;
       }
 
@@ -135,7 +137,7 @@ class FlutterAdbClient {
 
       final result = await Adb.sendSingleCommand(
         command,
-        ip: _connection!.host,
+        ip: _connection!.ip,
         port: _connection!.port,
         crypto: _crypto!,
       );
@@ -159,7 +161,7 @@ class FlutterAdbClient {
 
       _shellStream = await _connection!.openShell();
       _shellSubscription = _shellStream!.onPayload.listen((payload) {
-        final output = String.fromCharCodes(payload);
+        final output = utf8.decode(payload);
         _addOutput(output);
       });
 
@@ -191,7 +193,7 @@ class FlutterAdbClient {
     }
 
     try {
-      final success = await _shellStream!.write(input);
+      final success = await _shellStream!.writeString(input);
       if (!success) {
         _addOutput('Failed to write to shell');
       }
@@ -212,7 +214,7 @@ class FlutterAdbClient {
       _logcatStream = await _connection!.open('shell:$command');
 
       _logcatSubscription = _logcatStream!.onPayload.listen((payload) {
-        final line = String.fromCharCodes(payload);
+        final line = utf8.decode(payload);
         _logcatController.add(line);
       });
 

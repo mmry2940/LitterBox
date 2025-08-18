@@ -3,11 +3,9 @@ import 'dart:async';
 import 'dart:io' show Process;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 import '../adb_client.dart';
-import '../controllers/webadb_controller.dart';
 import '../models/saved_adb_device.dart';
 import '../adb/embedded_adb_manager.dart';
 import '../adb/adb_mdns_discovery.dart';
@@ -24,7 +22,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     with TickerProviderStateMixin {
   late final ADBClientManager _adb;
   int _selectedIndex = 0; // Replace TabController with index-based navigation
-  late final WebAdbController _webAdb;
   // Terminal (xterm) integration
   Terminal? _terminal;
   Process? _shellProcess;
@@ -55,6 +52,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   // Logcat
   final _logcatFilter = TextEditingController();
   String _activeLogcatFilter = '';
+  String _logcatLevel = 'All'; // Filter by log level
 
   // Files
   final _apkPath = TextEditingController();
@@ -74,26 +72,41 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   // Saved devices
   List<SavedADBDevice> _savedDevices = [];
   SavedADBDevice? _selectedSaved;
-
-  // WebADB
-  final _webPort = TextEditingController(text: '8587');
-  final _webToken = TextEditingController();
   // (Optional future) bool _showWebToken = false; // reserved for show/hide token toggle
 
   bool _loadingConnect = false;
   int _logcatLinesShown = 0;
+  bool _autoStartLogcat = true; // Preference for auto-starting logcat
+  final ScrollController _logcatScrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
     _adb = ADBClientManager();
     _adb.enableExternalAdbBackend();
-    _webAdb = WebAdbController(_adb);
     _adb.output.listen((line) {
       if (_localBuffer.length > 1500) _localBuffer.removeRange(0, 800);
       _localBuffer.add(line);
       _autoScroll();
     });
+    
+    // Listen for connection state changes to auto-start logcat
+    _adb.connectionState.listen((state) {
+      if (state == ADBConnectionState.connected && _autoStartLogcat) {
+        // Small delay to ensure connection is fully established
+        Future.delayed(const Duration(milliseconds: 500), () async {
+          if (_adb.currentState == ADBConnectionState.connected && !_adb.logcatActive) {
+            await _adb.startLogcat();
+            if (mounted) {
+              setState(() {});
+              // Auto-switch to logcat tab when it starts
+              setState(() => _selectedIndex = 3); // Logcat tab index
+            }
+          }
+        });
+      }
+    });
+    
     _loadPrefs();
   }
 
@@ -104,6 +117,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       _recentLocal = prefs.getStringList('recent_local') ?? [];
       _recentRemote = prefs.getStringList('recent_remote') ?? [];
       _recentForwards = prefs.getStringList('recent_forwards') ?? [];
+      _autoStartLogcat = prefs.getBool('auto_start_logcat') ?? true;
       _savedDevices = (prefs.getStringList('adb_devices') ?? [])
           .map((j) => SavedADBDevice.fromJson(jsonDecode(j)))
           .toList();
@@ -128,6 +142,11 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     await prefs.setStringList('recent_remote', _recentRemote.take(12).toList());
     await prefs.setStringList(
         'recent_forwards', _recentForwards.take(12).toList());
+  }
+
+  Future<void> _saveAutoLogcatPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('auto_start_logcat', _autoStartLogcat);
   }
 
   Future<void> _saveDevice() async {
@@ -173,7 +192,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
 
   @override
   void dispose() {
-    _webAdb.dispose();
     _adb.dispose();
     _cmd.dispose();
     _host.dispose();
@@ -188,19 +206,16 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     _forwardLocalPort.dispose();
     _forwardRemoteSpec.dispose();
     _logcatFilter.dispose();
-    _webPort.dispose();
-    _webToken.dispose();
+    _logcatScrollController.dispose();
     _usbEventsSub?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [ChangeNotifierProvider.value(value: _webAdb)],
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWideScreen = constraints.maxWidth >= 800;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWideScreen = constraints.maxWidth >= 800;
 
           return Scaffold(
             appBar: AppBar(
@@ -223,9 +238,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                       case 'clear_history':
                         _adb.clearHistory();
                         break;
-                      case 'restart_webadb':
-                        await _webAdb.stop();
-                        await _webAdb.start();
                     }
                   },
                   itemBuilder: (c) => [
@@ -240,10 +252,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                     const PopupMenuItem(
                       value: 'clear_history',
                       child: Text('Clear History'),
-                    ),
-                    const PopupMenuItem(
-                      value: 'restart_webadb',
-                      child: Text('Restart WebADB'),
                     ),
                   ],
                 )
@@ -273,8 +281,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                           label: Text('Commands')),
                       NavigationRailDestination(
                           icon: Icon(Icons.folder), label: Text('Files')),
-                      NavigationRailDestination(
-                          icon: Icon(Icons.public), label: Text('WebADB')),
                       NavigationRailDestination(
                           icon: Icon(Icons.info), label: Text('Info')),
                     ],
@@ -307,7 +313,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                   ),
           );
         },
-      ),
     );
   }
 
@@ -326,8 +331,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       case 5:
         return _filesTab();
       case 6:
-        return _webadbTab();
-      case 7:
         return _infoTab();
       default:
         return _dashboardTab();
@@ -951,10 +954,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
               }, enabled: _adb.logcatActive),
               _qa('Files', Icons.folder_copy,
                   () => setState(() => _selectedIndex = 5)),
-              _qa('WebADB', Icons.public,
-                  () => setState(() => _selectedIndex = 6)),
               _qa('Info', Icons.info_outline,
-                  () => setState(() => _selectedIndex = 7)),
+                  () => setState(() => _selectedIndex = 6)),
             ])
           ]),
         ),
@@ -1065,87 +1066,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     ]);
   }
 
-  Widget _webadbTab() {
-    return Consumer<WebAdbController>(builder: (ctx, w, _) {
-      return Padding(
-        padding: const EdgeInsets.all(12),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                SizedBox(
-                  width: 110,
-                  child: TextField(
-                    controller: _webPort,
-                    enabled: !w.running,
-                    decoration: const InputDecoration(
-                        labelText: 'Port',
-                        isDense: true,
-                        border: OutlineInputBorder()),
-                    keyboardType: TextInputType.number,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: _webToken,
-                    enabled: !w.running,
-                    decoration: const InputDecoration(
-                        labelText: 'Auth Token',
-                        isDense: true,
-                        border: OutlineInputBorder()),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    if (w.running) {
-                      await w.stop();
-                    } else {
-                      final p = int.tryParse(_webPort.text) ?? w.port;
-                      await w.configure(port: p, token: _webToken.text.trim());
-                      await w.start();
-                    }
-                  },
-                  icon: Icon(w.running ? Icons.stop : Icons.play_arrow),
-                  label: Text(w.running ? 'Stop' : 'Start'),
-                ),
-              ]),
-              const SizedBox(height: 8),
-              _webAdbStatus(w),
-              const Divider(),
-              Row(children: [
-                ElevatedButton.icon(
-                    onPressed: w.running ? w.fetchHealth : null,
-                    icon: const Icon(Icons.monitor_heart),
-                    label: const Text('Health Now')),
-                const SizedBox(width: 8),
-                if (w.lastHealth != null)
-                  Text(
-                    _healthSummary(w.lastHealth!),
-                    style: TextStyle(
-                        color: (w.lastHealth!['error'] != null)
-                            ? Colors.red
-                            : Colors.green,
-                        fontSize: 12),
-                  ),
-              ]),
-              const SizedBox(height: 12),
-              SelectableText('Base URL: http://localhost:${w.port}',
-                  style: const TextStyle(fontSize: 12)),
-              if (w.lastError != null && !w.running)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(w.lastError!,
-                      style: const TextStyle(color: Colors.red, fontSize: 12)),
-                ),
-            ],
-          ),
-        ),
-      );
-    });
-  }
 
   Widget _logcatTab() {
     return Column(children: [
@@ -1158,27 +1078,55 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
               final buffer = _adb.logcatBuffer;
               if (_logcatLinesShown != buffer.length) {
                 _logcatLinesShown = buffer.length;
+                // Auto-scroll to bottom when new content arrives
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (_logcatScrollController.hasClients) {
+                    _logcatScrollController.animateTo(
+                      _logcatScrollController.position.maxScrollExtent,
+                      duration: const Duration(milliseconds: 100),
+                      curve: Curves.easeOut,
+                    );
+                  }
+                });
               }
               return ListView.builder(
+                controller: _logcatScrollController,
                 padding: const EdgeInsets.all(4),
                 itemCount: buffer.length,
                 itemBuilder: (ctx, i) {
                   final line = buffer[i];
+                  
+                  // Apply text filter
                   if (_activeLogcatFilter.isNotEmpty &&
                       !line
                           .toLowerCase()
                           .contains(_activeLogcatFilter.toLowerCase())) {
                     return const SizedBox.shrink();
                   }
+                  
+                  // Apply level filter
+                  if (_logcatLevel != 'All') {
+                    final levelChar = _logcatLevel[0]; // E, W, I, D, V
+                    if (!line.contains(' $levelChar ')) {
+                      return const SizedBox.shrink();
+                    }
+                  }
+                  
                   Color color = Colors.white;
                   if (line.contains(' E ')) {
                     color = Colors.redAccent;
                   } else if (line.contains(' W '))
                     color = Colors.orangeAccent;
                   else if (line.contains(' I ')) color = Colors.lightBlueAccent;
-                  return Text(line,
-                      style: TextStyle(
-                          color: color, fontSize: 11, fontFamily: 'monospace'));
+                  else if (line.contains(' D ')) color = Colors.grey[300]!;
+                  else if (line.contains(' V ')) color = Colors.grey[500]!;
+                  
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 1),
+                    child: SelectableText(line,
+                        style: TextStyle(
+                            color: color, fontSize: 11, fontFamily: 'monospace')),
+                  );
                 },
               );
             },
@@ -1218,6 +1166,19 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
               icon: const Icon(Icons.cleaning_services),
               label: const Text('Clear')),
           const SizedBox(width: 12),
+          Text('Level:', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+          const SizedBox(width: 4),
+          DropdownButton<String>(
+            value: _logcatLevel,
+            isDense: true,
+            items: ['All', 'Error', 'Warning', 'Info', 'Debug', 'Verbose']
+                .map((level) => DropdownMenuItem(value: level, child: Text(level, style: const TextStyle(fontSize: 12))))
+                .toList(),
+            onChanged: (value) {
+              setState(() => _logcatLevel = value!);
+            },
+          ),
+          const SizedBox(width: 12),
           Expanded(
               child: TextField(
             controller: _logcatFilter,
@@ -1243,8 +1204,98 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
           Text('${_adb.logcatBuffer.length} lines',
               style: const TextStyle(fontSize: 12))
         ]),
+      ),
+      // Second row with settings
+      Container(
+        color: Colors.grey[100],
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(children: [
+          Icon(Icons.settings, size: 16, color: Colors.grey[600]),
+          const SizedBox(width: 8),
+          Text('Auto-start on connect:', 
+              style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+          const SizedBox(width: 8),
+          Switch(
+            value: _autoStartLogcat,
+            onChanged: (value) async {
+              setState(() => _autoStartLogcat = value);
+              await _saveAutoLogcatPreference();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(_autoStartLogcat 
+                      ? 'Logcat will auto-start on connection' 
+                      : 'Logcat auto-start disabled'),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            },
+          ),
+          const Spacer(),
+          if (_adb.logcatActive)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.green,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text('ACTIVE', 
+                  style: TextStyle(color: Colors.white, fontSize: 10)),
+            ),
+        ]),
+      ),
+      // Third row with quick filters
+      Container(
+        color: Colors.grey[50],
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(children: [
+          Text('Quick filters:', 
+              style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+          const SizedBox(width: 8),
+          _quickFilterButton('Errors', 'Error', Colors.red[100]!),
+          const SizedBox(width: 4),
+          _quickFilterButton('Warnings', 'Warning', Colors.orange[100]!),
+          const SizedBox(width: 4),
+          _quickFilterButton('All', 'All', Colors.grey[200]!),
+          const Spacer(),
+          if (_activeLogcatFilter.isNotEmpty || _logcatLevel != 'All')
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _activeLogcatFilter = '';
+                  _logcatLevel = 'All';
+                  _logcatFilter.clear();
+                });
+              },
+              child: const Text('Clear Filters', style: TextStyle(fontSize: 11)),
+            ),
+        ]),
       )
     ]);
+  }
+
+  Widget _quickFilterButton(String label, String level, Color color) {
+    final isSelected = _logcatLevel == level;
+    return GestureDetector(
+      onTap: () {
+        setState(() => _logcatLevel = level);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          color: isSelected ? color : Colors.transparent,
+          border: Border.all(color: color),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: isSelected ? Colors.black87 : Colors.grey[600],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _commandsTab() => ListView(
@@ -1550,32 +1601,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
         );
       },
     );
-  }
-
-  Widget _webAdbStatus(WebAdbController c) {
-    final text = switch (c.state) {
-      WebAdbState.starting => 'Starting…',
-      WebAdbState.running => 'Running on port ${c.port}',
-      WebAdbState.error => 'Error',
-      WebAdbState.stopped => 'Stopped'
-    };
-    final color = switch (c.state) {
-      WebAdbState.running => Colors.green,
-      WebAdbState.error => Colors.red,
-      WebAdbState.starting => Colors.orange,
-      _ => Colors.grey,
-    };
-    return Row(children: [
-      Icon(Icons.circle, size: 10, color: color),
-      const SizedBox(width: 6),
-      Text(text, style: TextStyle(color: color, fontSize: 12)),
-    ]);
-  }
-
-  String _healthSummary(Map<String, dynamic> h) {
-    if (h['error'] != null) return 'Health ERROR (${h['error']})';
-    final dc = h['deviceCount'];
-    return 'Health OK devices=$dc';
   }
 
   Color _stateColor(ADBConnectionState s) {

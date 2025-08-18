@@ -1,4 +1,4 @@
-name: LitterBox
+name: litterbox
 description: "SSH client and tools, Android tools(adb), random tools littered inside this box!."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.

@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:crypto/crypto.dart';
 import 'package:pointycastle/export.dart' hide State;
 
 enum VNCConnectionState {

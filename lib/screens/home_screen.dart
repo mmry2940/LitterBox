@@ -9,7 +9,7 @@ import 'dart:io';
 import '../network_init.dart';
 import '../isolate_scanner.dart';
 import 'package:network_info_plus/network_info_plus.dart';
-import 'package:LitterBox/screens/_host_tile_with_retry.dart';
+import '_host_tile_with_retry.dart';
 import 'adb_screen_refactored.dart';
 import 'vnc_screen.dart';
 import 'rdp_screen.dart';
