@@ -83,7 +83,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   void initState() {
     super.initState();
     _adb = ADBClientManager();
-    _adb.enableExternalAdbBackend();
+    _adb.enableFlutterAdbBackend();
     _adb.output.listen((line) {
       if (_localBuffer.length > 1500) _localBuffer.removeRange(0, 800);
       _localBuffer.add(line);
@@ -1089,6 +1089,42 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                   }
                 });
               }
+              if (buffer.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        _adb.logcatActive ? Icons.hourglass_empty : Icons.play_circle_outline,
+                        size: 48,
+                        color: Colors.grey,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _adb.logcatActive 
+                          ? 'Logcat is running but no output yet...\nCheck if device is generating logs'
+                          : 'No logcat data\nTap "Start Logcat" to begin',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.grey, fontSize: 14),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Debug Info:',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Connection: ${_adb.currentState.name}\n'
+                        'Device: ${_adb.connectedDeviceId.isEmpty ? "None" : _adb.connectedDeviceId}\n'
+                        'Logcat Active: ${_adb.logcatActive ? "Yes" : "No"}',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey[600], fontSize: 11, fontFamily: 'monospace'),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              
               return ListView.builder(
                 controller: _logcatScrollController,
                 padding: const EdgeInsets.all(4),
@@ -1165,6 +1201,14 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
               },
               icon: const Icon(Icons.cleaning_services),
               label: const Text('Clear')),
+          const SizedBox(width: 6),
+          ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+              onPressed: () async {
+                await _adb.executeCommand('devices');
+              },
+              icon: const Icon(Icons.bug_report),
+              label: const Text('Test ADB')),
           const SizedBox(width: 12),
           Text('Level:', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
           const SizedBox(width: 4),
@@ -1538,7 +1582,76 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       );
 
   Widget _infoTab() {
-    final sections = [
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Backend Selection Card
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('ADB Backend', 
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    const Text('Choose the ADB backend for your platform:', 
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: () async {
+                            await _adb.enableFlutterAdbBackend();
+                          },
+                          icon: const Icon(Icons.android, size: 16),
+                          label: const Text('Flutter ADB', style: TextStyle(fontSize: 12)),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: () async {
+                            await _adb.enableExternalAdbBackend();
+                          },
+                          icon: const Icon(Icons.computer, size: 16),
+                          label: const Text('System ADB', style: TextStyle(fontSize: 12)),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: () async {
+                            await _adb.enableInternalAdbBackend();
+                          },
+                          icon: const Icon(Icons.bug_report, size: 16),
+                          label: const Text('Mock ADB', style: TextStyle(fontSize: 12)),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '• Flutter ADB: Native on Android, no system dependencies\n'
+                      '• System ADB: Requires adb command in PATH\n'
+                      '• Mock ADB: For testing without real devices',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Help sections - define sections here
+            ..._getHelpSections().map((section) => _helpSection(section.$1, section.$2, section.$3)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<(String, IconData, List<String>)> _getHelpSections() {
+    return [
       (
         'ADB Server Setup',
         Icons.settings_system_daydream,
@@ -1577,29 +1690,34 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
         ]
       )
     ];
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: sections.length,
-      itemBuilder: (c, i) {
-        final s = sections[i];
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Icon(s.$2),
-                const SizedBox(width: 8),
-                Text(s.$1,
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold))
-              ]),
-              const SizedBox(height: 8),
-              ...s.$3.map((l) => Text('• $l'))
-            ]),
+  }
+
+  Widget _helpSection(String title, IconData icon, List<String> steps) {
+    return Card(
+      child: ExpansionTile(
+        leading: Icon(icon, color: Theme.of(context).primaryColor),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: steps.map((step) => 
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('• ', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      Expanded(child: Text(step, style: const TextStyle(fontSize: 14))),
+                    ],
+                  ),
+                )
+              ).toList(),
+            ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 

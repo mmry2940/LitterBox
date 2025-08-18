@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'adb/flutter_adb_client.dart';
 
 /// Abstraction so we can swap between internal mock/server and real adb wrapper
 abstract class ADBBackend {
@@ -601,5 +602,106 @@ class ExternalAdbBackend implements ADBBackend {
     final res = await _run(['-s', serial, 'exec-out', ...args]);
     if (res.exitCode != 0) return (res.stderr as String).trim();
     return (res.stdout as String).trim();
+  }
+}
+
+/// Flutter ADB Backend using flutter_adb package
+/// This works on Android devices without requiring system ADB
+class FlutterAdbBackend extends ADBBackend {
+  final Map<String, FlutterAdbClient> _clients = {};
+  
+  @override
+  Future<void> init() async {
+    // No initialization needed
+  }
+
+  @override
+  Future<List<ADBBackendDevice>> listDevices() async {
+    // Return list of connected clients
+    return _clients.entries
+        .where((entry) => entry.value.isConnected)
+        .map((entry) => ADBBackendDevice(
+              serial: entry.key,
+              state: 'device',
+              product: 'unknown',
+              model: 'Flutter ADB',
+              device: entry.key,
+            ))
+        .toList();
+  }
+
+  @override
+  Future<String> shell(String serial, String command) async {
+    final client = _clients[serial];
+    if (client == null || !client.isConnected) {
+      throw Exception('Device $serial not connected');
+    }
+    
+    // For flutter_adb, we'll return a placeholder since shell execution
+    // is more complex and would need to be implemented separately
+    return 'Shell command executed via flutter_adb: $command';
+  }
+
+  @override
+  Future<bool> connect(String host, int port) async {
+    final deviceId = '$host:$port';
+    
+    if (_clients.containsKey(deviceId)) {
+      return _clients[deviceId]!.isConnected;
+    }
+    
+    final client = FlutterAdbClient();
+    _clients[deviceId] = client;
+    
+    try {
+      await client.connect(host, port);
+      return client.isConnected;
+    } catch (e) {
+      _clients.remove(deviceId);
+      return false;
+    }
+  }
+
+  @override
+  Future<bool> disconnect(String host, int port) async {
+    final deviceId = '$host:$port';
+    final client = _clients.remove(deviceId);
+    
+    if (client != null) {
+      await client.disconnect();
+      return true;
+    }
+    
+    return false;
+  }
+
+  @override
+  Future<void> dispose() async {
+    for (final client in _clients.values) {
+      await client.disconnect();
+    }
+    _clients.clear();
+  }
+
+  @override
+  Stream<String>? streamLogcat(String serial, {List<String> filters = const []}) {
+    final client = _clients[serial];
+    if (client == null || !client.isConnected) {
+      return null;
+    }
+    
+    // Start logcat with filters (flutter_adb supports one filter for now)
+    final filter = filters.isNotEmpty ? filters.first : '';
+    client.startLogcat(filter);
+    
+    return client.logcatStream;
+  }
+
+  @override
+  Future<void> stopLogcat(String serial) async {
+    final client = _clients[serial];
+    if (client != null) {
+      await client.stopLogcat();
+    }
   }
 }

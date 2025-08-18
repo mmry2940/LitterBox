@@ -724,6 +724,20 @@ class ADBClientManager {
     }
   }
 
+  Future<void> enableFlutterAdbBackend() async {
+    _addOutput('📱 Initializing flutter_adb backend...');
+    final backend = FlutterAdbBackend();
+    try {
+      await backend.init();
+      _externalBackend = backend;
+      _addOutput('✅ Flutter ADB backend ready (native on Android)');
+    } catch (e) {
+      _addOutput('⚠️ Flutter ADB backend unavailable: $e');
+      // Fall back to external backend
+      await enableExternalAdbBackend();
+    }
+  }
+
   Future<void> enableExternalAdbBackend() async {
     _addOutput('🔌 Initializing external adb backend...');
     final backend = ExternalAdbBackend();
@@ -734,6 +748,18 @@ class ADBClientManager {
     } catch (e) {
       _addOutput('⚠️ External adb backend unavailable: $e');
       // Do not rethrow; fall back to internal mechanisms
+    }
+  }
+
+  Future<void> enableInternalAdbBackend() async {
+    _addOutput('🔧 Initializing mock adb backend...');
+    final backend = MockAdbBackend();
+    try {
+      await backend.init();
+      _externalBackend = backend;
+      _addOutput('✅ Mock ADB backend ready (testing mode)');
+    } catch (e) {
+      _addOutput('⚠️ Mock ADB backend unavailable: $e');
     }
   }
 
@@ -1480,16 +1506,33 @@ class ADBClientManager {
 
   // ---------------- Logcat Management ----------------
   Future<bool> startLogcat({List<String> filters = const []}) async {
-    if (_logcatActive) return true;
-    if (_externalBackend == null || _connectedDeviceId.isEmpty) {
-      _addOutput('❌ Cannot start logcat: no external backend or device',
-          deviceOutput: false);
+    if (_logcatActive) {
+      _addOutput('🔄 Logcat already running', deviceOutput: false);
+      return true;
+    }
+    if (_externalBackend == null) {
+      _addOutput('❌ Cannot start logcat: no external backend available', deviceOutput: false);
+      _addOutput('💡 Try running "adb start-server" in terminal first', deviceOutput: false);
       return false;
     }
+    if (_connectedDeviceId.isEmpty) {
+      _addOutput('❌ Cannot start logcat: no device connected', deviceOutput: false);
+      _addOutput('💡 Connect to a device first from the Dashboard tab', deviceOutput: false);
+      return false;
+    }
+    
+    _addOutput('🚀 Starting logcat for device: $_connectedDeviceId', deviceOutput: false);
+    if (filters.isNotEmpty) {
+      _addOutput('🔍 Applying filters: ${filters.join(", ")}', deviceOutput: false);
+    }
+    
     try {
       final stream =
           _externalBackend!.streamLogcat(_connectedDeviceId, filters: filters);
-      if (stream == null) return false;
+      if (stream == null) {
+        _addOutput('❌ Backend returned null stream', deviceOutput: false);
+        return false;
+      }
       _logcatActive = true;
       _logcatSub = stream.listen((line) {
         if (line.trim().isEmpty) return;
@@ -1499,14 +1542,16 @@ class ADBClientManager {
         }
         if (!_logcatController.isClosed) _logcatController.add(line);
       }, onError: (e) {
-        _addOutput('Logcat error: $e');
+        _addOutput('❌ Logcat stream error: $e', deviceOutput: false);
+        _logcatActive = false;
       }, onDone: () {
+        _addOutput('⏹️ Logcat stream ended', deviceOutput: false);
         _logcatActive = false;
       });
-      _addOutput('📜 Logcat streaming started');
+      _addOutput('📜 Logcat streaming started successfully', deviceOutput: false);
       return true;
     } catch (e) {
-      _addOutput('❌ Failed to start logcat: $e');
+      _addOutput('❌ Failed to start logcat: $e', deviceOutput: false);
       return false;
     }
   }
