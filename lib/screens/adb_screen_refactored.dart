@@ -10,6 +10,8 @@ import '../models/saved_adb_device.dart';
 import '../models/app_info.dart';
 import '../adb/adb_mdns_discovery.dart';
 import '../adb/usb_bridge.dart';
+import '../services/shared_adb_manager.dart';
+import 'apps_screen.dart';
 
 /// Modular refactored ADB & WebADB UI.
 class AdbRefactoredScreen extends StatefulWidget {
@@ -88,8 +90,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   @override
   void initState() {
     super.initState();
-    _adb = ADBClientManager();
-    _adb.enableFlutterAdbBackend();
+    
+    // Use the shared ADB manager to ensure connection reuse
+    _adb = SharedADBManager.instance.getSharedClient();
+    
     _adb.output.listen((line) {
       if (_localBuffer.length > 1500) _localBuffer.removeRange(0, 800);
       _localBuffer.add(line);
@@ -2331,6 +2335,23 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                     : const Icon(Icons.refresh),
                 label: Text(_loadingApps ? 'Loading...' : 'Load Apps'),
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+              ),
+              const SizedBox(width: 8),
+              // Apps Manager button
+              ElevatedButton.icon(
+                onPressed: _adb.currentState == ADBConnectionState.connected
+                    ? () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const AppsScreen(),
+                          ),
+                        );
+                      }
+                    : null,
+                icon: const Icon(Icons.apps_outlined),
+                label: const Text('Apps Manager'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
               ),
               const SizedBox(width: 8),
               // Debug button to test shell execution
