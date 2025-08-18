@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'adb_backend.dart';
 import 'adb/usb_bridge.dart';
 
@@ -753,25 +754,13 @@ class ADBClientManager {
 
   Future<void> enableInternalAdbBackend() async {
     _addOutput('🔧 Initializing mock adb backend...');
-    final backend = MockAdbBackend();
+    final backend = InternalAdbBackend();
     try {
       await backend.init();
       _externalBackend = backend;
       _addOutput('✅ Mock ADB backend ready (testing mode)');
     } catch (e) {
       _addOutput('⚠️ Mock ADB backend unavailable: $e');
-    }
-  }
-
-  Future<void> enableInternalAdbBackend() async {
-    _addOutput('🧪 Activating internal adb backend...');
-    try {
-      final backend = InternalAdbBackend();
-      await backend.init();
-      _externalBackend = backend; // reuse field for polymorphic backend
-      _addOutput('✅ Internal adb backend active (mock)');
-    } catch (e) {
-      _addOutput('❌ Failed to init internal backend: $e');
     }
   }
 
@@ -1705,6 +1694,43 @@ class ADBClientManager {
       return await _externalBackend!.shell(serial, 'cat $remote');
     } catch (_) {
       return '';
+    }
+  }
+
+  // RSA Key Management Methods
+  Future<void> clearSavedCredentials() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('adb_key_fingerprint');
+      await prefs.remove('adb_authorized_devices');
+      _addOutput('🗑️ Cleared all saved ADB credentials and authorization history');
+    } catch (e) {
+      _addOutput('❌ Failed to clear credentials: $e');
+    }
+  }
+
+  Future<void> showCredentialStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final keyFingerprint = prefs.getString('adb_key_fingerprint');
+      final authorizedDevices = prefs.getStringList('adb_authorized_devices') ?? [];
+      
+      _addOutput('🔑 RSA Key Status:');
+      if (keyFingerprint != null) {
+        _addOutput('  📋 Key ID: ${keyFingerprint.substring(0, 8)}...');
+        _addOutput('  🔓 Authorized devices: ${authorizedDevices.length}');
+        if (authorizedDevices.isNotEmpty) {
+          for (final device in authorizedDevices) {
+            final parts = device.split('_');
+            final deviceId = parts.isNotEmpty ? parts.first : device;
+            _addOutput('    • $deviceId');
+          }
+        }
+      } else {
+        _addOutput('  ❌ No saved RSA key found');
+      }
+    } catch (e) {
+      _addOutput('❌ Failed to check credential status: $e');
     }
   }
 }

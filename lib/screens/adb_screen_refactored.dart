@@ -1,13 +1,13 @@
 import 'dart:convert';
 import 'dart:async';
-import 'dart:io' show Process;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:xterm/xterm.dart';
 import '../adb_client.dart';
+import '../adb_backend.dart';
+import '../adb/flutter_adb_client.dart';
 import '../models/saved_adb_device.dart';
-import '../adb/embedded_adb_manager.dart';
+import '../models/app_info.dart';
 import '../adb/adb_mdns_discovery.dart';
 import '../adb/usb_bridge.dart';
 
@@ -22,12 +22,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     with TickerProviderStateMixin {
   late final ADBClientManager _adb;
   int _selectedIndex = 0; // Replace TabController with index-based navigation
-  // Terminal (xterm) integration
-  Terminal? _terminal;
-  Process? _shellProcess;
-  StreamSubscription<List<int>>? _shellStdoutSub;
-  StreamSubscription<List<int>>? _shellStderrSub;
-  final _terminalFocusNode = FocusNode();
 
   // Connection & pairing
   final _host = TextEditingController();
@@ -48,6 +42,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   final _cmd = TextEditingController();
   final _consoleScroll = ScrollController();
   final List<String> _localBuffer = [];
+  
+  // Shell output buffer for flutter_adb
+  final List<String> _shellOutputBuffer = [];
+  StreamSubscription<String>? _shellOutputSub;
 
   // Logcat
   final _logcatFilter = TextEditingController();
@@ -77,7 +75,15 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   bool _loadingConnect = false;
   int _logcatLinesShown = 0;
   bool _autoStartLogcat = true; // Preference for auto-starting logcat
+  bool _autoOpenShell = true; // Preference for auto-opening shell on connection
   final ScrollController _logcatScrollController = ScrollController();
+
+  // App management state
+  List<AppInfo> _installedApps = [];
+  List<AppInfo> _systemApps = [];
+  bool _loadingApps = false;
+  String _appSearchQuery = '';
+  String _selectedAppFilter = 'All'; // All, User, System, Enabled, Disabled
 
   @override
   void initState() {
@@ -90,17 +96,33 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       _autoScroll();
     });
     
-    // Listen for connection state changes to auto-start logcat
+    // Listen for connection state changes to auto-start logcat and shell
     _adb.connectionState.listen((state) {
-      if (state == ADBConnectionState.connected && _autoStartLogcat) {
+      if (state == ADBConnectionState.connected) {
         // Small delay to ensure connection is fully established
         Future.delayed(const Duration(milliseconds: 500), () async {
-          if (_adb.currentState == ADBConnectionState.connected && !_adb.logcatActive) {
-            await _adb.startLogcat();
-            if (mounted) {
-              setState(() {});
-              // Auto-switch to logcat tab when it starts
-              setState(() => _selectedIndex = 3); // Logcat tab index
+          if (_adb.currentState == ADBConnectionState.connected) {
+            
+            // Auto-start logcat if enabled
+            if (_autoStartLogcat && !_adb.logcatActive) {
+              await _adb.startLogcat();
+              if (mounted) {
+                setState(() {});
+                // Auto-switch to logcat tab when it starts
+                setState(() => _selectedIndex = 3); // Logcat tab index
+              }
+            }
+            
+            // Auto-open shell for Flutter ADB backend
+            if (_autoOpenShell && _adb.backend is FlutterAdbBackend) {
+              await _openFlutterAdbShell();
+              if (mounted) {
+                setState(() {});
+                // Auto-switch to terminal tab when shell opens
+                if (!_autoStartLogcat) { // Only switch if logcat isn't taking priority
+                  setState(() => _selectedIndex = 1); // Terminal tab index
+                }
+              }
             }
           }
         });
@@ -118,6 +140,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       _recentRemote = prefs.getStringList('recent_remote') ?? [];
       _recentForwards = prefs.getStringList('recent_forwards') ?? [];
       _autoStartLogcat = prefs.getBool('auto_start_logcat') ?? true;
+      _autoOpenShell = prefs.getBool('auto_open_shell') ?? true;
       _savedDevices = (prefs.getStringList('adb_devices') ?? [])
           .map((j) => SavedADBDevice.fromJson(jsonDecode(j)))
           .toList();
@@ -147,6 +170,11 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   Future<void> _saveAutoLogcatPreference() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('auto_start_logcat', _autoStartLogcat);
+  }
+
+  Future<void> _saveAutoShellPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('auto_open_shell', _autoOpenShell);
   }
 
   Future<void> _saveDevice() async {
@@ -190,6 +218,17 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       ? _adb.outputBuffer
       : List.unmodifiable(_localBuffer);
 
+  List<String> _shellBufferSnapshot() {
+    if (_adb.backend is FlutterAdbBackend) {
+      return _shellOutputBuffer.isNotEmpty
+          ? List.unmodifiable(_shellOutputBuffer)
+          : ['Flutter ADB shell ready. Type commands to interact with the device.'];
+    } else {
+      // For non-flutter_adb backends, show regular output
+      return _bufferSnapshot();
+    }
+  }
+
   @override
   void dispose() {
     _adb.dispose();
@@ -208,6 +247,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     _logcatFilter.dispose();
     _logcatScrollController.dispose();
     _usbEventsSub?.cancel();
+    _shellOutputSub?.cancel();
     super.dispose();
   }
 
@@ -271,14 +311,14 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                           icon: Icon(Icons.dashboard),
                           label: Text('Dashboard')),
                       NavigationRailDestination(
-                          icon: Icon(Icons.terminal), label: Text('Console')),
-                      NavigationRailDestination(
-                          icon: Icon(Icons.code), label: Text('Terminal')),
+                          icon: Icon(Icons.terminal), label: Text('Terminal')),
                       NavigationRailDestination(
                           icon: Icon(Icons.list_alt), label: Text('Logcat')),
                       NavigationRailDestination(
                           icon: Icon(Icons.play_arrow),
                           label: Text('Commands')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.apps), label: Text('Apps')),
                       NavigationRailDestination(
                           icon: Icon(Icons.folder), label: Text('Files')),
                       NavigationRailDestination(
@@ -295,18 +335,20 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                 ? null
                 : BottomNavigationBar(
                     currentIndex:
-                        _selectedIndex.clamp(0, 4), // Limit for mobile
+                        _selectedIndex.clamp(0, 5), // Updated limit for mobile
                     onTap: (index) => setState(() => _selectedIndex = index),
                     type: BottomNavigationBarType.fixed,
                     items: const [
                       BottomNavigationBarItem(
                           icon: Icon(Icons.dashboard), label: 'Dashboard'),
                       BottomNavigationBarItem(
-                          icon: Icon(Icons.terminal), label: 'Console'),
-                      BottomNavigationBarItem(
-                          icon: Icon(Icons.code), label: 'Terminal'),
+                          icon: Icon(Icons.terminal), label: 'Terminal'),
                       BottomNavigationBarItem(
                           icon: Icon(Icons.list_alt), label: 'Logcat'),
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.play_arrow), label: 'Commands'),
+                      BottomNavigationBarItem(
+                          icon: Icon(Icons.apps), label: 'Apps'),
                       BottomNavigationBarItem(
                           icon: Icon(Icons.more_horiz), label: 'More'),
                     ],
@@ -321,13 +363,13 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       case 0:
         return _dashboardTab();
       case 1:
-        return _consoleTab();
+        return _unifiedTerminalTab();
       case 2:
-        return _terminalTab();
-      case 3:
         return _logcatTab();
-      case 4:
+      case 3:
         return _commandsTab();
+      case 4:
+        return _appsTab();
       case 5:
         return _filesTab();
       case 6:
@@ -387,7 +429,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                   ListTile(
                     leading: const Icon(Icons.info),
                     title: const Text('Device Info'),
-                    onTap: () => setState(() => _selectedIndex = 7),
+                    onTap: () => setState(() => _selectedIndex = 6),
                   ),
                 ],
               ],
@@ -398,100 +440,516 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     );
   }
 
-  Future<void> _openInteractiveShellInTerminal() async {
-    if (_shellProcess != null) return;
-    final adbPath = await EmbeddedAdbManager.instance.adbPath; // may be ''
-    final deviceId = _adb.currentState == ADBConnectionState.connected
-        ? _adb.connectedDeviceId
-        : '';
-    final args = <String>[];
-    if (deviceId.isNotEmpty) {
-      args.addAll(['-s', deviceId]);
-    }
-    args.add('shell');
-    try {
-      _terminal ??= Terminal(maxLines: 2000);
-      _terminal!.write('Starting shell...\r\n');
-      _shellProcess = await Process.start(
-          adbPath != null && adbPath.isNotEmpty ? adbPath : 'adb', args);
-      _shellStdoutSub = _shellProcess!.stdout.listen((data) {
-        _terminal?.write(String.fromCharCodes(data));
-      });
-      _shellStderrSub = _shellProcess!.stderr.listen((data) {
-        _terminal?.write(String.fromCharCodes(data));
-      });
-      _terminal!.onOutput = (String text) {
-        if (_shellProcess != null) {
-          _shellProcess!.stdin.write(text);
-        }
-      };
-      _shellProcess!.exitCode.then((code) {
-        _terminal?.write('\r\nShell exited (code $code)\r\n');
-        _disposeShell();
-      });
-      setState(() {});
-    } catch (e) {
-      _terminal?.write('Failed to start shell: $e\r\n');
-    }
+  Widget _unifiedTerminalTab() {
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: [
+          Container(
+            color: Theme.of(context).primaryColor.withOpacity(0.1),
+            child: const TabBar(
+              tabs: [
+                Tab(icon: Icon(Icons.terminal), text: 'Shell'),
+                Tab(icon: Icon(Icons.code), text: 'Commands'),
+              ],
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _shellTerminalView(),
+                _commandConsoleView(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  void _disposeShell() {
-    _shellStdoutSub?.cancel();
-    _shellStderrSub?.cancel();
-    _shellStdoutSub = null;
-    _shellStderrSub = null;
-    _shellProcess = null;
+  Widget _shellTerminalView() {
+    return Column(
+      children: [
+        // Terminal output area
+        Expanded(
+          child: Container(
+            color: Colors.black,
+            padding: const EdgeInsets.all(8),
+            child: StreamBuilder<String>(
+              stream: _adb.backend is FlutterAdbBackend 
+                  ? (_adb.backend as FlutterAdbBackend).client?.output
+                  : _adb.output,
+              builder: (context, snapshot) {
+                // Use shell-specific buffer for flutter_adb
+                final lines = _shellBufferSnapshot();
+                
+                // Auto-scroll to bottom when new content arrives
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (_consoleScroll.hasClients) {
+                    _consoleScroll.animateTo(
+                      _consoleScroll.position.maxScrollExtent,
+                      duration: const Duration(milliseconds: 100),
+                      curve: Curves.easeOut,
+                    );
+                  }
+                });
+                
+                return ListView.builder(
+                  controller: _consoleScroll,
+                  itemCount: lines.length,
+                  itemBuilder: (_, i) => SelectableText(
+                    lines[i],
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      color: Colors.green,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        // Terminal controls
+        Container(
+          color: Colors.grey[900],
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            children: [
+              // Input field
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _cmd,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        color: Colors.white,
+                      ),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                        labelText: 'Shell Command',
+                        labelStyle: TextStyle(color: Colors.grey),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: BorderSide(color: Colors.grey),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderSide: BorderSide(color: Colors.blue),
+                        ),
+                      ),
+                      onSubmitted: (value) => _executeShellCommand(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: _executeShellCommand,
+                    icon: const Icon(Icons.send),
+                    label: const Text('Send'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Control buttons
+              Row(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _openFlutterAdbShell,
+                    icon: const Icon(Icons.power_settings_new),
+                    label: Text(_isShellActive() ? 'Shell Active' : 'Open Shell'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _isShellActive() ? Colors.orange : Colors.green
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: _closeFlutterAdbShell,
+                    icon: const Icon(Icons.power_off),
+                    label: const Text('Close Shell'),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: _clearTerminal,
+                    icon: const Icon(Icons.clear_all),
+                    label: const Text('Clear'),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
-  Widget _terminalTab() {
-    return Column(children: [
-      Expanded(
-        child: _terminal == null
-            ? Center(
-                child: Text('No shell session. Press Open Shell.'),
-              )
-            : Focus(
-                focusNode: _terminalFocusNode,
-                child: TerminalView(
-                  _terminal!,
-                  autofocus: true,
-                  padding: const EdgeInsets.all(4),
+  Widget _commandConsoleView() {
+    return Column(
+      children: [
+        Expanded(
+          child: StreamBuilder<String>(
+            stream: _adb.output,
+            builder: (ctx, snap) {
+              final lines = _bufferSnapshot();
+              return ListView.builder(
+                controller: _consoleScroll,
+                itemCount: lines.length,
+                itemBuilder: (_, i) => SelectableText(
+                  lines[i],
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+              );
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _cmd,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                    labelText: 'ADB Command',
+                  ),
+                  onSubmitted: (value) => _executeAdbCommand(),
                 ),
               ),
-      ),
-      Container(
-        color: Colors.grey[200],
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(children: [
-          ElevatedButton.icon(
-            onPressed:
-                _shellProcess == null ? _openInteractiveShellInTerminal : null,
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Open Shell'),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: _executeAdbCommand,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Run'),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          ElevatedButton.icon(
-            onPressed: _shellProcess != null
-                ? () {
-                    _shellProcess!.kill();
-                  }
-                : null,
-            icon: const Icon(Icons.stop),
-            label: const Text('Stop'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-          ),
-          const SizedBox(width: 8),
-          if (_terminal != null)
-            ElevatedButton.icon(
-              onPressed: () {
-                _terminal!.write('\x1b[2J\x1b[H');
-              },
-              icon: const Icon(Icons.cleaning_services),
-              label: const Text('Clear'),
-            ),
-        ]),
-      )
-    ]);
+        ),
+      ],
+    );
+  }
+
+  Future<void> _executeShellCommand() async {
+    final command = _cmd.text.trim();
+    if (command.isEmpty) return;
+    
+    _cmd.clear();
+    
+    // Add command to shell buffer to show what was executed
+    _addToShellBuffer('❯ $command');
+    
+    // Try flutter_adb shell first
+    if (_adb.backend is FlutterAdbBackend) {
+      final flutterAdbBackend = _adb.backend as FlutterAdbBackend;
+      final client = flutterAdbBackend.client;
+      if (client != null) {
+        final success = await client.writeToShell('$command\n');
+        if (!success) {
+          _adb.addOutput('❌ Failed to send command to shell');
+          _addToShellBuffer('❌ Failed to send command to shell');
+        }
+      } else {
+        _adb.addOutput('❌ No connected flutter_adb client');
+        _addToShellBuffer('❌ No connected flutter_adb client');
+      }
+    } else {
+      // Fallback to regular command execution
+      await _adb.executeCommand('shell $command');
+    }
+  }
+
+  Future<void> _executeAdbCommand() async {
+    final command = _cmd.text.trim();
+    if (command.isEmpty) return;
+    
+    _cmd.clear();
+    await _adb.executeCommand(command);
+  }
+
+  Future<void> _openFlutterAdbShell() async {
+    if (_adb.backend is FlutterAdbBackend) {
+      final flutterAdbBackend = _adb.backend as FlutterAdbBackend;
+      final client = flutterAdbBackend.client;
+      if (client != null) {
+        // Start listening to shell output before opening shell
+        _setupShellOutputListener(client);
+        
+        final success = await client.openShell();
+        if (success) {
+          _adb.addOutput('✅ Interactive shell opened via flutter_adb');
+          _addToShellBuffer('🚀 Flutter ADB shell session started');
+          _addToShellBuffer('💡 Type commands and press Enter to execute');
+        } else {
+          _adb.addOutput('❌ Failed to open shell - ensure device is connected');
+        }
+      } else {
+        _adb.addOutput('❌ No connected flutter_adb client');
+      }
+    } else {
+      _adb.addOutput('❌ Flutter ADB shell requires Flutter ADB backend');
+      _adb.addOutput('💡 Switch to Flutter ADB backend in Info tab');
+    }
+  }
+
+  void _setupShellOutputListener(FlutterAdbClient client) {
+    // Cancel any existing subscription
+    _shellOutputSub?.cancel();
+    
+    // Clear the shell buffer
+    _shellOutputBuffer.clear();
+    
+    // Listen to dedicated shell output stream
+    _shellOutputSub = client.shellOutput.listen((output) {
+      _addToShellBuffer(output);
+      // Trigger UI rebuild
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  void _addToShellBuffer(String line) {
+    setState(() {
+      // Split multi-line output
+      final lines = line.split('\n');
+      for (final l in lines) {
+        if (l.trim().isNotEmpty) {
+          _shellOutputBuffer.add(l);
+        }
+      }
+      
+      // Keep buffer size manageable (last 1000 lines)
+      if (_shellOutputBuffer.length > 1000) {
+        _shellOutputBuffer.removeRange(0, _shellOutputBuffer.length - 1000);
+      }
+    });
+  }
+
+  Future<void> _closeFlutterAdbShell() async {
+    if (_adb.backend is FlutterAdbBackend) {
+      final flutterAdbBackend = _adb.backend as FlutterAdbBackend;
+      final client = flutterAdbBackend.client;
+      if (client != null) {
+        await client.closeShell();
+        _adb.addOutput('⏹️ Interactive shell closed');
+        _addToShellBuffer('🔚 Shell session ended');
+      }
+    }
+    
+    // Clean up shell output listener
+    _shellOutputSub?.cancel();
+    _shellOutputSub = null;
+  }
+
+  bool _isShellActive() {
+    if (_adb.backend is FlutterAdbBackend) {
+      final flutterAdbBackend = _adb.backend as FlutterAdbBackend;
+      final client = flutterAdbBackend.client;
+      return client != null && _shellOutputSub != null;
+    }
+    return false;
+  }
+
+  void _clearTerminal() {
+    _adb.clearOutput();
+    
+    // Also clear shell buffer if using flutter_adb
+    if (_adb.backend is FlutterAdbBackend) {
+      setState(() {
+        _shellOutputBuffer.clear();
+        _addToShellBuffer('🧹 Terminal cleared');
+      });
+    }
+  }
+
+  // App Management Methods
+  Future<String?> _executeShellCommandForOutput(String command) async {
+    if (_adb.currentState != ADBConnectionState.connected) {
+      _adb.addOutput('❌ Not connected to device');
+      return null;
+    }
+
+    try {
+      _adb.addOutput('🔍 Executing: $command');
+      
+      // Check if we have external backend available (like we see in executeCommand)
+      if (_adb.backend != null && _adb.connectedDeviceId.isNotEmpty) {
+        _adb.addOutput('📱 Device: ${_adb.connectedDeviceId}');
+        final result = await _adb.backend!.shell(_adb.connectedDeviceId, command);
+        _adb.addOutput('✅ Command result: ${result.length} characters');
+        if (result.length > 100) {
+          _adb.addOutput('📋 Preview: ${result.substring(0, 100)}...');
+        } else {
+          _adb.addOutput('📋 Full result: $result');
+        }
+        return result;
+      } else {
+        _adb.addOutput('❌ No backend (${_adb.backend != null ? "available" : "null"}) or device ID (${_adb.connectedDeviceId})');
+        return null;
+      }
+    } catch (e) {
+      _adb.addOutput('❌ Error executing command: $e');
+      return null;
+    }
+  }
+
+  Future<void> _loadInstalledApps() async {
+    if (_adb.currentState != ADBConnectionState.connected) {
+      _adb.addOutput('❌ Cannot load apps: Device not connected');
+      return;
+    }
+
+    _adb.addOutput('🔄 Starting to load apps...');
+    setState(() => _loadingApps = true);
+
+    try {
+      final allApps = <AppInfo>[];
+      
+      _adb.addOutput('📦 Getting user packages...');
+      // Get list of user packages (3rd party)
+      final userPackagesOutput = await _executeShellCommandForOutput('pm list packages -3');
+      if (userPackagesOutput != null) {
+        _adb.addOutput('📝 User packages output: ${userPackagesOutput.length} chars');
+        for (final line in userPackagesOutput.split('\n')) {
+          if (line.startsWith('package:')) {
+            final packageName = line.substring(8).trim();
+            if (packageName.isNotEmpty) {
+              allApps.add(_createAppInfoFromPackageName(packageName, false));
+            }
+          }
+        }
+        _adb.addOutput('✅ Found ${allApps.length} user packages');
+      } else {
+        _adb.addOutput('❌ No user packages output received');
+      }
+      
+      _adb.addOutput('⚙️ Getting system packages...');
+      // Get list of system packages (limited to first 30 for performance)
+      final systemPackagesOutput = await _executeShellCommandForOutput('pm list packages -s');
+      if (systemPackagesOutput != null) {
+        _adb.addOutput('📝 System packages output: ${systemPackagesOutput.length} chars');
+        final systemLines = systemPackagesOutput.split('\n').where((line) => line.startsWith('package:')).take(30);
+        for (final line in systemLines) {
+          final packageName = line.substring(8).trim();
+          if (packageName.isNotEmpty) {
+            allApps.add(_createAppInfoFromPackageName(packageName, true));
+          }
+        }
+        _adb.addOutput('✅ Found ${allApps.where((app) => app.isSystemApp).length} system packages');
+      } else {
+        _adb.addOutput('❌ No system packages output received');
+      }
+
+      setState(() {
+        _installedApps = allApps.where((app) => !app.isSystemApp).toList();
+        _systemApps = allApps.where((app) => app.isSystemApp).toList();
+        _loadingApps = false;
+      });
+      
+      _adb.addOutput('✅ Loaded ${allApps.length} apps (${_installedApps.length} user, ${_systemApps.length} system)');
+    } catch (e) {
+      setState(() => _loadingApps = false);
+      _adb.addOutput('❌ Error loading apps: $e');
+    }
+  }
+
+  AppInfo _createAppInfoFromPackageName(String packageName, bool isSystemApp) {
+    // Create basic app info - detailed info loaded on-demand
+    return AppInfo(
+      packageName: packageName,
+      label: packageName.split('.').last, // Use last part as label
+      isSystemApp: isSystemApp,
+      isEnabled: true, // Assume enabled by default
+      version: 'Unknown',
+      versionCode: '0',
+      apkPath: '',
+      size: 0,
+    );
+  }
+
+  Future<AppInfo?> _getDetailedPackageInfo(String packageName) async {
+    try {
+      final output = await _executeShellCommandForOutput('dumpsys package $packageName');
+      if (output == null) return null;
+      
+      final info = _parsePackageInfo(packageName, output);
+      return info;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  AppInfo _parsePackageInfo(String packageName, String dumpsysOutput) {
+    final lines = dumpsysOutput.split('\n');
+    String label = packageName;
+    bool isSystemApp = false;
+    bool isEnabled = true;
+    String version = 'Unknown';
+    String versionCode = '0';
+    String apkPath = '';
+    int size = 0;
+
+    for (final line in lines) {
+      final trimmed = line.trim();
+      
+      if (trimmed.startsWith('versionName=')) {
+        version = trimmed.substring(12);
+      } else if (trimmed.startsWith('versionCode=')) {
+        versionCode = trimmed.substring(12).split(' ')[0];
+      } else if (trimmed.startsWith('codePath=')) {
+        apkPath = trimmed.substring(9);
+        if (apkPath.contains('/system/')) {
+          isSystemApp = true;
+        }
+      } else if (trimmed.contains('SYSTEM')) {
+        isSystemApp = true;
+      } else if (trimmed.contains('enabled=')) {
+        isEnabled = !trimmed.contains('enabled=false');
+      }
+    }
+
+    return AppInfo(
+      packageName: packageName,
+      label: label,
+      isSystemApp: isSystemApp,
+      isEnabled: isEnabled,
+      version: version,
+      versionCode: versionCode,
+      apkPath: apkPath,
+      size: size,
+    );
+  }
+
+  Future<void> _uninstallApp(String packageName) async {
+    try {
+      await _adb.executeCommand('shell pm uninstall $packageName');
+      _adb.addOutput('✅ Uninstalled $packageName');
+      _loadInstalledApps(); // Refresh list
+    } catch (e) {
+      _adb.addOutput('❌ Failed to uninstall $packageName: $e');
+    }
+  }
+
+  Future<void> _enableDisableApp(String packageName, bool enable) async {
+    try {
+      final command = enable ? 'enable' : 'disable-user';
+      await _adb.executeCommand('shell pm $command $packageName');
+      _adb.addOutput('✅ ${enable ? 'Enabled' : 'Disabled'} $packageName');
+      _loadInstalledApps(); // Refresh list
+    } catch (e) {
+      _adb.addOutput('❌ Failed to ${enable ? 'enable' : 'disable'} $packageName: $e');
+    }
+  }
+
+  Future<void> _clearAppData(String packageName) async {
+    try {
+      await _adb.executeCommand('shell pm clear $packageName');
+      _adb.addOutput('✅ Cleared data for $packageName');
+    } catch (e) {
+      _adb.addOutput('❌ Failed to clear data for $packageName: $e');
+    }
   }
 
   // Dashboard (connection + saved devices + quick actions)
@@ -956,6 +1414,39 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                   () => setState(() => _selectedIndex = 5)),
               _qa('Info', Icons.info_outline,
                   () => setState(() => _selectedIndex = 6)),
+              _qa('Key Status', Icons.vpn_key, () async {
+                await _adb.showCredentialStatus();
+                setState(() => _selectedIndex = 1); // Switch to terminal to see output
+              }),
+              _qa('Clear Keys', Icons.delete_forever, () async {
+                // Show confirmation dialog
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Clear RSA Keys'),
+                    content: const Text(
+                      'This will clear all saved RSA keys and device authorization history. '
+                      'You will need to re-authorize this app on all devices.\n\n'
+                      'Continue?'
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        child: const Text('Clear'),
+                      ),
+                    ],
+                  ),
+                );
+                
+                if (confirmed == true) {
+                  await _adb.clearSavedCredentials();
+                  setState(() => _selectedIndex = 1); // Switch to terminal to see output
+                }
+              }),
             ])
           ]),
         ),
@@ -1023,49 +1514,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
             icon: Icon(icon, size: 16),
             label: Text(label)),
       );
-
-  Widget _consoleTab() {
-    return Column(children: [
-      Expanded(
-        child: StreamBuilder<String>(
-          stream: _adb.output,
-          builder: (ctx, snap) {
-            // Fallback: maintain a simple local snapshot if manager lacks collectedOutput.
-            final lines = _bufferSnapshot();
-            return ListView.builder(
-              controller: _consoleScroll,
-              itemCount: lines.length,
-              itemBuilder: (_, i) => Text(lines[i],
-                  style:
-                      const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-            );
-          },
-        ),
-      ),
-      Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Row(children: [
-          Expanded(
-              child: TextField(
-                  controller: _cmd,
-                  decoration: const InputDecoration(
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                      labelText: 'Command'))),
-          const SizedBox(width: 8),
-          ElevatedButton(
-              onPressed: () async {
-                final c = _cmd.text.trim();
-                if (c.isEmpty) return;
-                _cmd.clear();
-                await _adb.executeCommand(c);
-              },
-              child: const Text('Run'))
-        ]),
-      )
-    ]);
-  }
-
 
   Widget _logcatTab() {
     return Column(children: [
@@ -1345,6 +1793,48 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   Widget _commandsTab() => ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // Connection Status Card
+          Card(
+            color: _adb.currentState == ADBConnectionState.connected 
+                ? Colors.green.withOpacity(0.1)
+                : Colors.red.withOpacity(0.1),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Icon(
+                    _adb.currentState == ADBConnectionState.connected 
+                        ? Icons.check_circle 
+                        : Icons.error,
+                    color: _adb.currentState == ADBConnectionState.connected 
+                        ? Colors.green 
+                        : Colors.red,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _adb.currentState == ADBConnectionState.connected 
+                              ? 'Device Connected' 
+                              : 'No Device Connected',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        if (_adb.currentState == ADBConnectionState.connected)
+                          Text('Device: ${_adb.connectedDeviceId}', 
+                               style: const TextStyle(fontSize: 12))
+                        else
+                          const Text('Connect a device to run commands', 
+                                   style: TextStyle(fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           const Text('Quick Commands',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
@@ -1358,12 +1848,42 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                                   fontFamily: 'monospace', fontSize: 12)),
                           subtitle:
                               Text(ADBCommands.getCommandDescription(cmd)),
-                          trailing: ElevatedButton(
-                              onPressed: _adb.currentState ==
-                                      ADBConnectionState.connected
-                                  ? () async => await _adb.executeCommand(cmd)
-                                  : null,
-                              child: const Text('Run')),
+                          trailing: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ElevatedButton.icon(
+                                onPressed: _adb.currentState ==
+                                        ADBConnectionState.connected
+                                    ? () async {
+                                        print('🔄 Executing quick command: $cmd');
+                                        _adb.addOutput('🚀 Quick command: $cmd');
+                                        try {
+                                          await _adb.executeCommand(cmd);
+                                          _adb.addOutput('✅ Command completed: $cmd');
+                                        } catch (e) {
+                                          _adb.addOutput('❌ Command failed: $cmd - Error: $e');
+                                        }
+                                      }
+                                    : null,
+                                icon: Icon(_adb.currentState == ADBConnectionState.connected 
+                                    ? Icons.play_arrow 
+                                    : Icons.error),
+                                label: Text(_adb.currentState == ADBConnectionState.connected 
+                                    ? 'Run' 
+                                    : 'No Device'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _adb.currentState == ADBConnectionState.connected 
+                                      ? Colors.green 
+                                      : Colors.grey,
+                                ),
+                              ),
+                              if (_adb.currentState != ADBConnectionState.connected)
+                                const Text(
+                                  'Connect device first',
+                                  style: TextStyle(fontSize: 10, color: Colors.grey),
+                                ),
+                            ],
+                          ),
                           onTap: () {
                             _cmd.text = cmd;
                             setState(() => _selectedIndex = 1);
@@ -1642,6 +2162,61 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
               ),
             ),
             const SizedBox(height: 16),
+            // Auto-Connect Settings Card
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Auto-Connect Settings', 
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    ListTile(
+                      leading: const Icon(Icons.auto_awesome, color: Colors.orange),
+                      title: const Text('Auto-start Logcat on connect'),
+                      subtitle: const Text('Automatically start logcat when device connects'),
+                      trailing: Switch(
+                        value: _autoStartLogcat,
+                        onChanged: (value) async {
+                          setState(() => _autoStartLogcat = value);
+                          await _saveAutoLogcatPreference();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(_autoStartLogcat 
+                                  ? 'Logcat will auto-start on connection' 
+                                  : 'Logcat auto-start disabled'),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.terminal, color: Colors.blue),
+                      title: const Text('Auto-open Shell on connect'),
+                      subtitle: const Text('Automatically open shell for Flutter ADB backend'),
+                      trailing: Switch(
+                        value: _autoOpenShell,
+                        onChanged: (value) async {
+                          setState(() => _autoOpenShell = value);
+                          await _saveAutoShellPreference();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(_autoOpenShell 
+                                  ? 'Shell will auto-open on Flutter ADB connection' 
+                                  : 'Shell auto-open disabled'),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
             // Help sections - define sections here
             ..._getHelpSections().map((section) => _helpSection(section.$1, section.$2, section.$3)),
           ],
@@ -1731,6 +2306,405 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
         return Colors.red;
       case ADBConnectionState.disconnected:
         return Colors.grey;
+    }
+  }
+
+  // Apps Tab - Enhanced App Management
+  Widget _appsTab() {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with load and search controls
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+              ElevatedButton.icon(
+                onPressed: _adb.currentState == ADBConnectionState.connected && !_loadingApps
+                    ? _loadInstalledApps
+                    : null,
+                icon: _loadingApps 
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.refresh),
+                label: Text(_loadingApps ? 'Loading...' : 'Load Apps'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+              ),
+              const SizedBox(width: 8),
+              // Debug button to test shell execution
+              ElevatedButton.icon(
+                onPressed: _adb.currentState == ADBConnectionState.connected
+                    ? () async {
+                        _adb.addOutput('🧪 Testing shell command execution...');
+                        final testResult = await _executeShellCommandForOutput('echo "Hello from device"');
+                        _adb.addOutput('🧪 Test result: ${testResult ?? "null"}');
+                      }
+                    : null,
+                icon: const Icon(Icons.bug_report, size: 16),
+                label: const Text('Debug'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 250,
+                child: TextField(
+                  decoration: const InputDecoration(
+                    hintText: 'Search apps...',
+                    prefixIcon: Icon(Icons.search),
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                  onChanged: (value) => setState(() => _appSearchQuery = value),
+                ),
+              ),
+              const SizedBox(width: 12),
+              ElevatedButton.icon(
+                onPressed: _adb.currentState == ADBConnectionState.connected
+                    ? _loadSystemInfo
+                    : null,
+                icon: const Icon(Icons.info, size: 16),
+                label: const Text('System Info'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+              ),
+              const SizedBox(width: 12),
+              DropdownButton<String>(
+                value: _selectedAppFilter,
+                items: const [
+                  DropdownMenuItem(value: 'All', child: Text('All Apps')),
+                  DropdownMenuItem(value: 'User', child: Text('User Apps')),
+                  DropdownMenuItem(value: 'System', child: Text('System Apps')),
+                  DropdownMenuItem(value: 'Enabled', child: Text('Enabled')),
+                  DropdownMenuItem(value: 'Disabled', child: Text('Disabled')),
+                ],
+                onChanged: (value) => setState(() => _selectedAppFilter = value!),
+              ),
+            ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          // Connection status and stats
+          if (_adb.currentState != ADBConnectionState.connected)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                border: Border.all(color: Colors.orange.shade200),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.warning, color: Colors.orange),
+                  SizedBox(width: 12),
+                  Text('Connect to a device to manage apps', 
+                      style: TextStyle(color: Colors.orange)),
+                ],
+              ),
+            )
+          else ...[
+            // App statistics
+            Row(
+              children: [
+                _buildAppStatCard('User Apps', _installedApps.length, Colors.blue),
+                const SizedBox(width: 12),
+                _buildAppStatCard('System Apps', _systemApps.length, Colors.green),
+                const SizedBox(width: 12),
+                _buildAppStatCard('Total', _installedApps.length + _systemApps.length, Colors.purple),
+              ],
+            ),
+            const SizedBox(height: 16),
+            
+            // App list
+            Expanded(
+              child: _buildAppList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAppStatCard(String title, int count, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          border: Border.all(color: color.withOpacity(0.3)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          children: [
+            Text(count.toString(), 
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color)),
+            Text(title, style: TextStyle(fontSize: 12, color: color)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAppList() {
+    final allApps = [..._installedApps, ..._systemApps];
+    final filteredApps = allApps.where((app) {
+      // Apply search filter
+      if (_appSearchQuery.isNotEmpty) {
+        final query = _appSearchQuery.toLowerCase();
+        if (!app.packageName.toLowerCase().contains(query) &&
+            !app.label.toLowerCase().contains(query)) {
+          return false;
+        }
+      }
+      
+      // Apply type filter
+      switch (_selectedAppFilter) {
+        case 'User':
+          return !app.isSystemApp;
+        case 'System':
+          return app.isSystemApp;
+        case 'Enabled':
+          return app.isEnabled;
+        case 'Disabled':
+          return !app.isEnabled;
+        default:
+          return true;
+      }
+    }).toList();
+
+    if (filteredApps.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.apps, size: 48, color: Colors.grey),
+            SizedBox(height: 16),
+            Text('No apps found', style: TextStyle(color: Colors.grey)),
+            Text('Try loading apps or adjusting filters', 
+                style: TextStyle(color: Colors.grey, fontSize: 12)),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: filteredApps.length,
+      itemBuilder: (context, index) {
+        final app = filteredApps[index];
+        return _buildAppListItem(app);
+      },
+    );
+  }
+
+  Widget _buildAppListItem(AppInfo app) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ExpansionTile(
+        leading: Icon(
+          app.isSystemApp ? Icons.android : Icons.apps,
+          color: app.isSystemApp ? Colors.green : Colors.blue,
+        ),
+        title: Text(
+          app.label.isNotEmpty ? app.label : app.packageName,
+          style: const TextStyle(fontWeight: FontWeight.w500),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(app.packageName, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: app.isSystemApp ? Colors.green.shade100 : Colors.blue.shade100,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(app.typeLabel, 
+                      style: TextStyle(fontSize: 10, 
+                          color: app.isSystemApp ? Colors.green.shade700 : Colors.blue.shade700)),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: app.isEnabled ? Colors.green.shade100 : Colors.red.shade100,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(app.statusLabel, 
+                      style: TextStyle(fontSize: 10, 
+                          color: app.isEnabled ? Colors.green.shade700 : Colors.red.shade700)),
+                ),
+              ],
+            ),
+          ],
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // App details
+                _buildAppDetailRow('Version', app.version),
+                _buildAppDetailRow('Version Code', app.versionCode),
+                _buildAppDetailRow('APK Path', app.apkPath),
+                if (app.size > 0) _buildAppDetailRow('Size', app.sizeFormatted),
+                
+                const SizedBox(height: 16),
+                
+                // Action buttons
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () => _showAppDetails(app),
+                      icon: const Icon(Icons.info, size: 16),
+                      label: const Text('Details'),
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                    ),
+                    if (!app.isSystemApp) ...[
+                      ElevatedButton.icon(
+                        onPressed: () => _uninstallApp(app.packageName),
+                        icon: const Icon(Icons.delete, size: 16),
+                        label: const Text('Uninstall'),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                      ),
+                    ],
+                    ElevatedButton.icon(
+                      onPressed: () => _enableDisableApp(app.packageName, !app.isEnabled),
+                      icon: Icon(app.isEnabled ? Icons.block : Icons.check, size: 16),
+                      label: Text(app.isEnabled ? 'Disable' : 'Enable'),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: app.isEnabled ? Colors.orange : Colors.green),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () => _clearAppData(app.packageName),
+                      icon: const Icon(Icons.cleaning_services, size: 16),
+                      label: const Text('Clear Data'),
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAppDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
+          ),
+          Expanded(
+            child: SelectableText(value, style: const TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAppDetails(AppInfo app) async {
+    // Load detailed info if needed
+    AppInfo detailedApp = app;
+    if (app.version == 'Unknown') {
+      final detailed = await _getDetailedPackageInfo(app.packageName);
+      if (detailed != null) {
+        detailedApp = detailed;
+      }
+    }
+
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(detailedApp.label.isNotEmpty ? detailedApp.label : detailedApp.packageName),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildAppDetailRow('Package Name', detailedApp.packageName),
+              _buildAppDetailRow('Version', detailedApp.version),
+              _buildAppDetailRow('Version Code', detailedApp.versionCode),
+              _buildAppDetailRow('Type', detailedApp.typeLabel),
+              _buildAppDetailRow('Status', detailedApp.statusLabel),
+              _buildAppDetailRow('APK Path', detailedApp.apkPath),
+              if (detailedApp.size > 0) _buildAppDetailRow('Size', detailedApp.sizeFormatted),
+              if (detailedApp.installDate != null) 
+                _buildAppDetailRow('Installed', detailedApp.installDate.toString()),
+              if (detailedApp.lastUpdateDate != null) 
+                _buildAppDetailRow('Last Updated', detailedApp.lastUpdateDate.toString()),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadSystemInfo() async {
+    if (_adb.currentState != ADBConnectionState.connected) {
+      return;
+    }
+
+    try {
+      final deviceModel = await _executeShellCommandForOutput('getprop ro.product.model') ?? 'Unknown';
+      final androidVersion = await _executeShellCommandForOutput('getprop ro.build.version.release') ?? 'Unknown';
+      final apiLevel = await _executeShellCommandForOutput('getprop ro.build.version.sdk') ?? 'Unknown';
+      final buildId = await _executeShellCommandForOutput('getprop ro.build.id') ?? 'Unknown';
+      final manufacturer = await _executeShellCommandForOutput('getprop ro.product.manufacturer') ?? 'Unknown';
+      
+      _adb.addOutput('📱 Device Info:');
+      _adb.addOutput('  Model: ${deviceModel.trim()}');
+      _adb.addOutput('  Manufacturer: ${manufacturer.trim()}');
+      _adb.addOutput('  Android: ${androidVersion.trim()} (API ${apiLevel.trim()})');
+      _adb.addOutput('  Build ID: ${buildId.trim()}');
+      
+      // Show in dialog too
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Device Information'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildAppDetailRow('Model', deviceModel.trim()),
+                _buildAppDetailRow('Manufacturer', manufacturer.trim()),
+                _buildAppDetailRow('Android Version', androidVersion.trim()),
+                _buildAppDetailRow('API Level', apiLevel.trim()),
+                _buildAppDetailRow('Build ID', buildId.trim()),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      _adb.addOutput('❌ Error loading system info: $e');
     }
   }
 }

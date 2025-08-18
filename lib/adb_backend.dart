@@ -610,6 +610,11 @@ class ExternalAdbBackend implements ADBBackend {
 class FlutterAdbBackend extends ADBBackend {
   final Map<String, FlutterAdbClient> _clients = {};
   
+  // Getter to access the first connected client for shell operations
+  FlutterAdbClient? get client => _clients.values.where((c) => c.isConnected).isNotEmpty 
+      ? _clients.values.where((c) => c.isConnected).first 
+      : null;
+  
   @override
   Future<void> init() async {
     // No initialization needed
@@ -621,11 +626,8 @@ class FlutterAdbBackend extends ADBBackend {
     return _clients.entries
         .where((entry) => entry.value.isConnected)
         .map((entry) => ADBBackendDevice(
-              serial: entry.key,
-              state: 'device',
-              product: 'unknown',
-              model: 'Flutter ADB',
-              device: entry.key,
+              entry.key,  // serial
+              'device',   // state
             ))
         .toList();
   }
@@ -637,9 +639,15 @@ class FlutterAdbBackend extends ADBBackend {
       throw Exception('Device $serial not connected');
     }
     
-    // For flutter_adb, we'll return a placeholder since shell execution
-    // is more complex and would need to be implemented separately
-    return 'Shell command executed via flutter_adb: $command';
+    try {
+      // Use the executeCommand method to run shell commands
+      // For shell commands, we need to prefix with 'shell:'
+      final shellCommand = command.startsWith('shell:') ? command : 'shell:$command';
+      final result = await client.executeCommand(shellCommand);
+      return result;
+    } catch (e) {
+      throw Exception('Shell command failed: $e');
+    }
   }
 
   @override
