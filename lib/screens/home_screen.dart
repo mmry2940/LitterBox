@@ -11,6 +11,7 @@ import '../isolate_scanner.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import '_host_tile_with_retry.dart';
 import 'adb_screen_refactored.dart';
+import 'android_sdk_screen.dart';
 import 'vnc_screen.dart';
 import 'rdp_screen.dart';
 
@@ -432,6 +433,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const AdbRefactoredScreen(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.settings_system_daydream),
+              title: const Text('Android SDK & Emulator'),
+              subtitle: const Text('Setup SDK and manage emulators'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AndroidSDKScreen(),
                   ),
                 );
               },

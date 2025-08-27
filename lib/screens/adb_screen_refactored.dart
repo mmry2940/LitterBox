@@ -11,6 +11,7 @@ import '../models/app_info.dart';
 import '../adb/adb_mdns_discovery.dart';
 import '../adb/usb_bridge.dart';
 import '../services/shared_adb_manager.dart';
+import '../services/android_sdk_manager.dart';
 import 'apps_screen.dart';
 
 /// Modular refactored ADB & WebADB UI.
@@ -23,6 +24,7 @@ class AdbRefactoredScreen extends StatefulWidget {
 class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     with TickerProviderStateMixin {
   late final ADBClientManager _adb;
+  late final AndroidSDKManager _sdkManager;
   int _selectedIndex = 0; // Replace TabController with index-based navigation
 
   // Connection & pairing
@@ -93,6 +95,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     
     // Use the shared ADB manager to ensure connection reuse
     _adb = SharedADBManager.instance.getSharedClient();
+    
+    // Initialize Android SDK manager
+    _sdkManager = AndroidSDKManager();
+    _sdkManager.initialize();
     
     _adb.output.listen((line) {
       if (_localBuffer.length > 1500) _localBuffer.removeRange(0, 800);
@@ -326,6 +332,9 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                       NavigationRailDestination(
                           icon: Icon(Icons.folder), label: Text('Files')),
                       NavigationRailDestination(
+                          icon: Icon(Icons.settings_system_daydream), 
+                          label: Text('SDK')),
+                      NavigationRailDestination(
                           icon: Icon(Icons.info), label: Text('Info')),
                     ],
                   ),
@@ -339,7 +348,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                 ? null
                 : BottomNavigationBar(
                     currentIndex:
-                        _selectedIndex.clamp(0, 5), // Updated limit for mobile
+                        _selectedIndex.clamp(0, 6), // Updated limit for mobile
                     onTap: (index) => setState(() => _selectedIndex = index),
                     type: BottomNavigationBarType.fixed,
                     items: const [
@@ -363,6 +372,14 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   }
 
   Widget _buildSelectedContent() {
+    // Handle mobile navigation differently - "More" tab shows additional options
+    final isWideScreen = MediaQuery.of(context).size.width > 800;
+    
+    if (!isWideScreen && _selectedIndex == 5) {
+      // Mobile "More" tab - show additional options
+      return _moreTab();
+    }
+    
     switch (_selectedIndex) {
       case 0:
         return _dashboardTab();
@@ -377,6 +394,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       case 5:
         return _filesTab();
       case 6:
+        return _sdkTab();
+      case 7:
         return _infoTab();
       default:
         return _dashboardTab();
@@ -2727,5 +2746,233 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     } catch (e) {
       _adb.addOutput('❌ Error loading system info: $e');
     }
+  }
+
+  /// Android SDK and Emulator Management Tab
+  Widget _sdkTab() {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        children: [
+          // Quick Status Card
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.settings_system_daydream, size: 20),
+                      const SizedBox(width: 8),
+                      const Text('Android SDK Manager', 
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      const Spacer(),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const AndroidSDKScreen(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.open_in_new, size: 16),
+                        label: const Text('Open SDK Manager'),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  StreamBuilder<AndroidSDKStatus>(
+                    stream: _sdkManager.status,
+                    initialData: AndroidSDKStatus.notInstalled,
+                    builder: (context, snapshot) {
+                      final status = snapshot.data ?? AndroidSDKStatus.notInstalled;
+                      IconData statusIcon;
+                      Color statusColor;
+                      String statusText;
+
+                      switch (status) {
+                        case AndroidSDKStatus.notInstalled:
+                          statusIcon = Icons.error_outline;
+                          statusColor = Colors.orange;
+                          statusText = 'Android SDK not found - Setup required';
+                          break;
+                        case AndroidSDKStatus.installing:
+                          statusIcon = Icons.downloading;
+                          statusColor = Colors.blue;
+                          statusText = 'Installing Android SDK components...';
+                          break;
+                        case AndroidSDKStatus.ready:
+                          statusIcon = Icons.check_circle;
+                          statusColor = Colors.green;
+                          statusText = 'Android SDK ready for development';
+                          break;
+                        case AndroidSDKStatus.error:
+                          statusIcon = Icons.error;
+                          statusColor = Colors.red;
+                          statusText = 'SDK setup failed - Check output for details';
+                          break;
+                      }
+
+                      return Row(
+                        children: [
+                          Icon(statusIcon, color: statusColor, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(statusText, style: TextStyle(color: statusColor))),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          
+          // Quick Actions Card
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Quick Actions', 
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () async {
+                          await _sdkManager.setupAndroidSDK();
+                        },
+                        icon: const Icon(Icons.download, size: 16),
+                        label: const Text('Setup SDK'),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: _sdkManager.isReady ? () async {
+                          await _sdkManager.createAVD('flutter_avd');
+                        } : null,
+                        icon: const Icon(Icons.smartphone, size: 16),
+                        label: const Text('Create AVD'),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: _sdkManager.isReady ? () async {
+                          final avds = await _sdkManager.listAVDs();
+                          if (avds.isNotEmpty) {
+                            await _sdkManager.startEmulator(avds.first.name);
+                          } else {
+                            _adb.addOutput('❌ No AVDs found. Create one first.');
+                          }
+                        } : null,
+                        icon: const Icon(Icons.play_arrow, size: 16),
+                        label: const Text('Start Emulator'),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          
+          // Recent Output Card
+          Expanded(
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('SDK Output', 
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: Container(
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: StreamBuilder<String>(
+                          stream: _sdkManager.output,
+                          builder: (context, snapshot) {
+                            return SingleChildScrollView(
+                              padding: const EdgeInsets.all(8),
+                              child: SelectableText(
+                                snapshot.hasData ? snapshot.data! : 'No output yet...',
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 12,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Mobile "More" tab with additional options
+  Widget _moreTab() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Additional Tools',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: ListView(
+              children: [
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.folder, color: Colors.blue),
+                    title: const Text('File Manager'),
+                    subtitle: const Text('Push/pull files, install APKs'),
+                    trailing: const Icon(Icons.arrow_forward_ios),
+                    onTap: () => setState(() => _selectedIndex = 5),
+                  ),
+                ),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.settings_system_daydream, color: Colors.green),
+                    title: const Text('Android SDK & Emulator'),
+                    subtitle: const Text('Setup SDK, create and manage AVDs'),
+                    trailing: const Icon(Icons.arrow_forward_ios),
+                    onTap: () => setState(() => _selectedIndex = 6),
+                  ),
+                ),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.info, color: Colors.orange),
+                    title: const Text('Information'),
+                    subtitle: const Text('ADB backend settings and info'),
+                    trailing: const Icon(Icons.arrow_forward_ios),
+                    onTap: () => setState(() => _selectedIndex = 7),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
