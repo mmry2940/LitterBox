@@ -1,4 +1,7 @@
+
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:async'; // For Timer
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -55,7 +58,14 @@ class VNCScreen extends StatefulWidget {
   State<VNCScreen> createState() => _VNCScreenState();
 }
 
-class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
+class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
+  // Clipboard sync fields
+  final TextEditingController _clipboardController = TextEditingController();
+  String _lastClipboard = '';
+
+  // Encoding selection fields
+  String _selectedEncoding = 'Raw';
+  final List<String> _encodingOptions = ['Raw', 'CopyRect', 'RRE', 'CoRRE', 'Hextile', 'Zlib', 'Tight'];
   final TextEditingController _hostController = TextEditingController();
   final TextEditingController _portController =
       TextEditingController(text: '6080');
@@ -83,6 +93,8 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
   VNCConnectionMode _connectionMode =
       VNCConnectionMode.native; // Set native as default
   VNCClient? _vncClient;
+  String? _lastConnectedHost;
+  int? _lastConnectedPort;
 
   // Auto reconnect support
   bool _autoReconnect = false;
@@ -93,6 +105,7 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
 
   @override
   void initState() {
+    WidgetsBinding.instance.addObserver(this);
     super.initState();
 
     // Pre-fill connection details if provided
@@ -110,6 +123,29 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
     _loadConnectionProfiles();
     _initializeWebView();
     _applyDefaultScalingFromSettings();
+
+    // Listen for clipboard updates from VNC client and update local clipboard automatically
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_vncClient != null) {
+        _vncClient!.clipboardUpdates.listen((clip) async {
+          if (_lastClipboard != clip) {
+            _lastClipboard = clip;
+            _clipboardController.text = clip;
+            // Update system clipboard
+            await Clipboard.setData(ClipboardData(text: clip));
+          }
+        });
+      }
+    });
+
+    // Listen for local clipboard changes and send to VNC automatically
+    _clipboardController.addListener(() async {
+      final text = _clipboardController.text;
+      if (_vncClient != null && text.isNotEmpty && text != _lastClipboard) {
+        _lastClipboard = text;
+        await _vncClient!.sendClientCutText(text);
+      }
+    });
   }
 
   Future<void> _applyDefaultScalingFromSettings() async {
@@ -117,16 +153,12 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
       final prefs = await SharedPreferences.getInstance();
       final key = prefs.getString('vnc_default_scaling') ?? 'fit';
       setState(() {
-        switch (key) {
-          case 'original':
-            _scalingMode = VNCScalingMode.actualSize;
-            break;
-          case 'fill':
-            _scalingMode = VNCScalingMode.stretchFit;
-            break;
-          case 'fit':
-          default:
-            _scalingMode = VNCScalingMode.autoFitBest;
+        if (key == 'original') {
+          _scalingMode = VNCScalingMode.actualSize;
+        } else if (key == 'fill') {
+          _scalingMode = VNCScalingMode.stretchFit;
+        } else {
+          _scalingMode = VNCScalingMode.autoFitBest;
         }
       });
     } catch (_) {}
@@ -432,12 +464,29 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _hostController.dispose();
     _portController.dispose();
     _passwordController.dispose();
     _vncPortController.dispose();
     _pathController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      // App is backgrounded, keep connection alive if possible
+      if (_vncClient != null && _autoReconnect) {
+        _maybeScheduleReconnect();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      // App is foregrounded, reconnect if needed
+      if (_vncClient != null && _autoReconnect) {
+        // If not connected, reconnect
+        _getConnectFunction()?.call();
+      }
+    }
   }
 
   void _initializeWebView() {
@@ -632,7 +681,7 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
   Widget _buildMarqueeText(String text) {
     return SizedBox(
       width: 180.0, // Fixed width to prevent overflow
-      child: _MarqueeText(text: text),
+      child: Text(text, overflow: TextOverflow.ellipsis),
     );
   }
 
@@ -740,7 +789,9 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
       _connectionError = null;
     });
 
-    _vncClient = VNCClient();
+  _vncClient = VNCClient();
+  _lastConnectedHost = host;
+  _lastConnectedPort = vncPort;
 
     // Listen to logs for debugging
     _vncClient!.logs.listen((log) {
@@ -1341,25 +1392,97 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
                                 fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 12),
-                          ..._savedDevices.map((device) => ListTile(
-                                leading: const Icon(Icons.devices),
-                                title: Text(device.name),
-                                subtitle: Text('${device.host}:${device.port}'),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.edit),
-                                      onPressed: () => _loadDevice(device),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete),
-                                      onPressed: () => _deleteDevice(device),
-                                    ),
-                                  ],
-                                ),
-                                onTap: () => _loadDevice(device),
-                              )),
+                          ..._savedDevices.map((device) {
+                            // Determine connection status for this device
+                            VNCConnectionState? status;
+                            if (_vncClient != null &&
+                                _lastConnectedHost == device.host &&
+                                _lastConnectedPort == device.port) {
+                              status = _vncClient!.currentState;
+                            } else {
+                              status = null;
+                            }
+                            IconData statusIcon;
+                            Color statusColor;
+                            String statusText;
+                            switch (status) {
+                              case VNCConnectionState.connected:
+                                statusIcon = Icons.check_circle;
+                                statusColor = Colors.green;
+                                statusText = 'Connected';
+                                break;
+                              case VNCConnectionState.connecting:
+                                statusIcon = Icons.sync;
+                                statusColor = Colors.blue;
+                                statusText = 'Connecting';
+                                break;
+                              case VNCConnectionState.failed:
+                                statusIcon = Icons.error;
+                                statusColor = Colors.red;
+                                statusText = 'Failed';
+                                break;
+                              case VNCConnectionState.disconnected:
+                                statusIcon = Icons.remove_circle_outline;
+                                statusColor = Colors.grey;
+                                statusText = 'Disconnected';
+                                break;
+                              default:
+                                statusIcon = Icons.device_unknown;
+                                statusColor = Colors.grey;
+                                statusText = 'Idle';
+                            }
+                            return ListTile(
+                              leading: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  const Icon(Icons.devices),
+                                  Positioned(
+                                    right: -2,
+                                    bottom: -2,
+                                    child: Icon(statusIcon, color: statusColor, size: 18),
+                                  ),
+                                ],
+                              ),
+                              title: Text(device.name),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('${device.host}:${device.port}'),
+                                  Row(
+                                    children: [
+                                      Icon(statusIcon, color: statusColor, size: 16),
+                                      const SizedBox(width: 4),
+                                      Text(statusText, style: TextStyle(color: statusColor, fontSize: 12)),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.play_arrow),
+                                    tooltip: 'Connect',
+                                    onPressed: () async {
+                                      await _loadDevice(device);
+                                      _getConnectFunction()?.call();
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.edit),
+                                    tooltip: 'Edit',
+                                    onPressed: () => _loadDevice(device),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete),
+                                    tooltip: 'Remove',
+                                    onPressed: () => _deleteDevice(device),
+                                  ),
+                                ],
+                              ),
+                              onTap: () => _loadDevice(device),
+                            );
+                          }),
                         ],
                       ),
                     ),
@@ -1854,15 +1977,13 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(snack);
     }
-    final start = DateTime.now();
+    _reconnectTimerStart = DateTime.now();
     _reconnectTimer = Timer(delay, () {
       _reconnectTimer = null;
       if (mounted && !_isConnecting && !_showVncWidget) {
         _connectWithNativeVNC();
       }
     });
-    // store start time for remaining seconds calc
-    _reconnectTimerStart = start;
   }
 
   DateTime? _reconnectTimerStart;
@@ -1897,7 +2018,7 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
     _connectionSheetOpen = false;
   }
 
-  @override
+    @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: !_showVncWidget,
@@ -2020,94 +2141,141 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildVncWidget() {
+    Widget statusIndicator() {
+      VNCConnectionState? state = _vncClient?.currentState;
+      IconData icon;
+      Color color;
+      String text;
+      switch (state) {
+        case VNCConnectionState.connected:
+          icon = Icons.check_circle;
+          color = Colors.green;
+          text = 'Connected';
+          break;
+        case VNCConnectionState.connecting:
+          icon = Icons.sync;
+          color = Colors.blue;
+          text = 'Connecting';
+          break;
+        case VNCConnectionState.failed:
+          icon = Icons.error;
+          color = Colors.red;
+          text = 'Failed';
+          break;
+        case VNCConnectionState.disconnected:
+          icon = Icons.remove_circle_outline;
+          color = Colors.grey;
+          text = 'Disconnected';
+          break;
+        default:
+          icon = Icons.device_unknown;
+          color = Colors.grey;
+          text = 'Idle';
+      }
+      return Container(
+        width: double.infinity,
+        color: color.withOpacity(0.08),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 22),
+            const SizedBox(width: 10),
+            Text(text, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16)),
+            const Spacer(),
+            Text('${_hostController.text}:${_vncPortController.text}', style: const TextStyle(fontSize: 13, color: Colors.grey)),
+          ],
+        ),
+      );
+    }
+
     switch (_connectionMode) {
       case VNCConnectionMode.webview:
-        return _webViewController != null
-            ? WebViewWidget(controller: _webViewController!)
-            : const Center(child: CircularProgressIndicator());
+        return Column(
+          children: [
+            statusIndicator(),
+            Expanded(
+              child: _webViewController != null
+                  ? WebViewWidget(controller: _webViewController!)
+                  : const Center(child: CircularProgressIndicator()),
+            ),
+          ],
+        );
       case VNCConnectionMode.native:
         return _vncClient != null
-            ? VNCClientWidget(
-                client: _vncClient!,
-                scalingMode: _scalingMode,
-                inputMode: _inputMode,
-                resolutionMode: _resolutionMode,
-                onDisconnectRequest: _disconnect,
+            ? Column(
+                children: [
+                  statusIndicator(),
+                  // Encoding selection
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Row(
+                      children: [
+                        const Text('Encoding:'),
+                        const SizedBox(width: 8),
+                        DropdownButton<String>(
+                          value: _selectedEncoding,
+                          items: _encodingOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                          onChanged: (v) {
+                            setState(() => _selectedEncoding = v ?? 'Raw');
+                            // TODO: Pass encoding to VNC client
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Clipboard sync
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _clipboardController,
+                            decoration: const InputDecoration(
+                              labelText: 'Clipboard',
+                              hintText: 'Paste here to send to VNC',
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.copy),
+                          tooltip: 'Copy from VNC',
+                          onPressed: () {
+                            Clipboard.setData(ClipboardData(text: _lastClipboard));
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.paste),
+                          tooltip: 'Send to VNC',
+                          onPressed: () {
+                            final text = _clipboardController.text;
+                            if (_vncClient != null && text.isNotEmpty) {
+                              // Send clipboard text to VNC server
+                              if (_vncClient is VNCClient && _vncClient!.clipboardUpdates is StreamController<String>) {
+                                (_vncClient!.clipboardUpdates as StreamController<String>).add(text);
+                              }
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(),
+                  Expanded(
+                    child: VNCClientWidget(
+                      client: _vncClient!,
+                      scalingMode: _scalingMode,
+                      inputMode: _inputMode,
+                      resolutionMode: _resolutionMode,
+                      onDisconnectRequest: _disconnect,
+                    ),
+                  ),
+                ],
               )
             : const Center(child: CircularProgressIndicator());
     }
   }
 }
 
-// Custom marquee text widget for dropdown items
-class _MarqueeText extends StatefulWidget {
-  final String text;
-  const _MarqueeText({required this.text});
 
-  @override
-  State<_MarqueeText> createState() => _MarqueeTextState();
-}
 
-class _MarqueeTextState extends State<_MarqueeText>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late ScrollController _scrollController;
-
-  @override
-  void initState() {
-    super.initState();
-    _scrollController = ScrollController();
-    _controller = AnimationController(
-      duration: const Duration(seconds: 3),
-      vsync: this,
-    );
-
-    // Start animation after a delay
-    Future.delayed(const Duration(seconds: 1), () {
-      if (mounted) {
-        _startMarquee();
-      }
-    });
-  }
-
-  void _startMarquee() async {
-    while (mounted) {
-      await Future.delayed(const Duration(seconds: 2));
-      if (mounted && _scrollController.hasClients) {
-        await _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(seconds: 2),
-          curve: Curves.easeInOut,
-        );
-        await Future.delayed(const Duration(seconds: 1));
-        if (mounted && _scrollController.hasClients) {
-          await _scrollController.animateTo(
-            0.0,
-            duration: const Duration(seconds: 2),
-            curve: Curves.easeInOut,
-          );
-        }
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      controller: _scrollController,
-      scrollDirection: Axis.horizontal,
-      child: Text(
-        widget.text,
-        style: const TextStyle(fontSize: 14),
-        overflow: TextOverflow.visible,
-      ),
-    );
-  }
-}

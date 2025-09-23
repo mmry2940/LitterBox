@@ -20,8 +20,10 @@ class AdbRefactoredScreen extends StatefulWidget {
   State<AdbRefactoredScreen> createState() => _AdbRefactoredScreenState();
 }
 
-class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
-    with TickerProviderStateMixin {
+class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerProviderStateMixin {
+  // Favorites for connections
+  Set<String> _favoriteConnections = {};
+  String _connectionFilter = 'All';
   late final ADBClientManager _adb;
   int _selectedIndex = 0; // Replace TabController with index-based navigation
 
@@ -87,6 +89,13 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   String _appSearchQuery = '';
   String _selectedAppFilter = 'All'; // All, User, System, Enabled, Disabled
 
+  // Sorting options
+  String _deviceSortOption = 'Alphabetical';
+
+  // Multi-select batch operations state
+  Set<String> _selectedDeviceNames = {};
+  bool _batchMode = false;
+
   @override
   void initState() {
     super.initState();
@@ -148,6 +157,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       _savedDevices = (prefs.getStringList('adb_devices') ?? [])
           .map((j) => SavedADBDevice.fromJson(jsonDecode(j)))
           .toList();
+      final favStr = prefs.getStringList('favorite_connections') ?? [];
+      _favoriteConnections = favStr.toSet();
       final cachedMdns = prefs.getString('mdns_cache');
       if (cachedMdns != null) {
         try {
@@ -194,6 +205,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('adb_devices',
         _savedDevices.map((d) => jsonEncode(d.toJson())).toList());
+  await prefs.setStringList('favorite_connections', _favoriteConnections.toList());
     if (mounted) setState(() {});
     if (mounted) {
       ScaffoldMessenger.of(context)
@@ -973,6 +985,24 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                     const SizedBox(height: 8),
                     _quickActionsCard(),
                     const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Text('Filter:'),
+                        const SizedBox(width: 8),
+                        DropdownButton<String>(
+                          value: _connectionFilter,
+                          items: ['All', 'Favorites']
+                              .map((f) => DropdownMenuItem(
+                                    value: f,
+                                    child: Text(f),
+                                  ))
+                              .toList(),
+                          onChanged: (v) => setState(() {
+                            _connectionFilter = v ?? 'All';
+                          }),
+                        ),
+                      ],
+                    ),
                     Expanded(
                         child: _savedDevicesWidget(scrollableParent: false)),
                   ]),
@@ -986,6 +1016,24 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                   const SizedBox(height: 8),
                   _quickActionsCard(),
                   const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Text('Filter:'),
+                      const SizedBox(width: 8),
+                      DropdownButton<String>(
+                        value: _connectionFilter,
+                        items: ['All', 'Favorites']
+                            .map((f) => DropdownMenuItem(
+                                  value: f,
+                                  child: Text(f),
+                                ))
+                            .toList(),
+                        onChanged: (v) => setState(() {
+                          _connectionFilter = v ?? 'All';
+                        }),
+                      ),
+                    ],
+                  ),
                   _savedDevicesWidget(scrollableParent: true),
                 ]),
               ),
@@ -1469,6 +1517,81 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
           const Text('Saved Devices',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
+          // Search/filter bar for connections
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: TextField(
+              decoration: InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                hintText: 'Search connections by name, type, status...',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onChanged: (query) {
+                setState(() {
+                  _appSearchQuery = query;
+                });
+              },
+            ),
+          ),
+          // Add sorting options dropdown above the device list
+          Row(
+            children: [
+              const Text('Sort by:'),
+              const SizedBox(width: 8),
+              DropdownButton<String>(
+                value: _deviceSortOption,
+                items: [
+                  'Alphabetical',
+                  'Last Used',
+                  'Pinned First',
+                ].map((option) => DropdownMenuItem(
+                  value: option,
+                  child: Text(option),
+                )).toList(),
+                onChanged: (v) => setState(() {
+                  _deviceSortOption = v ?? 'Alphabetical';
+                }),
+              ),
+            ],
+          ),
+          // Multi-select batch operations controls
+          Row(
+            children: [
+              ElevatedButton.icon(
+                icon: Icon(_batchMode ? Icons.cancel : Icons.select_all),
+                label: Text(_batchMode ? 'Exit Batch Mode' : 'Batch Select'),
+                onPressed: () => setState(() => _batchMode = !_batchMode),
+              ),
+              if (_batchMode) ...[
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.delete),
+                  label: const Text('Delete Selected'),
+                  onPressed: _selectedDeviceNames.isEmpty ? null : () async {
+                    setState(() {
+                      _savedDevices.removeWhere((d) => _selectedDeviceNames.contains(d.name));
+                      _selectedDeviceNames.clear();
+                    });
+                  },
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.link),
+                  label: const Text('Connect Selected'),
+                  onPressed: _selectedDeviceNames.isEmpty ? null : () async {
+                    // In batch connect, call _loadDevice synchronously (no await)
+                    for (final d in _savedDevices.where((d) => _selectedDeviceNames.contains(d.name))) {
+                      _loadDevice(d);
+                    }
+                    setState(() {
+                      _selectedDeviceNames.clear();
+                    });
+                  },
+                ),
+              ],
+            ],
+          ),
           if (scrollableParent)
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 260),
@@ -1481,33 +1604,121 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     );
   }
 
-  Widget _savedDevicesList({bool shrinkWrap = false}) => ListView.builder(
-        shrinkWrap: shrinkWrap,
-        physics: shrinkWrap ? const ClampingScrollPhysics() : null,
-        itemCount: _savedDevices.length,
-        itemBuilder: (c, i) {
-          final d = _savedDevices[i];
-          return ListTile(
-            selected: _selectedSaved?.name == d.name,
-            leading: const Icon(Icons.memory),
-            title: Text(d.name, overflow: TextOverflow.ellipsis),
-            subtitle: Text(d.connectionType.displayName, maxLines: 1),
-            onTap: () => _loadDevice(d),
-            trailing: IconButton(
-                icon: const Icon(Icons.delete, size: 18),
-                onPressed: () async {
-                  _savedDevices.removeAt(i);
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.setStringList(
-                      'adb_devices',
-                      _savedDevices
-                          .map((d) => jsonEncode(d.toJson()))
-                          .toList());
-                  setState(() {});
-                }),
-          );
-        },
-      );
+  Widget _savedDevicesList({bool shrinkWrap = false}) {
+    // Group favorites at the top of the device list
+    final filteredDevices = _savedDevices.where((d) {
+      final q = _appSearchQuery.toLowerCase();
+      return d.name.toLowerCase().contains(q) ||
+             d.connectionType.displayName.toLowerCase().contains(q) ||
+             _adb.currentState.name.toLowerCase().contains(q);
+    }).toList();
+    final favoriteDevices = filteredDevices.where((d) => _favoriteConnections.contains(d.name)).toList();
+    final nonFavoriteDevices = filteredDevices.where((d) => !_favoriteConnections.contains(d.name)).toList();
+    final groupedDevices = [...favoriteDevices, ...nonFavoriteDevices];
+
+    // Sort groupedDevices based on selected option
+    List<SavedADBDevice> sortedDevices = List.from(groupedDevices);
+    switch (_deviceSortOption) {
+      case 'Alphabetical':
+        sortedDevices.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        break;
+      case 'Last Used':
+        sortedDevices.sort((a, b) => (b.lastUsed ?? DateTime(1970)).compareTo(a.lastUsed ?? DateTime(1970)));
+        break;
+      case 'Pinned First':
+        // Already grouped, but sort favorites alphabetically
+        final favs = sortedDevices.where((d) => _favoriteConnections.contains(d.name)).toList();
+        final nonFavs = sortedDevices.where((d) => !_favoriteConnections.contains(d.name)).toList();
+        favs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        nonFavs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        sortedDevices = [...favs, ...nonFavs];
+        break;
+    }
+
+    return ListView.builder(
+      shrinkWrap: shrinkWrap,
+      physics: shrinkWrap ? const ClampingScrollPhysics() : null,
+      itemCount: sortedDevices.length,
+      itemBuilder: (c, i) {
+        final d = sortedDevices[i];
+        final isFavorite = _favoriteConnections.contains(d.name);
+        if (_connectionFilter == 'Favorites' && !isFavorite) {
+          return const SizedBox.shrink();
+        }
+        return ListTile(
+          selected: _selectedSaved?.name == d.name,
+          leading: _batchMode
+            ? Checkbox(
+                value: _selectedDeviceNames.contains(d.name),
+                onChanged: (checked) {
+                  setState(() {
+                    if (checked ?? false) {
+                      _selectedDeviceNames.add(d.name);
+                    } else {
+                      _selectedDeviceNames.remove(d.name);
+                    }
+                  });
+                },
+              )
+            : Stack(
+                alignment: Alignment.topRight,
+                children: [
+                  Icon(
+                    isFavorite ? Icons.star : Icons.memory,
+                    color: isFavorite ? Colors.amber : null,
+                  ),
+                  if (d.isConnected != null)
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: Icon(
+                        d.isConnected! ? Icons.circle : Icons.circle_outlined,
+                        color: d.isConnected! ? Colors.green : Colors.red,
+                        size: 12,
+                      ),
+                    ),
+                ],
+              ),
+          title: Text(d.name, overflow: TextOverflow.ellipsis),
+          subtitle: Text(
+            [d.connectionType.displayName, if (d.label != null && d.label!.isNotEmpty) d.label, if (d.note != null && d.note!.isNotEmpty) d.note].join(' • '),
+            maxLines: 2,
+          ),
+          onTap: () => _loadDevice(d),
+          trailing: isFavorite
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.link),
+                    tooltip: 'Connect',
+                    onPressed: () => _loadDevice(d),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.edit),
+                    tooltip: 'Edit',
+                    onPressed: () {
+                      // Show edit dialog (reuse existing logic)
+                      _showEditDeviceDialog(d);
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete),
+                    tooltip: 'Remove',
+                    onPressed: () {
+                      setState(() {
+                        _savedDevices.remove(d);
+                        _favoriteConnections.remove(d.name);
+                      });
+                    },
+                  ),
+                ],
+              )
+            : null,
+        );
+      },
+    );
+  }
 
   Widget _qa(String label, IconData icon, VoidCallback onTap,
           {bool enabled = true}) =>
@@ -2073,7 +2284,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
 
   Widget _recentChips(List<String> items, ValueChanged<String> onTap,
       {String? label}) {
-    if (items.isEmpty) return const SizedBox();
+       if (items.isEmpty) return const SizedBox();
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -2099,7 +2310,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   Widget _sectionTitle(String title, IconData icon) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Row(children: [
-          Icon(icon, size: 18),
+          Icon(icon, size: 18, color: Theme.of(context).primaryColor),
           const SizedBox(width: 6),
           Text(title, style: const TextStyle(fontWeight: FontWeight.bold))
         ]),
@@ -2388,18 +2599,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                 icon: const Icon(Icons.info, size: 16),
                 label: const Text('System Info'),
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-              ),
-              const SizedBox(width: 12),
-              DropdownButton<String>(
-                value: _selectedAppFilter,
-                items: const [
-                  DropdownMenuItem(value: 'All', child: Text('All Apps')),
-                  DropdownMenuItem(value: 'User', child: Text('User Apps')),
-                  DropdownMenuItem(value: 'System', child: Text('System Apps')),
-                  DropdownMenuItem(value: 'Enabled', child: Text('Enabled')),
-                  DropdownMenuItem(value: 'Disabled', child: Text('Disabled')),
-                ],
-                onChanged: (value) => setState(() => _selectedAppFilter = value!),
               ),
             ],
             ),
@@ -2727,5 +2926,61 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     } catch (e) {
       _adb.addOutput('❌ Error loading system info: $e');
     }
+  }
+
+  // Edit device dialog
+  void _showEditDeviceDialog(SavedADBDevice device) {
+    final labelController = TextEditingController(text: device.label);
+    final noteController = TextEditingController(text: device.note);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Device'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: labelController,
+                decoration: const InputDecoration(
+                  labelText: 'Custom Label',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: noteController,
+                decoration: const InputDecoration(
+                  labelText: 'Note',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 8),
+              // Add any additional fields for device info here
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                device.label = labelController.text;
+                device.note = noteController.text;
+              });
+              Navigator.of(context).pop();
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
   }
 }

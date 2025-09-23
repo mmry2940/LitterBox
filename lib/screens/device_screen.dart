@@ -10,7 +10,7 @@ import 'device_misc_screen.dart';
 typedef AddDeviceCallback = void Function(String ip);
 
 class DeviceScreen extends StatefulWidget {
-  final Map<String, String> device;
+  final Map<String, dynamic> device;
   final int initialTab;
   final AddDeviceCallback? onAddDevice;
   const DeviceScreen(

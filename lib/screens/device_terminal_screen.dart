@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:xterm/xterm.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 class DeviceTerminalScreen extends StatefulWidget {
   final SSHClient? sshClient;
@@ -29,13 +30,23 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
   void initState() {
     super.initState();
     _terminal = Terminal();
+    _startForegroundService();
     _startShell();
   }
 
   @override
   void dispose() {
     _shellSession?.close();
+    FlutterForegroundTask.stopService();
     super.dispose();
+  }
+
+  void _startForegroundService() async {
+    await FlutterForegroundTask.startService(
+      notificationTitle: 'SSH Terminal Active',
+      notificationText: 'Your SSH session is running.',
+      callback: () {}, // No background callback needed for now
+    );
   }
 
   Future<void> _startShell() async {

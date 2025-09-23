@@ -1,7 +1,9 @@
+
 import 'package:flutter/material.dart';
 import '../adb_client.dart';
 import '../models/app_info.dart';
 import '../services/shared_adb_manager.dart';
+import '../main.dart';
 
 class AppsScreen extends StatefulWidget {
   const AppsScreen({super.key});
@@ -11,12 +13,18 @@ class AppsScreen extends StatefulWidget {
 }
 
 class _AppsScreenState extends State<AppsScreen> {
+  // Favorites state
+  final Set<String> _favoritePackages = {};
+  // Batch selection state
+  final Set<String> _selectedPackages = {};
+  bool _batchMode = false;
   late ADBClientManager _adb;
   
   // App management state
   List<AppInfo> _installedApps = [];
   List<AppInfo> _systemApps = [];
   bool _loadingApps = false;
+  bool _showLoadingOverlay = false;
   String _appSearchQuery = '';
   String _selectedAppFilter = 'All'; // All, User, System, Enabled, Disabled
   
@@ -55,6 +63,22 @@ class _AppsScreenState extends State<AppsScreen> {
     });
   }
 
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<String?> _executeShellCommand(String command) async {
     if (_adb.currentState != ADBConnectionState.connected) {
       _addOutput('❌ Cannot execute command: Device not connected');
@@ -63,7 +87,6 @@ class _AppsScreenState extends State<AppsScreen> {
 
     try {
       _addOutput('🔍 Executing: $command');
-      
       // Use the exact same approach as adb_screen_refactored.dart
       if (_adb.backend != null && _adb.connectedDeviceId.isNotEmpty) {
         _addOutput('📱 Device: ${_adb.connectedDeviceId}');
@@ -162,7 +185,6 @@ class _AppsScreenState extends State<AppsScreen> {
 
   List<AppInfo> get _filteredApps {
     List<AppInfo> apps = [];
-    
     switch (_selectedAppFilter) {
       case 'User':
         apps = _installedApps;
@@ -170,19 +192,20 @@ class _AppsScreenState extends State<AppsScreen> {
       case 'System':
         apps = _systemApps;
         break;
+      case 'Favorites':
+        apps = [..._installedApps, ..._systemApps].where((a) => _favoritePackages.contains(a.packageName)).toList();
+        break;
       case 'All':
       default:
         apps = [..._installedApps, ..._systemApps];
         break;
     }
-
     if (_appSearchQuery.isNotEmpty) {
       apps = apps.where((app) =>
         app.packageName.toLowerCase().contains(_appSearchQuery.toLowerCase()) ||
         app.label.toLowerCase().contains(_appSearchQuery.toLowerCase())
       ).toList();
     }
-
     return apps;
   }
 
@@ -207,13 +230,16 @@ class _AppsScreenState extends State<AppsScreen> {
     );
 
     if (result == true) {
+      setState(() => _showLoadingOverlay = true);
       _addOutput('🗑️ Uninstalling ${app.packageName}...');
       final uninstallResult = await _executeShellCommand('pm uninstall ${app.packageName}');
+      setState(() => _showLoadingOverlay = false);
       if (uninstallResult != null && uninstallResult.contains('Success')) {
         _addOutput('✅ Successfully uninstalled ${app.packageName}');
         _loadInstalledApps(); // Reload apps list
       } else {
         _addOutput('❌ Failed to uninstall ${app.packageName}: $uninstallResult');
+        _showErrorDialog('Uninstall Failed', uninstallResult ?? 'Unknown error');
       }
     }
   }
@@ -253,145 +279,231 @@ class _AppsScreenState extends State<AppsScreen> {
     );
 
     if (result == true) {
+      setState(() => _showLoadingOverlay = true);
       _addOutput('🧹 Clearing data for ${app.packageName}...');
       final clearResult = await _executeShellCommand('pm clear ${app.packageName}');
+      setState(() => _showLoadingOverlay = false);
       if (clearResult != null && clearResult.contains('Success')) {
         _addOutput('✅ Successfully cleared data for ${app.packageName}');
       } else {
         _addOutput('❌ Failed to clear data for ${app.packageName}: $clearResult');
+        _showErrorDialog('Clear Data Failed', clearResult ?? 'Unknown error');
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Apps Manager'),
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
-        actions: [
-          // Connection status indicator
-          Container(
-            margin: const EdgeInsets.only(right: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: _adb.currentState == ADBConnectionState.connected 
-                  ? Colors.green 
-                  : Colors.red,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              _adb.currentState == ADBConnectionState.connected 
-                  ? 'Connected' 
-                  : 'Disconnected',
-              style: const TextStyle(fontSize: 12, color: Colors.white),
-            ),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Control Panel
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Column(
-              children: [
-                // Load and filter controls
-                Row(
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: _adb.currentState == ADBConnectionState.connected && !_loadingApps
-                          ? _loadInstalledApps
-                          : null,
-                      icon: _loadingApps 
-                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.refresh),
-                      label: Text(_loadingApps ? 'Loading...' : 'Load Apps'),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+    return Stack(
+      children: [
+        Scaffold(
+          appBar: AppBar(
+            title: const Text('Apps Manager'),
+            backgroundColor: Colors.blue,
+            foregroundColor: Colors.white,
+            actions: [
+              IconButton(
+                icon: Icon(_batchMode ? Icons.check_box : Icons.check_box_outline_blank),
+                tooltip: _batchMode ? 'Exit Batch Mode' : 'Batch Select',
+                onPressed: () {
+                  setState(() {
+                    _batchMode = !_batchMode;
+                    if (!_batchMode) _selectedPackages.clear();
+                  });
+                },
+              ),
+              // ...existing code...
+              IconButton(
+                icon: Icon(themeModeNotifier.value == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode),
+                tooltip: 'Toggle Theme',
+                onPressed: () {
+                  themeModeNotifier.value = themeModeNotifier.value == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+                },
+              ),
+              PopupMenuButton<double>(
+                icon: const Icon(Icons.format_size),
+                tooltip: 'Text Size',
+                onSelected: (v) {
+                  textScaleNotifier.value = v;
+                },
+                itemBuilder: (context) => [
+                  for (final scale in [.8, 1.0, 1.2, 1.4, 1.6])
+                    PopupMenuItem(
+                      value: scale,
+                      child: Text('${(scale * 100).toInt()}%', style: TextStyle(fontSize: 14 * scale)),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        value: _selectedAppFilter,
-                        decoration: const InputDecoration(
-                          labelText: 'Filter',
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          border: OutlineInputBorder(),
-                        ),
-                        items: ['All', 'User', 'System']
-                            .map((filter) => DropdownMenuItem(value: filter, child: Text(filter)))
-                            .toList(),
-                        onChanged: (value) {
-                          setState(() {
-                            _selectedAppFilter = value ?? 'All';
-                          });
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                // Search field
-                TextField(
-                  decoration: const InputDecoration(
-                    labelText: 'Search apps...',
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  onChanged: (value) {
-                    setState(() {
-                      _appSearchQuery = value;
-                    });
-                  },
-                ),
-              ],
-            ),
-          ),
-          
-          // Apps List
-          Expanded(
-            flex: 2,
-            child: _buildAppsList(),
-          ),
-          
-          // Debug Output (collapsible)
-          ExpansionTile(
-            title: Text('Debug Output (${_outputBuffer.length} lines)'),
-            leading: const Icon(Icons.terminal),
-            children: [
+                ],
+              ),
               Container(
-                height: 150,
-                padding: const EdgeInsets.all(8),
-                child: ListView.builder(
-                  itemCount: _outputBuffer.length,
-                  itemBuilder: (context, index) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 1),
-                      child: Text(
-                        _outputBuffer[index],
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                      ),
-                    );
-                  },
+                margin: const EdgeInsets.only(right: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _adb.currentState == ADBConnectionState.connected 
+                      ? Colors.green 
+                      : Colors.red,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  _adb.currentState == ADBConnectionState.connected 
+                      ? 'Connected' 
+                      : 'Disconnected',
+                  style: const TextStyle(fontSize: 12, color: Colors.white),
                 ),
               ),
             ],
           ),
-        ],
-      ),
+          body: Column(
+            children: [
+              // Control Panel
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    // Load and filter controls
+                    Row(
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: _adb.currentState == ADBConnectionState.connected && !_loadingApps
+                              ? _loadInstalledApps
+                              : null,
+                          icon: _loadingApps 
+                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.refresh),
+                          label: Text(_loadingApps ? 'Loading...' : 'Load Apps'),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            value: _selectedAppFilter,
+                            decoration: const InputDecoration(
+                              labelText: 'Filter',
+                              isDense: true,
+                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              border: OutlineInputBorder(),
+                            ),
+              items: ['All', 'User', 'System', 'Favorites']
+                .map((filter) => DropdownMenuItem(value: filter, child: Text(filter)))
+                .toList(),
+                            onChanged: (value) {
+                              setState(() {
+                                _selectedAppFilter = value ?? 'All';
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    // Search field
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'Search apps...',
+                        prefixIcon: Icon(Icons.search),
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          _appSearchQuery = value;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Batch operation controls
+              if (_batchMode)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: Row(
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: _selectedPackages.isNotEmpty ? () => _batchUninstall() : null,
+                        icon: const Icon(Icons.delete),
+                        label: Text('Uninstall (${_selectedPackages.length})'),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: _selectedPackages.isNotEmpty ? () => _batchClearData() : null,
+                        icon: const Icon(Icons.cleaning_services),
+                        label: Text('Clear Data'),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: _selectedPackages.isNotEmpty ? () => _batchEnableDisable() : null,
+                        icon: const Icon(Icons.toggle_on),
+                        label: Text('Toggle Enable'),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                      ),
+                    ],
+                  ),
+                ),
+              // Apps List
+              Expanded(
+                flex: 2,
+                child: _buildAppsList(),
+              ),
+              
+              // Debug Output (collapsible)
+              ExpansionTile(
+                title: Text('Debug Output (${_outputBuffer.length} lines)'),
+                leading: const Icon(Icons.terminal),
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton.icon(
+                        onPressed: () {
+                          setState(() => _outputBuffer.clear());
+                        },
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('Clear Output'),
+                      ),
+                    ],
+                  ),
+                  Container(
+                    height: 150,
+                    padding: const EdgeInsets.all(8),
+                    child: ListView.builder(
+                      itemCount: _outputBuffer.length,
+                      itemBuilder: (context, index) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 1),
+                          child: Text(
+                            _outputBuffer[index],
+                            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (_showLoadingOverlay)
+          Container(
+            color: Colors.black.withOpacity(0.4),
+            child: const Center(
+              child: CircularProgressIndicator(),
+            ),
+          ),
+      ],
     );
   }
 
@@ -433,19 +545,53 @@ class _AppsScreenState extends State<AppsScreen> {
       itemCount: apps.length,
       itemBuilder: (context, index) {
         final app = apps[index];
+        final selected = _selectedPackages.contains(app.packageName);
+        final isFavorite = _favoritePackages.contains(app.packageName);
         return Card(
           margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: app.isSystemApp ? Colors.orange : Colors.blue,
-              child: Icon(
-                app.isSystemApp ? Icons.settings : Icons.apps,
-                color: Colors.white,
-              ),
-            ),
-            title: Text(
-              app.label,
-              style: const TextStyle(fontWeight: FontWeight.bold),
+            leading: _batchMode
+                ? Checkbox(
+                    value: selected,
+                    onChanged: (v) {
+                      setState(() {
+                        if (v == true) {
+                          _selectedPackages.add(app.packageName);
+                        } else {
+                          _selectedPackages.remove(app.packageName);
+                        }
+                      });
+                    },
+                  )
+                : CircleAvatar(
+                    backgroundColor: app.isSystemApp ? Colors.orange : Colors.blue,
+                    child: Icon(
+                      app.isSystemApp ? Icons.settings : Icons.apps,
+                      color: Colors.white,
+                    ),
+                  ),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    app.label,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(isFavorite ? Icons.star : Icons.star_border, color: isFavorite ? Colors.amber : Colors.grey),
+                  tooltip: isFavorite ? 'Unpin from favorites' : 'Pin to favorites',
+                  onPressed: () {
+                    setState(() {
+                      if (isFavorite) {
+                        _favoritePackages.remove(app.packageName);
+                      } else {
+                        _favoritePackages.add(app.packageName);
+                      }
+                    });
+                  },
+                ),
+              ],
             ),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -465,36 +611,68 @@ class _AppsScreenState extends State<AppsScreen> {
               ],
             ),
             isThreeLine: true,
-            trailing: PopupMenuButton<String>(
-              onSelected: (action) async {
-                switch (action) {
-                  case 'launch':
-                    await _launchApp(app);
-                    break;
-                  case 'stop':
-                    await _forceStopApp(app);
-                    break;
-                  case 'clear':
-                    await _clearAppData(app);
-                    break;
-                  case 'uninstall':
-                    if (!app.isSystemApp) {
-                      await _uninstallApp(app);
-                    }
-                    break;
-                }
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(value: 'launch', child: Text('🚀 Launch')),
-                const PopupMenuItem(value: 'stop', child: Text('⏹️ Force Stop')),
-                const PopupMenuItem(value: 'clear', child: Text('🧹 Clear Data')),
-                if (!app.isSystemApp)
-                  const PopupMenuItem(value: 'uninstall', child: Text('🗑️ Uninstall')),
-              ],
-            ),
+            trailing: !_batchMode
+                ? PopupMenuButton<String>(
+                    onSelected: (action) async {
+                      switch (action) {
+                        case 'launch':
+                          await _launchApp(app);
+                          break;
+                        case 'stop':
+                          await _forceStopApp(app);
+                          break;
+                        case 'clear':
+                          await _clearAppData(app);
+                          break;
+                        case 'uninstall':
+                          if (!app.isSystemApp) {
+                            await _uninstallApp(app);
+                          }
+                          break;
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(value: 'launch', child: Text('🚀 Launch')),
+                      const PopupMenuItem(value: 'stop', child: Text('⏹️ Force Stop')),
+                      const PopupMenuItem(value: 'clear', child: Text('🧹 Clear Data')),
+                      if (!app.isSystemApp)
+                        const PopupMenuItem(value: 'uninstall', child: Text('🗑️ Uninstall')),
+                    ],
+                  )
+                : null,
           ),
         );
       },
     );
+  }
+
+  // Batch operation methods
+  Future<void> _batchUninstall() async {
+    setState(() => _showLoadingOverlay = true);
+    for (final pkg in _selectedPackages) {
+      await _executeShellCommand('pm uninstall $pkg');
+    }
+    setState(() => _showLoadingOverlay = false);
+    _loadInstalledApps();
+    _selectedPackages.clear();
+  }
+
+  Future<void> _batchClearData() async {
+    setState(() => _showLoadingOverlay = true);
+    for (final pkg in _selectedPackages) {
+      await _executeShellCommand('pm clear $pkg');
+    }
+    setState(() => _showLoadingOverlay = false);
+    _selectedPackages.clear();
+  }
+
+  Future<void> _batchEnableDisable() async {
+    setState(() => _showLoadingOverlay = true);
+    for (final pkg in _selectedPackages) {
+      await _executeShellCommand('pm enable $pkg');
+      await _executeShellCommand('pm disable $pkg');
+    }
+    setState(() => _showLoadingOverlay = false);
+    _selectedPackages.clear();
   }
 }

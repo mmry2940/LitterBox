@@ -7,12 +7,20 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-feature android:name="android.hardware.usb.host" android:required="false"/>
     <uses-permission android:name="android.permission.USB_PERMISSION"/>
+    <!-- Foreground service and notification permissions -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="LitterBox"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true"
         android:networkSecurityConfig="@xml/network_security_config">
+        <!-- Foreground service declaration for flutter_foreground_task -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice|dataSync|location|mediaPlayback" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
