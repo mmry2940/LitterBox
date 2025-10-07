@@ -1,0 +1,1252 @@
+import 'package:flutter/material.dart';
+import 'package:syncfusion_flutter_gauges/gauges.dart';
+import 'package:dartssh2/dartssh2.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
+
+// System info model
+class SystemInfo {
+  final double cpuUsage;
+  final double ramUsage;
+  final double storageUsed;
+  final double storageTotal;
+  final String uptime;
+  final String networkInfo;
+  final String osInfo;
+  final String batteryInfo;
+  final List<ProcessInfo> topProcesses;
+
+  SystemInfo({
+    this.cpuUsage = 0,
+    this.ramUsage = 0,
+    this.storageUsed = 0,
+    this.storageTotal = 0,
+    this.uptime = 'Unknown',
+    this.networkInfo = 'Unknown',
+    this.osInfo = 'Unknown',
+    this.batteryInfo = 'Not available',
+    this.topProcesses = const [],
+  });
+}
+
+class ProcessInfo {
+  final String pid;
+  final String cpu;
+  final String mem;
+  final String command;
+
+  ProcessInfo({
+    required this.pid,
+    required this.cpu,
+    required this.mem,
+    required this.command,
+  });
+}
+
+// Performance data point
+class PerformanceData {
+  final DateTime timestamp;
+  final double cpuUsage;
+  final double memoryUsage;
+  final double storageUsed;
+
+  const PerformanceData({
+    required this.timestamp,
+    required this.cpuUsage,
+    required this.memoryUsage,
+    required this.storageUsed,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'timestamp': timestamp.toIso8601String(),
+        'cpuUsage': cpuUsage,
+        'memoryUsage': memoryUsage,
+        'storageUsed': storageUsed,
+      };
+
+  factory PerformanceData.fromJson(Map<String, dynamic> json) =>
+      PerformanceData(
+        timestamp: DateTime.parse(json['timestamp']),
+        cpuUsage: json['cpuUsage'] ?? 0.0,
+        memoryUsage: json['memoryUsage'] ?? 0.0,
+        storageUsed: json['storageUsed'] ?? 0.0,
+      );
+}
+
+class DeviceDetailsScreen extends StatefulWidget {
+  final Map<String, dynamic> device;
+
+  const DeviceDetailsScreen({
+    super.key,
+    required this.device,
+  });
+
+  @override
+  State<DeviceDetailsScreen> createState() => _DeviceDetailsScreenState();
+}
+
+class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
+  // SSH client instance
+  SSHClient? _sshClient;
+
+  // State fields
+  SystemInfo _systemInfo = SystemInfo();
+  bool _isLoading = true;
+  bool _isConnected = false;
+  String _connectionError = "";
+
+  // Performance history
+  final List<PerformanceData> _performanceHistory = [];
+  Timer? _performanceTimer;
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeSSHClient();
+    _loadPerformanceHistory();
+    _startPerformanceMonitoring();
+  }
+
+  Future<void> _initializeSSHClient() async {
+    try {
+      final host = widget.device['host'] ?? '127.0.0.1';
+      final port = widget.device['port'] ?? 22;
+      final username = widget.device['username'] ?? 'user';
+      final password = widget.device['password'] ?? 'password';
+
+      print('Attempting SSH connection to $host:$port as $username');
+
+      final socket = await SSHSocket.connect(host, port);
+      _sshClient = SSHClient(
+        socket,
+        username: username,
+        onPasswordRequest: () => password,
+      );
+
+      print('SSH connection established successfully');
+      setState(() {
+        _isConnected = true;
+        _connectionError = "";
+      });
+
+      // Fetch all system information
+      await Future.wait([
+        _fetchDiskInfo(),
+        _fetchNetworkInfo(),
+        _fetchCPUUsage(),
+        _fetchRAMUsage(),
+        _fetchUptime(),
+        _fetchOSInfo(),
+        _fetchBatteryInfo(),
+        _fetchTopProcesses(),
+      ]);
+
+      print('All system information fetched successfully');
+    } catch (e) {
+      print('SSH connection failed: $e');
+      // Set error states for all fields with helpful messages
+      final errorMsg = _getConnectionErrorMessage(e.toString());
+      setState(() {
+        _isConnected = false;
+        _connectionError = errorMsg;
+        _networkInfo = errorMsg;
+        _osInfo = errorMsg;
+        _batteryInfo = errorMsg;
+        _topProcesses = errorMsg;
+        _uptime = errorMsg;
+        _cpuUsage = 0.0; // Reset to 0 on error
+        _ramUsage = 0.0; // Reset to 0 on error
+        _storageUsed = 0.0;
+        _storageAvailable = 0.0;
+      });
+    }
+  }
+
+  String _getConnectionErrorMessage(String error) {
+    if (error.contains('Connection refused')) {
+      return 'SSH connection refused. Make sure SSH server is running on the device.';
+    } else if (error.contains('Authentication failed') ||
+        error.contains('password')) {
+      return 'Authentication failed. Check username/password and try editing the device.';
+    } else if (error.contains('Network is unreachable') ||
+        error.contains('No route to host')) {
+      return 'Device is unreachable. Check network connection and device IP address.';
+    } else if (error.contains('Connection timed out')) {
+      return 'Connection timed out. Device may be offline or firewall is blocking SSH.';
+    } else {
+      return 'SSH connection failed: $error\n\nMake sure:\n• SSH server is installed and running\n• Correct IP address and port\n• Valid username and password\n• Device is on the same network';
+    }
+  }
+
+  Future<void> _loadPerformanceHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final deviceKey = 'performance_${widget.device['host']}';
+    final jsonStr = prefs.getString(deviceKey);
+    if (jsonStr != null) {
+      final List<dynamic> list = json.decode(jsonStr);
+      setState(() {
+        _performanceHistory.clear();
+        _performanceHistory.addAll(
+          list.map((e) => PerformanceData.fromJson(e)).toList(),
+        );
+        // Keep only last 24 hours of data
+        final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+        _performanceHistory
+            .removeWhere((data) => data.timestamp.isBefore(cutoff));
+      });
+    }
+  }
+
+  Future<void> _savePerformanceHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final deviceKey = 'performance_${widget.device['host']}';
+    final jsonStr =
+        json.encode(_performanceHistory.map((e) => e.toJson()).toList());
+    await prefs.setString(deviceKey, jsonStr);
+  }
+
+  void _startPerformanceMonitoring() {
+    _performanceTimer =
+        Timer.periodic(const Duration(minutes: 5), (timer) async {
+      if (_sshClient != null) {
+        await _collectPerformanceData();
+      }
+    });
+  }
+
+  Future<void> _collectPerformanceData() async {
+    try {
+      // Get current CPU usage
+      final cpuSession = await _sshClient?.execute('top -bn1 | grep "Cpu(s)"');
+      final cpuResult = await utf8.decodeStream(cpuSession!.stdout);
+      final cpuMatch = RegExp(r'(\d+\.\d+)%id').firstMatch(cpuResult);
+      final currentCpuUsage =
+          cpuMatch != null ? 100.0 - double.parse(cpuMatch.group(1)!) : 0.0;
+
+      // Get current memory usage
+      final memSession = await _sshClient?.execute('free | grep Mem');
+      final memResult = await utf8.decodeStream(memSession!.stdout);
+      final memParts =
+          memResult.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+      final totalMem = double.tryParse(memParts[1]) ?? 1.0;
+      final usedMem = double.tryParse(memParts[2]) ?? 0.0;
+      final currentMemoryUsage = (usedMem / totalMem) * 100.0;
+
+      setState(() {
+        _performanceHistory.add(PerformanceData(
+          timestamp: DateTime.now(),
+          cpuUsage: currentCpuUsage,
+          memoryUsage: currentMemoryUsage,
+          storageUsed: _storageUsed,
+        ));
+
+        // Keep only last 24 hours
+        final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+        _performanceHistory
+            .removeWhere((data) => data.timestamp.isBefore(cutoff));
+      });
+
+      await _savePerformanceHistory();
+    } catch (e) {
+      print('Error collecting performance data: $e');
+    }
+  }
+
+  Future<void> _fetchDiskInfo() async {
+    try {
+      final session = await _sshClient?.execute('df -h');
+      final result = await utf8.decodeStream(session!.stdout);
+      final lines = result.split('\n');
+      if (lines.length > 1) {
+        final data = lines[1].split(RegExp(r'\s+'));
+        setState(() {
+          _storageUsed =
+              double.tryParse(data[2].replaceAll(RegExp(r'[^0-9.]'), '')) ??
+                  0.0;
+          _storageAvailable =
+              double.tryParse(data[3].replaceAll(RegExp(r'[^0-9.]'), '')) ??
+                  0.0;
+        });
+      }
+    } catch (e) {
+      print('Error fetching disk info: $e');
+    }
+  }
+
+  Future<void> _fetchNetworkInfo() async {
+    try {
+      print('Fetching network info...');
+      // Try multiple commands for different systems
+      String result = '';
+      try {
+        final session = await _sshClient?.execute('ip addr show');
+        result = await utf8.decodeStream(session!.stdout);
+        print('ip addr show result: $result');
+        final ipMatch =
+            RegExp(r'inet\s+(\d+\.\d+\.\d+\.\d+)').firstMatch(result);
+        if (ipMatch != null) {
+          setState(() {
+            _networkInfo = 'IP: ${ipMatch.group(1)}';
+          });
+          print('Network info set to: ${_networkInfo}');
+          return;
+        }
+      } catch (e) {
+        print('ip addr show failed, trying ifconfig: $e');
+        // Try ifconfig as fallback
+        final session = await _sshClient?.execute('ifconfig');
+        result = await utf8.decodeStream(session!.stdout);
+        print('ifconfig result: $result');
+        final ipMatch =
+            RegExp(r'inet\s+(\d+\.\d+\.\d+\.\d+)').firstMatch(result);
+        if (ipMatch != null) {
+          setState(() {
+            _networkInfo = 'IP: ${ipMatch.group(1)}';
+          });
+          print('Network info set to: ${_networkInfo}');
+          return;
+        }
+      }
+
+      setState(() {
+        _networkInfo = 'Network info unavailable';
+      });
+      print('Network info set to unavailable');
+    } catch (e) {
+      print('Error fetching network info: $e');
+      setState(() {
+        _networkInfo = 'Error fetching network info';
+      });
+    }
+  }
+
+  Future<void> _fetchCPUUsage() async {
+    try {
+      print('Fetching CPU usage...');
+      final session = await _sshClient?.execute('top -bn1 | grep "Cpu(s)"');
+      final result = await utf8.decodeStream(session!.stdout);
+      print('CPU command result: $result');
+      final match = RegExp(r'(\d+\.\d+)%id').firstMatch(result);
+      if (match != null) {
+        final idle = double.parse(match.group(1)!);
+        setState(() {
+          _cpuUsage = 100.0 - idle;
+        });
+        print('CPU usage set to: $_cpuUsage%');
+      } else {
+        print('Could not parse CPU usage from: $result');
+      }
+    } catch (e) {
+      print('Error fetching CPU usage: $e');
+    }
+  }
+
+  Future<void> _fetchRAMUsage() async {
+    try {
+      print('Fetching RAM usage...');
+      final session = await _sshClient?.execute('free | grep Mem');
+      final result = await utf8.decodeStream(session!.stdout);
+      print('RAM command result: $result');
+      final parts =
+          result.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+      print('RAM parts: $parts');
+      if (parts.length >= 3) {
+        final total = double.tryParse(parts[1]) ?? 1.0;
+        final used = double.tryParse(parts[2]) ?? 0.0;
+        final ramUsagePercent = (used / total) * 100.0;
+        setState(() {
+          _ramUsage = ramUsagePercent;
+        });
+        print('RAM usage set to: $_ramUsage%');
+      } else {
+        print('Could not parse RAM usage, not enough parts in: $parts');
+      }
+    } catch (e) {
+      print('Error fetching RAM usage: $e');
+    }
+  }
+
+  Future<void> _fetchUptime() async {
+    try {
+      final session = await _sshClient?.execute('uptime -p');
+      final result = await utf8.decodeStream(session!.stdout);
+      setState(() {
+        _uptime = result.trim();
+      });
+    } catch (e) {
+      // Fallback to uptime command
+      try {
+        final session = await _sshClient?.execute('uptime');
+        final result = await utf8.decodeStream(session!.stdout);
+        final uptimeMatch = RegExp(r'up\s+([^,]+)').firstMatch(result);
+        setState(() {
+          _uptime = uptimeMatch?.group(1)?.trim() ?? 'Unknown';
+        });
+      } catch (e2) {
+        print('Error fetching uptime: $e2');
+        setState(() {
+          _uptime = 'Unable to fetch';
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchBatteryInfo() async {
+    try {
+      // Try multiple battery commands for different systems
+      try {
+        final session = await _sshClient
+            ?.execute('upower -i \$(upower -e | grep BAT) | grep percentage');
+        final result = await utf8.decodeStream(session!.stdout);
+        final match = RegExp(r'percentage:\s+(\d+)%').firstMatch(result);
+        if (match != null) {
+          setState(() {
+            _batteryInfo = 'Battery: ${match.group(1)}%';
+          });
+          return;
+        }
+      } catch (e) {
+        // Try cat /sys/class/power_supply/BAT*/capacity as fallback
+        try {
+          final session = await _sshClient?.execute(
+              'cat /sys/class/power_supply/BAT*/capacity 2>/dev/null || echo "No battery"');
+          final result = await utf8.decodeStream(session!.stdout);
+          if (!result.contains('No battery') && result.trim().isNotEmpty) {
+            setState(() {
+              _batteryInfo = 'Battery: ${result.trim()}%';
+            });
+            return;
+          }
+        } catch (e2) {
+          // Final fallback
+          setState(() {
+            _batteryInfo = 'Battery info not available';
+          });
+        }
+      }
+    } catch (e) {
+      print('Error fetching battery info: $e');
+      setState(() {
+        _batteryInfo = 'Error fetching battery info';
+      });
+    }
+  }
+
+  Future<void> _fetchOSInfo() async {
+    try {
+      final session = await _sshClient?.execute('uname -a');
+      final result = await utf8.decodeStream(session!.stdout);
+      setState(() {
+        _osInfo = result.trim();
+      });
+    } catch (e) {
+      print('Error fetching OS info: $e');
+      setState(() {
+        _osInfo = 'Error fetching OS info';
+      });
+    }
+  }
+
+  Future<void> _fetchTopProcesses() async {
+    try {
+      final session =
+          await _sshClient?.execute('ps aux --sort=-%cpu | head -n 6');
+      final result = await utf8.decodeStream(session!.stdout);
+      setState(() {
+        _topProcesses = result;
+      });
+    } catch (e) {
+      print('Error fetching top processes: $e');
+      setState(() {
+        _topProcesses = 'Error fetching processes';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _sshClient?.close();
+    _performanceTimer?.cancel();
+    super.dispose();
+  }
+
+  Widget _buildMiniGauge(double value, Color color) {
+    return SfRadialGauge(
+      axes: <RadialAxis>[
+        RadialAxis(
+          minimum: 0,
+          maximum: 100,
+          showLabels: false,
+          showTicks: false,
+          ranges: <GaugeRange>[
+            GaugeRange(
+              startValue: 0,
+              endValue: value,
+              color: color,
+            ),
+          ],
+          pointers: <GaugePointer>[
+            NeedlePointer(
+              value: value,
+              needleColor: color,
+              knobStyle: KnobStyle(color: color),
+            ),
+          ],
+          annotations: <GaugeAnnotation>[
+            GaugeAnnotation(
+              widget: Text(
+                '${value.toStringAsFixed(0)}%',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+              angle: 90,
+              positionFactor: 0.8,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStorageGauge() {
+    final total = _storageUsed + _storageAvailable;
+    final usedPercent = total > 0 ? (_storageUsed / total) * 100 : 0.0;
+    return SfRadialGauge(
+      axes: <RadialAxis>[
+        RadialAxis(
+          minimum: 0,
+          maximum: 100,
+          showLabels: false,
+          showTicks: false,
+          ranges: <GaugeRange>[
+            GaugeRange(
+              startValue: 0,
+              endValue: usedPercent,
+              color: Colors.brown,
+            ),
+          ],
+          pointers: <GaugePointer>[
+            NeedlePointer(
+              value: usedPercent,
+              needleColor: Colors.brown,
+              knobStyle: KnobStyle(color: Colors.brown),
+            ),
+          ],
+          annotations: <GaugeAnnotation>[
+            GaugeAnnotation(
+              widget: Text(
+                '${usedPercent.toStringAsFixed(0)}%',
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.brown,
+                ),
+              ),
+              angle: 90,
+              positionFactor: 0.8,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMetricCard({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color color,
+    Widget? gauge,
+    String? subtitle,
+  }) {
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: color, size: 24),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (gauge != null) ...[
+              SizedBox(height: 60, child: gauge),
+              const SizedBox(height: 8),
+            ],
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+            if (subtitle != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 60,
+            child: Text(
+              '$label:',
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: Colors.black54,
+                fontFamily: 'monospace',
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopProcessesList() {
+    if (_topProcesses.contains('Error') || _topProcesses.contains('Fetching')) {
+      return Text(
+        _topProcesses,
+        style: const TextStyle(color: Colors.grey),
+      );
+    }
+
+    final lines = _topProcesses
+        .split('\n')
+        .where((line) => line.trim().isNotEmpty)
+        .toList();
+    if (lines.length <= 1) {
+      return const Text('No process data available');
+    }
+
+    // Skip header line
+    final processLines = lines.sublist(1).take(5);
+
+    return Column(
+      children: processLines.map((line) {
+        final parts = line.trim().split(RegExp(r'\s+'));
+        if (parts.length < 11) return const SizedBox.shrink();
+
+        final pid = parts[1];
+        final cpu = parts[2];
+        final mem = parts[3];
+        final command = parts.sublist(10).join(' ');
+
+        return Card(
+          margin: const EdgeInsets.symmetric(vertical: 2),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 50,
+                  child: Text(
+                    'PID $pid',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 50,
+                  child: Text(
+                    '$cpu% CPU',
+                    style: const TextStyle(
+                      color: Colors.blue,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 60,
+                  child: Text(
+                    '$mem% MEM',
+                    style: const TextStyle(
+                      color: Colors.purple,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    command,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: Colors.black87,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildPerformanceChart() {
+    if (_performanceHistory.isEmpty) {
+      return const Center(child: Text('No performance data available'));
+    }
+
+    return CustomPaint(
+      painter: PerformanceChartPainter(_performanceHistory),
+      child: Container(),
+    );
+  }
+
+  // Builds the system details section
+  Widget _buildSystemDetailsSection() {
+    return Column(
+      children: [
+        // Connection status indicator
+        Container(
+          padding: const EdgeInsets.all(12),
+          margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: _isConnected ? Colors.green.shade50 : Colors.red.shade50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: _isConnected ? Colors.green : Colors.red,
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                _isConnected ? Icons.check_circle : Icons.error,
+                color: _isConnected ? Colors.green : Colors.red,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _isConnected ? 'Connected' : 'Connection Failed',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: _isConnected ? Colors.green : Colors.red,
+                      ),
+                    ),
+                    if (!_isConnected && _connectionError.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          _connectionError,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (!_isConnected)
+                ElevatedButton(
+                  onPressed: _initializeSSHClient,
+                  child: const Text('Retry'),
+                ),
+            ],
+          ),
+        ),
+
+        // Refresh button
+        if (_isConnected)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                setState(() {
+                  _cpuUsage = 0;
+                  _ramUsage = 0;
+                  _storageUsed = 0;
+                  _storageAvailable = 0;
+                  _networkInfo = "Refreshing...";
+                  _osInfo = "Refreshing...";
+                  _batteryInfo = "Refreshing...";
+                  _topProcesses = "Refreshing...";
+                  _uptime = "Refreshing...";
+                });
+                await Future.wait([
+                  _fetchDiskInfo(),
+                  _fetchNetworkInfo(),
+                  _fetchCPUUsage(),
+                  _fetchRAMUsage(),
+                  _fetchUptime(),
+                  _fetchOSInfo(),
+                  _fetchBatteryInfo(),
+                  _fetchTopProcesses(),
+                ]);
+              },
+              icon: const Icon(Icons.refresh),
+              label: const Text('Refresh All Data'),
+            ),
+          ),
+
+        // Dashboard Grid
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          children: [
+            _buildMetricCard(
+              title: 'CPU Usage',
+              value: '${_cpuUsage.toStringAsFixed(1)}%',
+              icon: Icons.memory,
+              color: Colors.blue,
+              gauge: _buildMiniGauge(_cpuUsage, Colors.blue),
+            ),
+            _buildMetricCard(
+              title: 'RAM Usage',
+              value: '${_ramUsage.toStringAsFixed(1)}%',
+              icon: Icons.sd_storage,
+              color: Colors.purple,
+              gauge: _buildMiniGauge(_ramUsage, Colors.purple),
+            ),
+            _buildMetricCard(
+              title: 'Storage',
+              value:
+                  '${_storageUsed.toStringAsFixed(1)} GB\n${_storageAvailable.toStringAsFixed(1)} GB free',
+              icon: Icons.storage,
+              color: Colors.brown,
+              gauge: _buildStorageGauge(),
+            ),
+            _buildMetricCard(
+              title: 'Network',
+              value: _networkInfo.contains('Error') ||
+                      _networkInfo.contains('Fetching')
+                  ? 'N/A'
+                  : _networkInfo,
+              icon: Icons.network_check,
+              color: Colors.green,
+              subtitle: _networkInfo.contains('Error') ? _networkInfo : null,
+            ),
+            _buildMetricCard(
+              title: 'Uptime',
+              value: _uptime ?? 'N/A',
+              icon: Icons.timer,
+              color: Colors.teal,
+            ),
+            _buildMetricCard(
+              title: 'Battery',
+              value: _batteryInfo.contains('Error') ||
+                      _batteryInfo.contains('Fetching')
+                  ? 'N/A'
+                  : _batteryInfo,
+              icon: Icons.battery_std,
+              color: Colors.amber,
+              subtitle: _batteryInfo.contains('Error') ? _batteryInfo : null,
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 24),
+
+        // Detailed Gauges Section
+        const Text(
+          'Detailed Metrics',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 16),
+
+        Card(
+          elevation: 4,
+          margin: const EdgeInsets.only(bottom: 16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.memory, color: Colors.blue),
+                    const SizedBox(width: 8),
+                    const Text('CPU Usage',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 200,
+                  child: SfRadialGauge(
+                    axes: <RadialAxis>[
+                      RadialAxis(
+                        minimum: 0,
+                        maximum: 100,
+                        ranges: <GaugeRange>[
+                          GaugeRange(
+                              startValue: 0, endValue: 50, color: Colors.green),
+                          GaugeRange(
+                              startValue: 50,
+                              endValue: 80,
+                              color: Colors.orange),
+                          GaugeRange(
+                              startValue: 80, endValue: 100, color: Colors.red),
+                        ],
+                        pointers: <GaugePointer>[
+                          NeedlePointer(value: _cpuUsage),
+                        ],
+                        annotations: <GaugeAnnotation>[
+                          GaugeAnnotation(
+                            widget: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(4),
+                                boxShadow: [
+                                  BoxShadow(
+                                      color: Colors.black12, blurRadius: 4)
+                                ],
+                              ),
+                              child: Text(
+                                '${_cpuUsage.toStringAsFixed(1)}%',
+                                style: const TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            angle: 90,
+                            positionFactor: 0.7,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        Card(
+          elevation: 4,
+          margin: const EdgeInsets.only(bottom: 16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.sd_storage, color: Colors.purple),
+                    const SizedBox(width: 8),
+                    const Text('RAM Usage',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 200,
+                  child: SfRadialGauge(
+                    axes: <RadialAxis>[
+                      RadialAxis(
+                        minimum: 0,
+                        maximum: 100,
+                        ranges: <GaugeRange>[
+                          GaugeRange(
+                              startValue: 0, endValue: 50, color: Colors.green),
+                          GaugeRange(
+                              startValue: 50,
+                              endValue: 80,
+                              color: Colors.orange),
+                          GaugeRange(
+                              startValue: 80, endValue: 100, color: Colors.red),
+                        ],
+                        pointers: <GaugePointer>[
+                          NeedlePointer(value: _ramUsage),
+                        ],
+                        annotations: <GaugeAnnotation>[
+                          GaugeAnnotation(
+                            widget: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(4),
+                                boxShadow: [
+                                  BoxShadow(
+                                      color: Colors.black12, blurRadius: 4)
+                                ],
+                              ),
+                              child: Text(
+                                '${_ramUsage.toStringAsFixed(1)}%',
+                                style: const TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            angle: 90,
+                            positionFactor: 0.7,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // System Information Cards
+        Card(
+          elevation: 4,
+          margin: const EdgeInsets.only(bottom: 16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.info, color: Colors.indigo),
+                    const SizedBox(width: 8),
+                    const Text('System Information',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _buildInfoRow('OS', _osInfo),
+                const Divider(),
+                _buildInfoRow('Network', _networkInfo),
+              ],
+            ),
+          ),
+        ),
+
+        // Top Processes
+        Card(
+          elevation: 4,
+          margin: const EdgeInsets.only(bottom: 16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.list_alt, color: Colors.deepOrange),
+                    const SizedBox(width: 8),
+                    const Text('Top Processes',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _buildTopProcessesList(),
+              ],
+            ),
+          ),
+        ),
+
+        // Performance History
+        Card(
+          elevation: 4,
+          margin: const EdgeInsets.only(bottom: 16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.trending_up, color: Colors.purple),
+                    const SizedBox(width: 8),
+                    const Text('Performance History (24h)',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (_performanceHistory.isEmpty)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(32),
+                      child: Text(
+                          'Collecting performance data...\nCheck back in a few minutes.'),
+                    ),
+                  )
+                else
+                  SizedBox(
+                    height: 250,
+                    child: _buildPerformanceChart(),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('${widget.device['name'] ?? 'Device'} Details'),
+        backgroundColor: Theme.of(context).primaryColor,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: _buildSystemDetailsSection(),
+      ),
+    );
+  }
+}
+
+class PerformanceChartPainter extends CustomPainter {
+  final List<PerformanceData> data;
+
+  PerformanceChartPainter(this.data);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (data.isEmpty) return;
+
+    final cpuPaint = Paint()
+      ..color = Colors.blue
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    final memoryPaint = Paint()
+      ..color = Colors.purple
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    final cpuPath = Path();
+    final memoryPath = Path();
+
+    final width = size.width;
+    final height = size.height;
+
+    // Sort data by timestamp
+    final sortedData = List<PerformanceData>.from(data)
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+    for (int i = 0; i < sortedData.length; i++) {
+      final x = (i / (sortedData.length - 1)) * width;
+      final cpuY = height - (sortedData[i].cpuUsage / 100.0) * height;
+      final memoryY = height - (sortedData[i].memoryUsage / 100.0) * height;
+
+      if (i == 0) {
+        cpuPath.moveTo(x, cpuY);
+        memoryPath.moveTo(x, memoryY);
+      } else {
+        cpuPath.lineTo(x, cpuY);
+        memoryPath.lineTo(x, memoryY);
+      }
+    }
+
+    canvas.drawPath(cpuPath, cpuPaint);
+    canvas.drawPath(memoryPath, memoryPaint);
+
+    // Draw grid lines
+    final gridPaint = Paint()
+      ..color = Colors.grey.shade300
+      ..strokeWidth = 1;
+
+    // Horizontal grid lines
+    for (int i = 0; i <= 4; i++) {
+      final y = (i / 4) * height;
+      canvas.drawLine(Offset(0, y), Offset(width, y), gridPaint);
+    }
+
+    // Vertical grid lines (time markers)
+    for (int i = 0; i <= 4; i++) {
+      final x = (i / 4) * width;
+      canvas.drawLine(Offset(x, 0), Offset(x, height), gridPaint);
+    }
+
+    // Draw legend
+    final textPainter = TextPainter(
+      textDirection: TextDirection.ltr,
+    );
+
+    // CPU legend
+    textPainter.text = const TextSpan(
+      text: '● CPU',
+      style: TextStyle(
+          color: Colors.blue, fontSize: 12, fontWeight: FontWeight.w600),
+    );
+    textPainter.layout();
+    textPainter.paint(canvas, const Offset(10, 10));
+
+    // Memory legend
+    textPainter.text = const TextSpan(
+      text: '● Memory',
+      style: TextStyle(
+          color: Colors.purple, fontSize: 12, fontWeight: FontWeight.w600),
+    );
+    textPainter.layout();
+    textPainter.paint(canvas, const Offset(10, 30));
+
+    // Draw Y-axis labels
+    for (int i = 0; i <= 4; i++) {
+      final percentage = 100 - (i * 25);
+      textPainter.text = TextSpan(
+        text: '$percentage%',
+        style: const TextStyle(color: Colors.grey, fontSize: 10),
+      );
+      textPainter.layout();
+      textPainter.paint(canvas, Offset(-25, (i / 4) * height - 5));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}

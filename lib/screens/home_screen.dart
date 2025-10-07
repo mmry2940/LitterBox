@@ -4,15 +4,16 @@ import '../main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'device_screen.dart';
 import 'dart:io';
-import '../network_init.dart';
-import '../isolate_scanner.dart';
 import 'package:network_info_plus/network_info_plus.dart';
-import '_host_tile_with_retry.dart';
+import 'package:network_tools/network_tools.dart';
+import 'device_screen.dart';
 import 'adb_screen_refactored.dart';
 import 'vnc_screen.dart';
 import 'rdp_screen.dart';
+import '_host_tile_with_retry.dart';
+import '../network_init.dart';
+import '../isolate_scanner.dart';
 
 // Device status information
 class DeviceStatus {
@@ -501,9 +502,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? 'Username is required.'
                     : null;
               });
-              if (errorHost != null ||
-                  errorPort != null ||
-                  errorUsername != null) return;
+                  errorPort != null ||!= null) return;
               setModalState(() {
                 connecting = true;
                 status = 'Connecting...';
@@ -1121,7 +1120,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 MaterialPageRoute(
                                   builder: (context) => DeviceScreen(
                                     device: device,
-                                    initialTab: 5,
+                                    initialTab: 5, // Show Misc tab (overview cards)
                                   ),
                                 ),
                               );
