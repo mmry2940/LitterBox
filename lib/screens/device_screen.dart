@@ -120,48 +120,37 @@ class _DeviceScreenState extends State<DeviceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: _selectedIndex == 5,
-      onPopInvoked: (didPop) {
-        if (!didPop && _selectedIndex != 5) {
-          if (!mounted) return;
-          setState(() {
-            _selectedIndex = 5;
-          });
-        }
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(
-            widget.device['name']?.isNotEmpty == true
-                ? widget.device['name']!
-                : '${widget.device['username']}@${widget.device['host']}:${widget.device['port']}',
-          ),
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.device['name']?.isNotEmpty == true
+              ? widget.device['name']!
+              : '${widget.device['username']}@${widget.device['host']}:${widget.device['port']}',
         ),
-        body: _pages[_selectedIndex],
-        bottomNavigationBar: BottomNavigationBar(
-          items: const <BottomNavigationBarItem>[
-            BottomNavigationBarItem(icon: Icon(Icons.info), label: 'Info'),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.terminal),
-              label: 'Terminal',
-            ),
-            BottomNavigationBarItem(icon: Icon(Icons.folder), label: 'Files'),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.memory),
-              label: 'Processes',
-            ),
-            BottomNavigationBarItem(icon: Icon(Icons.list), label: 'Packages'),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard_customize),
-              label: 'Misc',
-            ),
-          ],
-          currentIndex: _selectedIndex,
-          onTap: _onItemTapped,
-        ),
-        // No floatingActionButton here; add device button is only on HomeScreen
       ),
+      body: _pages[_selectedIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        items: const <BottomNavigationBarItem>[
+          BottomNavigationBarItem(icon: Icon(Icons.info), label: 'Info'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.terminal),
+            label: 'Terminal',
+          ),
+          BottomNavigationBarItem(icon: Icon(Icons.folder), label: 'Files'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.memory),
+            label: 'Processes',
+          ),
+          BottomNavigationBarItem(icon: Icon(Icons.list), label: 'Packages'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.dashboard_customize),
+            label: 'Misc',
+          ),
+        ],
+        currentIndex: _selectedIndex,
+        onTap: _onItemTapped,
+      ),
+      // No floatingActionButton here; add device button is only on HomeScreen
     );
   }
 }

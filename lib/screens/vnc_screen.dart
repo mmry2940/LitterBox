@@ -1,5 +1,3 @@
-
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async'; // For Timer
@@ -58,14 +56,23 @@ class VNCScreen extends StatefulWidget {
   State<VNCScreen> createState() => _VNCScreenState();
 }
 
-class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
+class _VNCScreenState extends State<VNCScreen>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   // Clipboard sync fields
   final TextEditingController _clipboardController = TextEditingController();
   String _lastClipboard = '';
 
   // Encoding selection fields
   String _selectedEncoding = 'Raw';
-  final List<String> _encodingOptions = ['Raw', 'CopyRect', 'RRE', 'CoRRE', 'Hextile', 'Zlib', 'Tight'];
+  final List<String> _encodingOptions = [
+    'Raw',
+    'CopyRect',
+    'RRE',
+    'CoRRE',
+    'Hextile',
+    'Zlib',
+    'Tight'
+  ];
   final TextEditingController _hostController = TextEditingController();
   final TextEditingController _portController =
       TextEditingController(text: '6080');
@@ -475,7 +482,8 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, Wi
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
       // App is backgrounded, keep connection alive if possible
       if (_vncClient != null && _autoReconnect) {
         _maybeScheduleReconnect();
@@ -789,9 +797,9 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, Wi
       _connectionError = null;
     });
 
-  _vncClient = VNCClient();
-  _lastConnectedHost = host;
-  _lastConnectedPort = vncPort;
+    _vncClient = VNCClient();
+    _lastConnectedHost = host;
+    _lastConnectedPort = vncPort;
 
     // Listen to logs for debugging
     _vncClient!.logs.listen((log) {
@@ -1439,7 +1447,8 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, Wi
                                   Positioned(
                                     right: -2,
                                     bottom: -2,
-                                    child: Icon(statusIcon, color: statusColor, size: 18),
+                                    child: Icon(statusIcon,
+                                        color: statusColor, size: 18),
                                   ),
                                 ],
                               ),
@@ -1450,9 +1459,13 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, Wi
                                   Text('${device.host}:${device.port}'),
                                   Row(
                                     children: [
-                                      Icon(statusIcon, color: statusColor, size: 16),
+                                      Icon(statusIcon,
+                                          color: statusColor, size: 16),
                                       const SizedBox(width: 4),
-                                      Text(statusText, style: TextStyle(color: statusColor, fontSize: 12)),
+                                      Text(statusText,
+                                          style: TextStyle(
+                                              color: statusColor,
+                                              fontSize: 12)),
                                     ],
                                   ),
                                 ],
@@ -2018,7 +2031,7 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, Wi
     _connectionSheetOpen = false;
   }
 
-    @override
+  @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: !_showVncWidget,
@@ -2032,11 +2045,6 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, Wi
           title: Text(_showVncWidget ? 'VNC Viewer' : 'VNC Connection'),
           actions: [
             if (_showVncWidget) ...[
-              IconButton(
-                icon: const Icon(Icons.fullscreen_exit),
-                onPressed: _disconnect,
-                tooltip: 'Disconnect',
-              ),
               IconButton(
                 icon: const Icon(Icons.close),
                 onPressed: _disconnect,
@@ -2180,9 +2188,12 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, Wi
           children: [
             Icon(icon, color: color, size: 22),
             const SizedBox(width: 10),
-            Text(text, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16)),
+            Text(text,
+                style: TextStyle(
+                    color: color, fontWeight: FontWeight.bold, fontSize: 16)),
             const Spacer(),
-            Text('${_hostController.text}:${_vncPortController.text}', style: const TextStyle(fontSize: 13, color: Colors.grey)),
+            Text('${_hostController.text}:${_vncPortController.text}',
+                style: const TextStyle(fontSize: 13, color: Colors.grey)),
           ],
         ),
       );
@@ -2214,7 +2225,10 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, Wi
                         const SizedBox(width: 8),
                         DropdownButton<String>(
                           value: _selectedEncoding,
-                          items: _encodingOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                          items: _encodingOptions
+                              .map((e) =>
+                                  DropdownMenuItem(value: e, child: Text(e)))
+                              .toList(),
                           onChanged: (v) {
                             setState(() => _selectedEncoding = v ?? 'Raw');
                             // TODO: Pass encoding to VNC client
@@ -2241,7 +2255,8 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, Wi
                           icon: const Icon(Icons.copy),
                           tooltip: 'Copy from VNC',
                           onPressed: () {
-                            Clipboard.setData(ClipboardData(text: _lastClipboard));
+                            Clipboard.setData(
+                                ClipboardData(text: _lastClipboard));
                           },
                         ),
                         IconButton(
@@ -2251,8 +2266,12 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, Wi
                             final text = _clipboardController.text;
                             if (_vncClient != null && text.isNotEmpty) {
                               // Send clipboard text to VNC server
-                              if (_vncClient is VNCClient && _vncClient!.clipboardUpdates is StreamController<String>) {
-                                (_vncClient!.clipboardUpdates as StreamController<String>).add(text);
+                              if (_vncClient is VNCClient &&
+                                  _vncClient!.clipboardUpdates
+                                      is StreamController<String>) {
+                                (_vncClient!.clipboardUpdates
+                                        as StreamController<String>)
+                                    .add(text);
                               }
                             }
                           },
@@ -2276,6 +2295,3 @@ class _VNCScreenState extends State<VNCScreen> with TickerProviderStateMixin, Wi
     }
   }
 }
-
-
-

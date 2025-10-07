@@ -398,7 +398,6 @@ class _DeviceMiscScreenState extends State<DeviceMiscScreen> {
     ];
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Device Tools")),
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(16.0),

@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:dartssh2/dartssh2.dart';
 import '../main.dart';
@@ -88,16 +87,15 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
   bool _multiSelectMode = false;
   Set<int> _selectedDeviceIndexes = {};
   String _deviceSearchQuery = '';
 
   final Set<String> _favoriteDeviceHosts = {};
-  String _deviceFilter = 'All';
   // Customizable dashboard tiles
   List<Map<String, dynamic>> _dashboardTiles = [];
   bool _customizeMode = false;
-
 
   Future<void> _loadDashboardTiles() async {
     final prefs = await SharedPreferences.getInstance();
@@ -111,11 +109,36 @@ class _HomeScreenState extends State<HomeScreen> {
       // Default tiles
       setState(() {
         _dashboardTiles = [
-          {'key': 'devices', 'label': 'Devices List', 'icon': Icons.devices.codePoint, 'visible': true},
-          {'key': 'android', 'label': 'Android', 'icon': Icons.android.codePoint, 'visible': true},
-          {'key': 'vnc', 'label': 'VNC', 'icon': Icons.desktop_windows.codePoint, 'visible': true},
-          {'key': 'rdp', 'label': 'RDP', 'icon': Icons.computer.codePoint, 'visible': true},
-          {'key': 'other', 'label': 'Other', 'icon': Icons.more_horiz.codePoint, 'visible': true},
+          {
+            'key': 'devices',
+            'label': 'Devices List',
+            'icon': Icons.devices.codePoint,
+            'visible': true
+          },
+          {
+            'key': 'android',
+            'label': 'Android',
+            'icon': Icons.android.codePoint,
+            'visible': true
+          },
+          {
+            'key': 'vnc',
+            'label': 'VNC',
+            'icon': Icons.desktop_windows.codePoint,
+            'visible': true
+          },
+          {
+            'key': 'rdp',
+            'label': 'RDP',
+            'icon': Icons.computer.codePoint,
+            'visible': true
+          },
+          {
+            'key': 'other',
+            'label': 'Other',
+            'icon': Icons.more_horiz.codePoint,
+            'visible': true
+          },
         ];
       });
     }
@@ -125,6 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('dashboard_tiles', json.encode(_dashboardTiles));
   }
+
   List<Map<String, dynamic>> _devices = [];
 
   @override
@@ -133,7 +157,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadDevices();
     _loadDashboardTiles();
     _loadFavoriteDevices();
-
   }
 
   Future<void> _loadFavoriteDevices() async {
@@ -177,7 +200,8 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('devices', json.encode(_devices));
-      await prefs.setString('favorite_devices', json.encode(_favoriteDeviceHosts.toList()));
+      await prefs.setString(
+          'favorite_devices', json.encode(_favoriteDeviceHosts.toList()));
     } catch (e) {
       _showError('Failed to save devices: $e');
     }
@@ -224,10 +248,16 @@ class _HomeScreenState extends State<HomeScreen> {
               // Validation
               setModalState(() {
                 errorHost = ip.isEmpty ? 'Host is required.' : null;
-                errorPort = int.tryParse(portController.text) == null ? 'Port must be a number.' : null;
-                errorUsername = usernameController.text.isEmpty ? 'Username is required.' : null;
+                errorPort = int.tryParse(portController.text) == null
+                    ? 'Port must be a number.'
+                    : null;
+                errorUsername = usernameController.text.isEmpty
+                    ? 'Username is required.'
+                    : null;
               });
-              if (errorHost != null || errorPort != null || errorUsername != null) return;
+              if (errorHost != null ||
+                  errorPort != null ||
+                  errorUsername != null) return;
               setModalState(() {
                 connecting = true;
                 status = 'Connecting...';
@@ -300,7 +330,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (errorHost != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
-                        child: Text(errorHost!, style: const TextStyle(color: Colors.red)),
+                        child: Text(errorHost!,
+                            style: const TextStyle(color: Colors.red)),
                       ),
                     const SizedBox(height: 12),
                     Row(
@@ -332,11 +363,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _showDeviceSheet({int? editIndex}) {
     final isEdit = editIndex != null;
-    final nameController = TextEditingController(text: isEdit ? _devices[editIndex]['name'] : '');
-    final hostController = TextEditingController(text: isEdit ? _devices[editIndex]['host'] : '');
-    final portController = TextEditingController(text: isEdit ? _devices[editIndex]['port'] ?? '22' : '22');
-    final usernameController = TextEditingController(text: isEdit ? _devices[editIndex]['username'] : '');
-    final passwordController = TextEditingController(text: isEdit ? _devices[editIndex]['password'] : '');
+    final nameController =
+        TextEditingController(text: isEdit ? _devices[editIndex]['name'] : '');
+    final hostController =
+        TextEditingController(text: isEdit ? _devices[editIndex]['host'] : '');
+    final portController = TextEditingController(
+        text: isEdit ? _devices[editIndex]['port'] ?? '22' : '22');
+    final usernameController = TextEditingController(
+        text: isEdit ? _devices[editIndex]['username'] : '');
+    final passwordController = TextEditingController(
+        text: isEdit ? _devices[editIndex]['password'] : '');
     bool connecting = false;
     String status = '';
     String? errorHost;
@@ -350,11 +386,18 @@ class _HomeScreenState extends State<HomeScreen> {
             Future<void> connectAndSave() async {
               // Validation
               setModalState(() {
-                errorHost = hostController.text.isEmpty ? 'Host is required.' : null;
-                errorPort = int.tryParse(portController.text) == null ? 'Port must be a number.' : null;
-                errorUsername = usernameController.text.isEmpty ? 'Username is required.' : null;
+                errorHost =
+                    hostController.text.isEmpty ? 'Host is required.' : null;
+                errorPort = int.tryParse(portController.text) == null
+                    ? 'Port must be a number.'
+                    : null;
+                errorUsername = usernameController.text.isEmpty
+                    ? 'Username is required.'
+                    : null;
               });
-              if (errorHost != null || errorPort != null || errorUsername != null) return;
+              if (errorHost != null ||
+                  errorPort != null ||
+                  errorUsername != null) return;
               setModalState(() {
                 connecting = true;
                 status = 'Connecting...';
@@ -472,11 +515,14 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('Devices'),
         actions: [
           Semantics(
-            label: _customizeMode ? 'Done Customizing Dashboard' : 'Customize Dashboard',
+            label: _customizeMode
+                ? 'Done Customizing Dashboard'
+                : 'Customize Dashboard',
             button: true,
             child: IconButton(
               icon: Icon(_customizeMode ? Icons.check : Icons.tune),
-              tooltip: _customizeMode ? 'Done Customizing' : 'Customize Dashboard',
+              tooltip:
+                  _customizeMode ? 'Done Customizing' : 'Customize Dashboard',
               onPressed: () {
                 setState(() {
                   _customizeMode = !_customizeMode;
@@ -486,11 +532,15 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           Semantics(
-            label: _multiSelectMode ? 'Exit Multi-Select Mode' : 'Enable Multi-Select Mode',
+            label: _multiSelectMode
+                ? 'Exit Multi-Select Mode'
+                : 'Enable Multi-Select Mode',
             button: true,
             child: IconButton(
               icon: Icon(_multiSelectMode ? Icons.close : Icons.select_all),
-              tooltip: _multiSelectMode ? 'Exit Multi-Select' : 'Multi-Select Devices',
+              tooltip: _multiSelectMode
+                  ? 'Exit Multi-Select'
+                  : 'Multi-Select Devices',
               onPressed: () {
                 setState(() {
                   _multiSelectMode = !_multiSelectMode;
@@ -503,56 +553,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
-          // Cloud sync placeholder
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.cloud_sync),
-                    label: const Text('Sync Devices/Favorites to Cloud'),
-                    onPressed: () {
-                      showDialog(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: const Text('Cloud Sync'),
-                          content: const Text('Cloud sync is not implemented yet. This is a placeholder for future updates.'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx),
-                              child: const Text('OK'),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
           // ...dashboard tiles removed...
-          // Device filter dropdown
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: DropdownButtonFormField<String>(
-              value: _deviceFilter,
-              decoration: const InputDecoration(
-                labelText: 'Filter Devices',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              items: ['All', 'Favorites']
-                  .map((f) => DropdownMenuItem(value: f, child: Text(f)))
-                  .toList(),
-              onChanged: (v) {
-                setState(() {
-                  _deviceFilter = v ?? 'All';
-                });
-              },
-            ),
-          ),
           // Device search bar
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -582,10 +583,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.delete),
                       label: const Text('Delete Selected'),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                      style:
+                          ElevatedButton.styleFrom(backgroundColor: Colors.red),
                       onPressed: () {
                         setState(() {
-                          final indexes = _selectedDeviceIndexes.toList()..sort((a, b) => b.compareTo(a));
+                          final indexes = _selectedDeviceIndexes.toList()
+                            ..sort((a, b) => b.compareTo(a));
                           for (final idx in indexes) {
                             _devices.removeAt(idx);
                           }
@@ -642,14 +645,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 final filteredIndexes = <int>[];
                 for (int i = 0; i < _devices.length; i++) {
                   final device = _devices[i];
-                  final isFavorite = _favoriteDeviceHosts.contains(device['host']);
-                  if (_deviceFilter == 'Favorites' && !isFavorite) continue;
                   if (_deviceSearchQuery.isNotEmpty) {
                     final searchLower = _deviceSearchQuery.toLowerCase();
                     final name = (device['name'] ?? '').toLowerCase();
                     final host = (device['host'] ?? '').toLowerCase();
                     final username = (device['username'] ?? '').toLowerCase();
-                    if (!(name.contains(searchLower) || host.contains(searchLower) || username.contains(searchLower))) {
+                    if (!(name.contains(searchLower) ||
+                        host.contains(searchLower) ||
+                        username.contains(searchLower))) {
                       continue;
                     }
                   }
@@ -665,7 +668,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   itemBuilder: (context, idx) {
                     final device = filteredDevices[idx];
                     final index = filteredIndexes[idx];
-                    final isFavorite = _favoriteDeviceHosts.contains(device['host']);
+                    final isFavorite =
+                        _favoriteDeviceHosts.contains(device['host']);
                     return ListTile(
                       leading: _multiSelectMode
                           ? Semantics(
@@ -703,15 +707,24 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           if (!_multiSelectMode)
                             Semantics(
-                              label: isFavorite ? 'Unpin from favorites' : 'Pin to favorites',
+                              label: isFavorite
+                                  ? 'Unpin from favorites'
+                                  : 'Pin to favorites',
                               button: true,
                               child: IconButton(
-                                icon: Icon(isFavorite ? Icons.star : Icons.star_border, color: isFavorite ? Colors.amber : Colors.grey),
-                                tooltip: isFavorite ? 'Unpin from favorites' : 'Pin to favorites',
+                                icon: Icon(
+                                    isFavorite ? Icons.star : Icons.star_border,
+                                    color: isFavorite
+                                        ? Colors.amber
+                                        : Colors.grey),
+                                tooltip: isFavorite
+                                    ? 'Unpin from favorites'
+                                    : 'Pin to favorites',
                                 onPressed: () {
                                   setState(() {
                                     if (isFavorite) {
-                                      _favoriteDeviceHosts.remove(device['host']);
+                                      _favoriteDeviceHosts
+                                          .remove(device['host']);
                                     } else {
                                       _favoriteDeviceHosts.add(device['host']!);
                                     }
@@ -724,7 +737,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       subtitle: (device['name']?.isNotEmpty ?? false)
                           ? Semantics(
-                              label: 'Device address: ${device['username']} at ${device['host']}, port ${device['port']}',
+                              label:
+                                  'Device address: ${device['username']} at ${device['host']}, port ${device['port']}',
                               child: Text(
                                 '${device['username']}@${device['host']}:${device['port']}',
                               ),
@@ -738,16 +752,19 @@ class _HomeScreenState extends State<HomeScreen> {
                                   label: 'Edit device',
                                   button: true,
                                   child: IconButton(
-                                    icon: const Icon(Icons.edit, color: Colors.blue),
+                                    icon: const Icon(Icons.edit,
+                                        color: Colors.blue),
                                     tooltip: 'Edit device',
-                                    onPressed: () => _showDeviceSheet(editIndex: index),
+                                    onPressed: () =>
+                                        _showDeviceSheet(editIndex: index),
                                   ),
                                 ),
                                 Semantics(
                                   label: 'Delete device',
                                   button: true,
                                   child: IconButton(
-                                    icon: const Icon(Icons.delete, color: Colors.red),
+                                    icon: const Icon(Icons.delete,
+                                        color: Colors.red),
                                     tooltip: 'Delete device',
                                     onPressed: () => _removeDevice(index),
                                   ),
@@ -844,7 +861,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-
 // ...existing code...
             ListTile(
               title: const Text("Device's"),
@@ -857,49 +873,49 @@ class _HomeScreenState extends State<HomeScreen> {
             ListTile(
               title: const Text('Android'),
               leading: const Icon(Icons.android),
-                onTap: () {
-                  Navigator.of(context).push(MaterialPageRoute(
-                    builder: (context) => const AdbRefactoredScreen(),
-                  ));
-                },
+              onTap: () {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (context) => const AdbRefactoredScreen(),
+                ));
+              },
             ),
             ListTile(
               title: const Text('VNC'),
               leading: const Icon(Icons.desktop_windows),
-                onTap: () {
-                  Navigator.of(context).push(MaterialPageRoute(
-                    builder: (context) => const VNCScreen(),
-                  ));
-                },
+              onTap: () {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (context) => const VNCScreen(),
+                ));
+              },
             ),
             ListTile(
               title: const Text('RDP'),
               leading: const Icon(Icons.computer),
-                onTap: () {
-                  Navigator.of(context).push(MaterialPageRoute(
-                    builder: (context) => const RDPScreen(),
-                  ));
-                },
+              onTap: () {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (context) => const RDPScreen(),
+                ));
+              },
             ),
             ListTile(
               title: const Text('Other'),
               leading: const Icon(Icons.more_horiz),
-                onTap: () {
-                  // Placeholder for Other screen
-                  showDialog(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Other'),
-                      content: const Text('Other screen not implemented yet.'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('OK'),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+              onTap: () {
+                // Placeholder for Other screen
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Other'),
+                    content: const Text('Other screen not implemented yet.'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('OK'),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
             const Divider(),
             SwitchListTile(
