@@ -3,7 +3,6 @@ import 'package:dartssh2/dartssh2.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/services.dart';
-import 'device_terminal_screen.dart';
 
 // Widget to display a process info chip with color coding
 class ProcessInfoChip extends StatelessWidget {
@@ -313,6 +312,7 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
   }
 
   Future<void> _fetchProcesses() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -341,12 +341,14 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
           })
           .whereType<Map<String, String>>()
           .toList();
+      if (!mounted) return;
+      _processes = data;
+      _applyFilterSort();
       setState(() {
-        _processes = data;
-        _applyFilterSort();
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -356,6 +358,18 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
 
   void _applyFilterSort() {
     List<Map<String, String>> filtered = _processes ?? [];
+
+    // Apply state filter
+    if (_stateFilter != 'All') {
+      filtered = filtered.where((p) {
+        final stat = p['STAT'] ?? '';
+        if (stat.isEmpty) return false;
+        final firstChar = stat[0];
+        return firstChar == _stateFilter[0];
+      }).toList();
+    }
+
+    // Apply search filter
     if (_search.isNotEmpty) {
       filtered = filtered
           .where(
@@ -365,6 +379,8 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
           )
           .toList();
     }
+
+    // Apply sorting
     filtered.sort((a, b) {
       final aVal = a[_sortColumn] ?? '';
       final bVal = b[_sortColumn] ?? '';
@@ -377,16 +393,16 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
       }
       return _sortAsc ? aVal.compareTo(bVal) : bVal.compareTo(aVal);
     });
-    setState(() {
-      _filteredProcesses = filtered;
-    });
+
+    // Update state directly without nested setState
+    _filteredProcesses = filtered;
   }
 
   void _onSearchChanged() {
-    setState(() {
-      _search = _searchController.text;
-      _applyFilterSort();
-    });
+    if (!mounted) return;
+    _search = _searchController.text;
+    _applyFilterSort();
+    setState(() {});
   }
 
   void _onSendSignal(Map<String, String> process, String signal) async {
@@ -505,19 +521,19 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
       final useSudo = result['useSudo'] == true;
       final useTerminal = result['useTerminal'] == true;
 
-      // If user chose terminal, navigate to terminal with command ready
+      // If user chose terminal, copy command and show instructions
       if (useTerminal) {
         if (mounted) {
           // Copy command to clipboard
           await Clipboard.setData(ClipboardData(text: 'sudo $command'));
 
-          // Show snackbar BEFORE navigation
+          // Show snackbar with instructions
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                  'Command copied: sudo $command\n\nPaste in terminal and enter password'),
+                  'Command copied: sudo $command\n\nSwitch to Terminal tab and paste the command'),
               backgroundColor: Colors.blue,
-              duration: const Duration(seconds: 5),
+              duration: const Duration(seconds: 6),
               action: SnackBarAction(
                 label: 'Got it',
                 textColor: Colors.white,
@@ -525,42 +541,6 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
               ),
             ),
           );
-
-          // Navigate to terminal
-          await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => Scaffold(
-                appBar: AppBar(
-                  title: const Text('Terminal'),
-                  actions: [
-                    IconButton(
-                      icon: const Icon(Icons.info_outline),
-                      tooltip: 'Command copied to clipboard',
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                                'Paste command with Ctrl+Shift+V or right-click'),
-                            backgroundColor: Colors.blue,
-                            duration: Duration(seconds: 3),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-                body: DeviceTerminalScreen(
-                  sshClient: widget.sshClient,
-                  loading: false,
-                ),
-              ),
-            ),
-          );
-
-          // Refresh after returning from terminal
-          if (mounted) {
-            _fetchProcesses();
-          }
         }
         return;
       }
@@ -657,14 +637,18 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
         if (useSudo && sudoPassword != null) {
           session.stdin.add(utf8.encode('$sudoPassword\n'));
           await session.stdin.close();
+          // Give sudo a moment to process the password
+          await Future.delayed(const Duration(milliseconds: 100));
         }
 
-        // Read the output to ensure command completes
-        await utf8.decodeStream(session.stdout); // Consume stdout
-        final stderr = await utf8.decodeStream(session.stderr);
+        // Read the output streams concurrently to avoid blocking
+        final stdout = utf8.decodeStream(session.stdout);
+        final stderrFuture = utf8.decodeStream(session.stderr);
 
-        // Wait for exit code
-        final exitCode = await session.exitCode;
+        // Wait for streams and exit code
+        await stdout; // Consume stdout
+        final stderr = await stderrFuture;
+        final exitCode = await session.exitCode ?? 1;
 
         if (mounted) {
           if (exitCode == 0) {
@@ -676,10 +660,17 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
               ),
             );
           } else {
-            // Show error if command failed
-            String errorMsg = stderr.isNotEmpty
-                ? stderr.trim()
-                : 'Command failed with exit code $exitCode';
+            // Filter out sudo password prompts from stderr
+            String errorMsg = stderr.trim();
+            // Remove common sudo prompt messages
+            errorMsg = errorMsg
+                .replaceAll(RegExp(r'\[sudo\] password for .+:'), '')
+                .replaceAll(RegExp(r'sudo: '), '')
+                .trim();
+
+            if (errorMsg.isEmpty) {
+              errorMsg = 'Command failed with exit code $exitCode';
+            }
 
             // Provide helpful suggestions
             String suggestion = '';
@@ -758,6 +749,7 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
   }
 
   void _toggleAutoRefresh() {
+    if (!mounted) return;
     setState(() {
       _autoRefresh = !_autoRefresh;
     });
@@ -786,22 +778,22 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
   }
 
   void _changeSortColumn(String column) {
-    setState(() {
-      if (_sortColumn == column) {
-        _sortAsc = !_sortAsc;
-      } else {
-        _sortColumn = column;
-        _sortAsc = column == '%CPU' || column == '%MEM' ? false : true;
-      }
-      _applyFilterSort();
-    });
+    if (!mounted) return;
+    if (_sortColumn == column) {
+      _sortAsc = !_sortAsc;
+    } else {
+      _sortColumn = column;
+      _sortAsc = column == '%CPU' || column == '%MEM' ? false : true;
+    }
+    _applyFilterSort();
+    setState(() {});
   }
 
   void _changeStateFilter(String filter) {
-    setState(() {
-      _stateFilter = filter;
-      _applyFilterSort();
-    });
+    if (!mounted) return;
+    _stateFilter = filter;
+    _applyFilterSort();
+    setState(() {});
   }
 
   double _getTotalCPU() {

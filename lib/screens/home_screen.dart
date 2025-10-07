@@ -14,31 +14,8 @@ import 'rdp_screen.dart';
 import '_host_tile_with_retry.dart';
 import '../network_init.dart';
 import '../isolate_scanner.dart';
-
-// Device status information
-class DeviceStatus {
-  final bool isOnline;
-  final int? pingMs;
-  final DateTime lastChecked;
-
-  const DeviceStatus({
-    required this.isOnline,
-    this.pingMs,
-    required this.lastChecked,
-  });
-
-  DeviceStatus copyWith({
-    bool? isOnline,
-    int? pingMs,
-    DateTime? lastChecked,
-  }) {
-    return DeviceStatus(
-      isOnline: isOnline ?? this.isOnline,
-      pingMs: pingMs ?? this.pingMs,
-      lastChecked: lastChecked ?? this.lastChecked,
-    );
-  }
-}
+import '../widgets/enhanced_device_card.dart';
+import '../models/device_status.dart';
 
 // Device List Screen for Drawer navigation
 class DeviceListScreen extends StatelessWidget {
@@ -239,23 +216,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Color _getGroupColor(String group) {
-    switch (group) {
-      case 'Work':
-        return Colors.blue;
-      case 'Home':
-        return Colors.green;
-      case 'Servers':
-        return Colors.red;
-      case 'Development':
-        return Colors.purple;
-      case 'Local':
-        return Colors.orange;
-      default:
-        return Colors.grey;
-    }
-  }
-
   Future<void> _checkDeviceStatus(String host, String port) async {
     try {
       final stopwatch = Stopwatch()..start();
@@ -291,38 +251,6 @@ class _HomeScreenState extends State<HomeScreen> {
         await Future.delayed(const Duration(milliseconds: 100));
       }
     }
-  }
-
-  Widget _buildStatusIndicator(Map<String, dynamic> device) {
-    final host = device['host'];
-    if (host == null) return const SizedBox.shrink();
-
-    final status = _deviceStatuses[host];
-    if (status == null) {
-      return const Icon(Icons.help_outline, color: Colors.grey, size: 16);
-    }
-
-    return Container(
-      width: 12,
-      height: 12,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: status.isOnline ? Colors.green : Colors.red,
-        border: Border.all(color: Colors.white, width: 1),
-      ),
-      child: status.isOnline && status.pingMs != null
-          ? Center(
-              child: Text(
-                status.pingMs! > 999 ? '1s+' : '${status.pingMs}ms',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 6,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            )
-          : null,
-    );
   }
 
   void _showQuickActions(BuildContext context, Map<String, dynamic> device) {
@@ -981,165 +909,61 @@ class _HomeScreenState extends State<HomeScreen> {
                 }
                 return ListView.builder(
                   itemCount: filteredDevices.length,
-                  itemExtent: 72,
+                  padding: const EdgeInsets.all(8),
                   itemBuilder: (context, idx) {
                     final device = filteredDevices[idx];
                     final index = filteredIndexes[idx];
                     final isFavorite =
                         _favoriteDeviceHosts.contains(device['host']);
-                    return ListTile(
-                      leading: _multiSelectMode
-                          ? Semantics(
-                              label: _selectedDeviceIndexes.contains(index)
-                                  ? 'Deselect device'
-                                  : 'Select device',
-                              checked: _selectedDeviceIndexes.contains(index),
-                              child: Checkbox(
-                                value: _selectedDeviceIndexes.contains(index),
-                                onChanged: (checked) {
-                                  setState(() {
-                                    if (checked == true) {
-                                      _selectedDeviceIndexes.add(index);
-                                    } else {
-                                      _selectedDeviceIndexes.remove(index);
-                                    }
-                                  });
-                                },
-                              ),
-                            )
-                          : Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                _buildStatusIndicator(device),
-                                const SizedBox(width: 8),
-                              ],
-                            ),
-                      title: Row(
-                        children: [
-                          Expanded(
-                            child: Semantics(
-                              label: (device['name']?.isNotEmpty ?? false)
-                                  ? 'Device name: ${device['name']}'
-                                  : 'Device: ${device['username']} at ${device['host']}, port ${device['port']}',
-                              child: Text(
-                                (device['name']?.isNotEmpty ?? false)
-                                    ? device['name']!
-                                    : '${device['username']}@${device['host']}:${device['port']}',
-                              ),
-                            ),
-                          ),
-                          if (device['group'] != null &&
-                              device['group'] != 'Default')
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              margin: const EdgeInsets.only(left: 8),
-                              decoration: BoxDecoration(
-                                color:
-                                    _getGroupColor(device['group'] as String),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                device['group'] as String,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          if (!_multiSelectMode)
-                            Semantics(
-                              label: isFavorite
-                                  ? 'Unpin from favorites'
-                                  : 'Pin to favorites',
-                              button: true,
-                              child: IconButton(
-                                icon: Icon(
-                                    isFavorite ? Icons.star : Icons.star_border,
-                                    color: isFavorite
-                                        ? Colors.amber
-                                        : Colors.grey),
-                                tooltip: isFavorite
-                                    ? 'Unpin from favorites'
-                                    : 'Pin to favorites',
-                                onPressed: () {
-                                  setState(() {
-                                    if (isFavorite) {
-                                      _favoriteDeviceHosts
-                                          .remove(device['host']);
-                                    } else {
-                                      _favoriteDeviceHosts.add(device['host']!);
-                                    }
-                                    _saveDevices();
-                                  });
-                                },
-                              ),
-                            ),
-                        ],
-                      ),
-                      subtitle: (device['name']?.isNotEmpty ?? false)
-                          ? Semantics(
-                              label:
-                                  'Device address: ${device['username']} at ${device['host']}, port ${device['port']}',
-                              child: Text(
-                                '${device['username']}@${device['host']}:${device['port']}',
-                              ),
-                            )
-                          : null,
-                      trailing: !_multiSelectMode
-                          ? Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Semantics(
-                                  label: 'Edit device',
-                                  button: true,
-                                  child: IconButton(
-                                    icon: const Icon(Icons.edit,
-                                        color: Colors.blue),
-                                    tooltip: 'Edit device',
-                                    onPressed: () =>
-                                        _showDeviceSheet(editIndex: index),
+                    final isSelected = _selectedDeviceIndexes.contains(index);
+                    final status = _deviceStatuses[device['host']];
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: EnhancedDeviceCard(
+                        device: device,
+                        isFavorite: isFavorite,
+                        isSelected: isSelected,
+                        status: status,
+                        multiSelectMode: _multiSelectMode,
+                        onTap: !_multiSelectMode
+                            ? () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => DeviceScreen(
+                                      device: device,
+                                      initialTab:
+                                          5, // Show Misc tab (overview cards)
+                                    ),
                                   ),
-                                ),
-                                Semantics(
-                                  label: 'Delete device',
-                                  button: true,
-                                  child: IconButton(
-                                    icon: const Icon(Icons.delete,
-                                        color: Colors.red),
-                                    tooltip: 'Delete device',
-                                    onPressed: () => _removeDevice(index),
-                                  ),
-                                ),
-                              ],
-                            )
-                          : null,
-                      onTap: !_multiSelectMode
-                          ? () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => DeviceScreen(
-                                    device: device,
-                                    initialTab:
-                                        5, // Show Misc tab (overview cards)
-                                  ),
-                                ),
-                              );
+                                );
+                              }
+                            : () {
+                                setState(() {
+                                  if (isSelected) {
+                                    _selectedDeviceIndexes.remove(index);
+                                  } else {
+                                    _selectedDeviceIndexes.add(index);
+                                  }
+                                });
+                              },
+                        onLongPress: !_multiSelectMode
+                            ? () => _showQuickActions(context, device)
+                            : null,
+                        onEdit: () => _showDeviceSheet(editIndex: index),
+                        onDelete: () => _removeDevice(index),
+                        onToggleFavorite: () {
+                          setState(() {
+                            if (isFavorite) {
+                              _favoriteDeviceHosts.remove(device['host']);
+                            } else {
+                              _favoriteDeviceHosts.add(device['host']!);
                             }
-                          : () {
-                              setState(() {
-                                if (_selectedDeviceIndexes.contains(index)) {
-                                  _selectedDeviceIndexes.remove(index);
-                                } else {
-                                  _selectedDeviceIndexes.add(index);
-                                }
-                              });
-                            },
-                      onLongPress: !_multiSelectMode
-                          ? () => _showQuickActions(context, device)
-                          : null,
+                            _saveDevices();
+                          });
+                        },
+                      ),
                     );
                   },
                 );

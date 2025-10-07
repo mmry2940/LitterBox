@@ -102,6 +102,8 @@ class _DeviceScreenState extends State<DeviceScreen> {
         ),
         DeviceMiscScreen(
           device: widget.device, // Pass the required device parameter
+          sshClient: _sshClient, // Pass SSH client for metadata fetching
+          deviceStatus: null, // Could add device status tracking here
           onCardTap: (tab) {
             if (!mounted) return;
             setState(() {
@@ -120,37 +122,54 @@ class _DeviceScreenState extends State<DeviceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          widget.device['name']?.isNotEmpty == true
-              ? widget.device['name']!
-              : '${widget.device['username']}@${widget.device['host']}:${widget.device['port']}',
+    return PopScope(
+      canPop:
+          _selectedIndex == 5, // Only allow pop from Misc tab (overview cards)
+      onPopInvoked: (bool didPop) {
+        if (didPop) {
+          // Clean up SSH connection when popping
+          _sshClient?.close();
+        } else {
+          // If not popping, go back to Misc tab (overview cards)
+          if (_selectedIndex != 5) {
+            setState(() {
+              _selectedIndex = 5; // Navigate to Misc tab
+            });
+          }
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            widget.device['name']?.isNotEmpty == true
+                ? widget.device['name']!
+                : '${widget.device['username']}@${widget.device['host']}:${widget.device['port']}',
+          ),
         ),
+        body: _pages[_selectedIndex],
+        bottomNavigationBar: BottomNavigationBar(
+          items: const <BottomNavigationBarItem>[
+            BottomNavigationBarItem(icon: Icon(Icons.info), label: 'Info'),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.terminal),
+              label: 'Terminal',
+            ),
+            BottomNavigationBarItem(icon: Icon(Icons.folder), label: 'Files'),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.memory),
+              label: 'Processes',
+            ),
+            BottomNavigationBarItem(icon: Icon(Icons.list), label: 'Packages'),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.dashboard_customize),
+              label: 'Misc',
+            ),
+          ],
+          currentIndex: _selectedIndex,
+          onTap: _onItemTapped,
+        ),
+        // No floatingActionButton here; add device button is only on HomeScreen
       ),
-      body: _pages[_selectedIndex],
-      bottomNavigationBar: BottomNavigationBar(
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(icon: Icon(Icons.info), label: 'Info'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.terminal),
-            label: 'Terminal',
-          ),
-          BottomNavigationBarItem(icon: Icon(Icons.folder), label: 'Files'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.memory),
-            label: 'Processes',
-          ),
-          BottomNavigationBarItem(icon: Icon(Icons.list), label: 'Packages'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard_customize),
-            label: 'Misc',
-          ),
-        ],
-        currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
-      ),
-      // No floatingActionButton here; add device button is only on HomeScreen
     );
   }
 }
