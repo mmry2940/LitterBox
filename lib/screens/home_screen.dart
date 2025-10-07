@@ -324,6 +324,135 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showQuickActions(BuildContext context, Map<String, dynamic> device) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Quick Actions - ${device['name'] ?? device['host']}',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildQuickActionButton(
+                  icon: Icons.wifi,
+                  label: 'Ping',
+                  onTap: () => _pingDevice(device),
+                ),
+                _buildQuickActionButton(
+                  icon: Icons.refresh,
+                  label: 'Restart',
+                  onTap: () => _restartDevice(device),
+                ),
+                _buildQuickActionButton(
+                  icon: Icons.power_off,
+                  label: 'Shutdown',
+                  onTap: () => _shutdownDevice(device),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildQuickActionButton(
+                  icon: Icons.edit,
+                  label: 'Edit',
+                  onTap: () =>
+                      _showDeviceSheet(editIndex: _devices.indexOf(device)),
+                ),
+                _buildQuickActionButton(
+                  icon: Icons.copy,
+                  label: 'Duplicate',
+                  onTap: () => _duplicateDevice(device),
+                ),
+                _buildQuickActionButton(
+                  icon: Icons.delete,
+                  label: 'Delete',
+                  color: Colors.red,
+                  onTap: () => _removeDevice(_devices.indexOf(device)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    Color? color,
+  }) {
+    return InkWell(
+      onTap: () {
+        Navigator.pop(context);
+        onTap();
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: color ?? Theme.of(context).primaryColor,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: Colors.white, size: 28),
+          ),
+          const SizedBox(height: 8),
+          Text(label, style: const TextStyle(fontSize: 12)),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pingDevice(Map<String, dynamic> device) async {
+    final host = device['host'];
+    if (host == null) return;
+
+    try {
+      await _checkDeviceStatus(host, device['port'] ?? '22');
+      final status = _deviceStatuses[host];
+      if (status?.isOnline == true) {
+        _showError('Device is online (${status?.pingMs}ms)');
+      } else {
+        _showError('Device is offline');
+      }
+    } catch (e) {
+      _showError('Ping failed: $e');
+    }
+  }
+
+  Future<void> _restartDevice(Map<String, dynamic> device) async {
+    // This would require SSH connection and running reboot command
+    _showError('Restart functionality requires SSH connection');
+  }
+
+  Future<void> _shutdownDevice(Map<String, dynamic> device) async {
+    // This would require SSH connection and running shutdown command
+    _showError('Shutdown functionality requires SSH connection');
+  }
+
+  void _duplicateDevice(Map<String, dynamic> device) {
+    final duplicatedDevice = Map<String, dynamic>.from(device);
+    duplicatedDevice['name'] = '${device['name'] ?? device['host']} (Copy)';
+    setState(() {
+      _devices.add(duplicatedDevice);
+    });
+    _saveDevices();
+    _showError('Device duplicated');
+  }
+
   void _removeDevice(int index) async {
     try {
       setState(() {
@@ -1006,6 +1135,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                 }
                               });
                             },
+                      onLongPress: !_multiSelectMode
+                          ? () => _showQuickActions(context, device)
+                          : null,
                     );
                   },
                 );

@@ -2,6 +2,38 @@ import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_gauges/gauges.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
+
+// Performance data point
+class PerformanceData {
+  final DateTime timestamp;
+  final double cpuUsage;
+  final double memoryUsage;
+  final double storageUsed;
+
+  const PerformanceData({
+    required this.timestamp,
+    required this.cpuUsage,
+    required this.memoryUsage,
+    required this.storageUsed,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'timestamp': timestamp.toIso8601String(),
+        'cpuUsage': cpuUsage,
+        'memoryUsage': memoryUsage,
+        'storageUsed': storageUsed,
+      };
+
+  factory PerformanceData.fromJson(Map<String, dynamic> json) =>
+      PerformanceData(
+        timestamp: DateTime.parse(json['timestamp']),
+        cpuUsage: json['cpuUsage'],
+        memoryUsage: json['memoryUsage'],
+        storageUsed: json['storageUsed'],
+      );
+}
 
 // Default style and gauge size definitions
 const TextStyle cpuTextStyle =
@@ -28,14 +60,9 @@ class _DeviceMiscScreenState extends State<DeviceMiscScreen> {
   SSHClient? _sshClient;
 
   // State fields
-  final List<Map<String, String>> _sensors = [];
-  final bool _sensorsLoading = true;
-  String? _sensorsError;
-
   final double _ramUsage = 0;
   bool _ramExpanded = false;
   bool _uptimeExpanded = false;
-  bool _sensorsExpanded = false;
   String? _uptime;
 
   double _cpuUsage = 0;
@@ -46,10 +73,17 @@ class _DeviceMiscScreenState extends State<DeviceMiscScreen> {
   bool _storageExpanded = false;
   bool _networkExpanded = false;
 
+  // Performance history
+  final List<PerformanceData> _performanceHistory = [];
+  bool _performanceExpanded = false;
+  Timer? _performanceTimer;
+
   @override
   void initState() {
     super.initState();
     _initializeSSHClient();
+    _loadPerformanceHistory();
+    _startPerformanceMonitoring();
   }
 
   Future<void> _initializeSSHClient() async {
@@ -72,6 +106,80 @@ class _DeviceMiscScreenState extends State<DeviceMiscScreen> {
     _fetchTopProcesses();
     _fetchCPUUsage();
     _fetchStorageInfo();
+  }
+
+  Future<void> _loadPerformanceHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final deviceKey = 'performance_${widget.device['host']}';
+    final jsonStr = prefs.getString(deviceKey);
+    if (jsonStr != null) {
+      final List<dynamic> list = json.decode(jsonStr);
+      setState(() {
+        _performanceHistory.clear();
+        _performanceHistory.addAll(
+          list.map((e) => PerformanceData.fromJson(e)).toList(),
+        );
+        // Keep only last 24 hours of data
+        final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+        _performanceHistory
+            .removeWhere((data) => data.timestamp.isBefore(cutoff));
+      });
+    }
+  }
+
+  Future<void> _savePerformanceHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final deviceKey = 'performance_${widget.device['host']}';
+    final jsonStr =
+        json.encode(_performanceHistory.map((e) => e.toJson()).toList());
+    await prefs.setString(deviceKey, jsonStr);
+  }
+
+  void _startPerformanceMonitoring() {
+    _performanceTimer =
+        Timer.periodic(const Duration(minutes: 5), (timer) async {
+      if (_sshClient != null) {
+        await _collectPerformanceData();
+      }
+    });
+  }
+
+  Future<void> _collectPerformanceData() async {
+    try {
+      // Get current CPU usage
+      final cpuSession = await _sshClient?.execute('top -bn1 | grep "Cpu(s)"');
+      final cpuResult = await utf8.decodeStream(cpuSession!.stdout);
+      final cpuMatch = RegExp(r'(\d+\.\d+)%id').firstMatch(cpuResult);
+      final currentCpuUsage =
+          cpuMatch != null ? 100.0 - double.parse(cpuMatch.group(1)!) : 0.0;
+
+      // Get current memory usage
+      final memSession = await _sshClient?.execute('free | grep Mem');
+      final memResult = await utf8.decodeStream(memSession!.stdout);
+      final memParts =
+          memResult.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+      final totalMem = double.tryParse(memParts[1]) ?? 1.0;
+      final usedMem = double.tryParse(memParts[2]) ?? 0.0;
+      final currentMemoryUsage = (usedMem / totalMem) * 100.0;
+
+      setState(() {
+        _performanceHistory.add(PerformanceData(
+          timestamp: DateTime.now(),
+          cpuUsage: currentCpuUsage,
+          memoryUsage: currentMemoryUsage,
+          storageUsed: _storageUsed,
+        ));
+
+        // Keep only last 24 hours
+        final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+        _performanceHistory
+            .removeWhere((data) => data.timestamp.isBefore(cutoff));
+      });
+
+      await _savePerformanceHistory();
+    } catch (e) {
+      print('Error collecting performance data: $e');
+    }
   }
 
   Future<void> _fetchDiskInfo() async {
@@ -173,43 +281,20 @@ class _DeviceMiscScreenState extends State<DeviceMiscScreen> {
   @override
   void dispose() {
     _sshClient?.close();
+    _performanceTimer?.cancel();
     super.dispose();
   }
 
-  // Builds the sensor section
-  Widget _buildSensorsSection() {
-    if (_sensorsLoading) {
-      return const Center(child: CircularProgressIndicator());
+  Widget _buildPerformanceChart() {
+    if (_performanceHistory.isEmpty) {
+      return const Center(child: Text('No performance data available'));
     }
-    if (_sensorsError != null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Text(_sensorsError!, style: const TextStyle(color: Colors.red)),
-      );
-    }
-    if (_sensors.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: Text('No sensors found.'),
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text('Sensors',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        const SizedBox(height: 8),
-        ..._sensors.map((sensor) => Card(
-              margin: const EdgeInsets.symmetric(vertical: 4),
-              child: ListTile(
-                leading: const Icon(Icons.sensors, color: Colors.deepOrange),
-                title: Text(sensor['label'] ?? ''),
-                subtitle: Text(sensor['chip'] ?? ''),
-                trailing: Text(sensor['value'] ?? '',
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-              ),
-            )),
-      ],
+
+    // Simple line chart using CustomPaint for now
+    // In a real app, you'd use a charting library like fl_chart
+    return CustomPaint(
+      painter: PerformanceChartPainter(_performanceHistory),
+      child: Container(),
     );
   }
 
@@ -370,16 +455,25 @@ class _DeviceMiscScreenState extends State<DeviceMiscScreen> {
         ),
         const SizedBox(height: 16),
         ExpansionTile(
-          leading: const Icon(Icons.sensors, color: Colors.deepOrange),
-          title: Text('Sensors', style: cpuTextStyle),
-          initiallyExpanded: _sensorsExpanded,
+          leading: const Icon(Icons.trending_up, color: Colors.purple),
+          title: Text('Performance History', style: cpuTextStyle),
+          initiallyExpanded: _performanceExpanded,
           onExpansionChanged: (expanded) {
             setState(() {
-              _sensorsExpanded = expanded;
+              _performanceExpanded = expanded;
             });
           },
           children: [
-            _buildSensorsSection(),
+            if (_performanceHistory.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(16.0),
+                child: Text('Collecting performance data...'),
+              )
+            else
+              SizedBox(
+                height: 200,
+                child: _buildPerformanceChart(),
+              ),
           ],
         ),
       ],
@@ -486,4 +580,79 @@ class _OverviewCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class PerformanceChartPainter extends CustomPainter {
+  final List<PerformanceData> data;
+
+  PerformanceChartPainter(this.data);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (data.isEmpty) return;
+
+    final paint = Paint()
+      ..color = Colors.blue
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    final cpuPaint = Paint()
+      ..color = Colors.red
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    final memoryPaint = Paint()
+      ..color = Colors.green
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    final path = Path();
+    final cpuPath = Path();
+    final memoryPath = Path();
+
+    final width = size.width;
+    final height = size.height;
+
+    for (int i = 0; i < data.length; i++) {
+      final x = (i / (data.length - 1)) * width;
+      final y = height - (data[i].cpuUsage / 100.0) * height;
+      final cpuY = height - (data[i].memoryUsage / 100.0) * height;
+
+      if (i == 0) {
+        path.moveTo(x, y);
+        cpuPath.moveTo(x, cpuY);
+        memoryPath.moveTo(x, y); // Using same data for simplicity
+      } else {
+        path.lineTo(x, y);
+        cpuPath.lineTo(x, cpuY);
+        memoryPath.lineTo(x, y);
+      }
+    }
+
+    canvas.drawPath(path, paint);
+    canvas.drawPath(cpuPath, cpuPaint);
+    canvas.drawPath(memoryPath, memoryPaint);
+
+    // Draw legend
+    final textPainter = TextPainter(
+      textDirection: TextDirection.ltr,
+    );
+
+    textPainter.text = const TextSpan(
+      text: 'CPU',
+      style: TextStyle(color: Colors.red, fontSize: 12),
+    );
+    textPainter.layout();
+    textPainter.paint(canvas, const Offset(10, 10));
+
+    textPainter.text = const TextSpan(
+      text: 'Memory',
+      style: TextStyle(color: Colors.green, fontSize: 12),
+    );
+    textPainter.layout();
+    textPainter.paint(canvas, const Offset(10, 30));
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
