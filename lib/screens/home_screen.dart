@@ -14,6 +14,31 @@ import 'adb_screen_refactored.dart';
 import 'vnc_screen.dart';
 import 'rdp_screen.dart';
 
+// Device status information
+class DeviceStatus {
+  final bool isOnline;
+  final int? pingMs;
+  final DateTime lastChecked;
+
+  const DeviceStatus({
+    required this.isOnline,
+    this.pingMs,
+    required this.lastChecked,
+  });
+
+  DeviceStatus copyWith({
+    bool? isOnline,
+    int? pingMs,
+    DateTime? lastChecked,
+  }) {
+    return DeviceStatus(
+      isOnline: isOnline ?? this.isOnline,
+      pingMs: pingMs ?? this.pingMs,
+      lastChecked: lastChecked ?? this.lastChecked,
+    );
+  }
+}
+
 // Device List Screen for Drawer navigation
 class DeviceListScreen extends StatelessWidget {
   final List<Map<String, dynamic>> devices;
@@ -91,6 +116,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _multiSelectMode = false;
   Set<int> _selectedDeviceIndexes = {};
   String _deviceSearchQuery = '';
+  String _selectedGroupFilter = 'All';
+  Map<String, DeviceStatus> _deviceStatuses = {};
 
   final Set<String> _favoriteDeviceHosts = {};
   // Customizable dashboard tiles
@@ -192,8 +219,12 @@ class _HomeScreenState extends State<HomeScreen> {
         'port': '22',
         'username': 'user',
         'password': 'password',
+        'group': 'Local',
       });
     });
+
+    // Check device statuses
+    _checkAllDeviceStatuses();
   }
 
   Future<void> _saveDevices() async {
@@ -205,6 +236,92 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       _showError('Failed to save devices: $e');
     }
+  }
+
+  Color _getGroupColor(String group) {
+    switch (group) {
+      case 'Work':
+        return Colors.blue;
+      case 'Home':
+        return Colors.green;
+      case 'Servers':
+        return Colors.red;
+      case 'Development':
+        return Colors.purple;
+      case 'Local':
+        return Colors.orange;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  Future<void> _checkDeviceStatus(String host, String port) async {
+    try {
+      final stopwatch = Stopwatch()..start();
+      final socket = await Socket.connect(host, int.parse(port))
+          .timeout(const Duration(seconds: 5));
+      stopwatch.stop();
+      socket.destroy();
+
+      setState(() {
+        _deviceStatuses[host] = DeviceStatus(
+          isOnline: true,
+          pingMs: stopwatch.elapsedMilliseconds,
+          lastChecked: DateTime.now(),
+        );
+      });
+    } catch (e) {
+      setState(() {
+        _deviceStatuses[host] = DeviceStatus(
+          isOnline: false,
+          lastChecked: DateTime.now(),
+        );
+      });
+    }
+  }
+
+  Future<void> _checkAllDeviceStatuses() async {
+    for (final device in _devices) {
+      final host = device['host'];
+      final port = device['port'] ?? '22';
+      if (host != null) {
+        await _checkDeviceStatus(host, port);
+        // Small delay to avoid overwhelming the network
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+    }
+  }
+
+  Widget _buildStatusIndicator(Map<String, dynamic> device) {
+    final host = device['host'];
+    if (host == null) return const SizedBox.shrink();
+
+    final status = _deviceStatuses[host];
+    if (status == null) {
+      return const Icon(Icons.help_outline, color: Colors.grey, size: 16);
+    }
+
+    return Container(
+      width: 12,
+      height: 12,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: status.isOnline ? Colors.green : Colors.red,
+        border: Border.all(color: Colors.white, width: 1),
+      ),
+      child: status.isOnline && status.pingMs != null
+          ? Center(
+              child: Text(
+                status.pingMs! > 999 ? '1s+' : '${status.pingMs}ms',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 6,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            )
+          : null,
+    );
   }
 
   void _removeDevice(int index) async {
@@ -373,6 +490,8 @@ class _HomeScreenState extends State<HomeScreen> {
         text: isEdit ? _devices[editIndex]['username'] : '');
     final passwordController = TextEditingController(
         text: isEdit ? _devices[editIndex]['password'] : '');
+    String selectedGroup =
+        isEdit ? _devices[editIndex]['group'] ?? 'Default' : 'Default';
     bool connecting = false;
     String status = '';
     String? errorHost;
@@ -416,6 +535,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     'port': portController.text,
                     'username': usernameController.text,
                     'password': passwordController.text,
+                    'group': selectedGroup,
                   };
                   if (isEdit) {
                     _devices[editIndex] = device;
@@ -479,6 +599,30 @@ class _HomeScreenState extends State<HomeScreen> {
                       obscureText: true,
                     ),
                     const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedGroup,
+                      decoration: const InputDecoration(
+                        labelText: 'Device Group',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'Default', child: Text('Default')),
+                        DropdownMenuItem(value: 'Work', child: Text('Work')),
+                        DropdownMenuItem(value: 'Home', child: Text('Home')),
+                        DropdownMenuItem(
+                            value: 'Servers', child: Text('Servers')),
+                        DropdownMenuItem(
+                            value: 'Development', child: Text('Development')),
+                        DropdownMenuItem(value: 'Local', child: Text('Local')),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          selectedGroup = value;
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
                     Row(
                       children: [
                         ElevatedButton(
@@ -514,6 +658,15 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Devices'),
         actions: [
+          Semantics(
+            label: 'Refresh device statuses',
+            button: true,
+            child: IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Refresh Status',
+              onPressed: _checkAllDeviceStatuses,
+            ),
+          ),
           Semantics(
             label: _customizeMode
                 ? 'Done Customizing Dashboard'
@@ -568,6 +721,36 @@ class _HomeScreenState extends State<HomeScreen> {
                 setState(() {
                   _deviceSearchQuery = v.trim();
                 });
+              },
+            ),
+          ),
+          // Device group filter
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: DropdownButtonFormField<String>(
+              value: _selectedGroupFilter,
+              decoration: const InputDecoration(
+                labelText: 'Filter by Group',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.filter_list),
+                isDense: true,
+              ),
+              items: const [
+                DropdownMenuItem(value: 'All', child: Text('All Groups')),
+                DropdownMenuItem(value: 'Default', child: Text('Default')),
+                DropdownMenuItem(value: 'Work', child: Text('Work')),
+                DropdownMenuItem(value: 'Home', child: Text('Home')),
+                DropdownMenuItem(value: 'Servers', child: Text('Servers')),
+                DropdownMenuItem(
+                    value: 'Development', child: Text('Development')),
+                DropdownMenuItem(value: 'Local', child: Text('Local')),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() {
+                    _selectedGroupFilter = value;
+                  });
+                }
               },
             ),
           ),
@@ -656,6 +839,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       continue;
                     }
                   }
+                  if (_selectedGroupFilter != 'All' &&
+                      device['group'] != _selectedGroupFilter) {
+                    continue;
+                  }
                   filteredDevices.add(device);
                   filteredIndexes.add(i);
                 }
@@ -690,7 +877,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                 },
                               ),
                             )
-                          : null,
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _buildStatusIndicator(device),
+                                const SizedBox(width: 8),
+                              ],
+                            ),
                       title: Row(
                         children: [
                           Expanded(
@@ -705,6 +898,26 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                           ),
+                          if (device['group'] != null &&
+                              device['group'] != 'Default')
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              margin: const EdgeInsets.only(left: 8),
+                              decoration: BoxDecoration(
+                                color:
+                                    _getGroupColor(device['group'] as String),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                device['group'] as String,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
                           if (!_multiSelectMode)
                             Semantics(
                               label: isFavorite
