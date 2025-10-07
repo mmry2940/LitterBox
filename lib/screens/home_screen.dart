@@ -502,7 +502,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? 'Username is required.'
                     : null;
               });
-                  errorPort != null ||!= null) return;
+              if (errorHost != null ||
+                  errorPort != null ||
+                  errorUsername != null) return;
               setModalState(() {
                 connecting = true;
                 status = 'Connecting...';
@@ -1120,7 +1122,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 MaterialPageRoute(
                                   builder: (context) => DeviceScreen(
                                     device: device,
-                                    initialTab: 5, // Show Misc tab (overview cards)
+                                    initialTab:
+                                        5, // Show Misc tab (overview cards)
                                   ),
                                 ),
                               );
