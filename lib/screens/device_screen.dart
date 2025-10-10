@@ -102,6 +102,8 @@ class _DeviceScreenState extends State<DeviceScreen> {
         ),
         DeviceMiscScreen(
           device: widget.device, // Pass the required device parameter
+          sshClient: _sshClient, // Pass SSH client for metadata fetching
+          deviceStatus: null, // Could add device status tracking here
           onCardTap: (tab) {
             if (!mounted) return;
             setState(() {
@@ -121,13 +123,19 @@ class _DeviceScreenState extends State<DeviceScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: _selectedIndex == 5,
-      onPopInvoked: (didPop) {
-        if (!didPop && _selectedIndex != 5) {
-          if (!mounted) return;
-          setState(() {
-            _selectedIndex = 5;
-          });
+      canPop:
+          _selectedIndex == 5, // Only allow pop from Misc tab (overview cards)
+      onPopInvoked: (bool didPop) {
+        if (didPop) {
+          // Clean up SSH connection when popping
+          _sshClient?.close();
+        } else {
+          // If not popping, go back to Misc tab (overview cards)
+          if (_selectedIndex != 5) {
+            setState(() {
+              _selectedIndex = 5; // Navigate to Misc tab
+            });
+          }
         }
       },
       child: Scaffold(
