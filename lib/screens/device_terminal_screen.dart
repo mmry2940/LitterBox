@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:xterm/xterm.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
@@ -29,6 +30,7 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
   bool _isConnected = false;
   String _connectionStatus = 'Connecting...';
   Timer? _cursorTrackingTimer;
+  bool _showHotkeys = true;
 
   @override
   void initState() {
@@ -178,6 +180,89 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
     }
   }
 
+  void _sendSpecialKey(String key) {
+    if (_shellSession == null || !_isConnected) return;
+
+    switch (key) {
+      case 'CTRL_C':
+        _shellSession!.write(Uint8List.fromList([3])); // ETX (End of Text)
+        break;
+      case 'CTRL_Z':
+        _shellSession!.write(Uint8List.fromList([26])); // SUB (Substitute)
+        break;
+      case 'CTRL_D':
+        _shellSession!
+            .write(Uint8List.fromList([4])); // EOT (End of Transmission)
+        break;
+      case 'CTRL_L':
+        _clearTerminal();
+        break;
+      case 'ESC':
+        _shellSession!.write(Uint8List.fromList([27])); // ESC
+        break;
+      case 'TAB':
+        _shellSession!.write(Uint8List.fromList([9])); // TAB
+        break;
+      case 'UP':
+        _shellSession!.write(utf8.encode('\x1b[A'));
+        break;
+      case 'DOWN':
+        _shellSession!.write(utf8.encode('\x1b[B'));
+        break;
+      case 'LEFT':
+        _shellSession!.write(utf8.encode('\x1b[D'));
+        break;
+      case 'RIGHT':
+        _shellSession!.write(utf8.encode('\x1b[C'));
+        break;
+    }
+  }
+
+  void _sendText(String text) {
+    if (_shellSession != null && _isConnected) {
+      _shellSession!.write(utf8.encode(text));
+    }
+  }
+
+  Widget _buildHotkeyButton({
+    required String label,
+    required VoidCallback onPressed,
+    required IconData icon,
+    Color? backgroundColor,
+    Color? textColor,
+    String? tooltip,
+  }) {
+    return Tooltip(
+      message: tooltip ?? label,
+      child: ElevatedButton.icon(
+        onPressed: _isConnected ? onPressed : null,
+        icon: Icon(
+          icon,
+          size: 14, // Smaller icon for compact design
+          color: textColor ?? Colors.white,
+        ),
+        label: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10, // Smaller text for compact design
+            fontWeight: FontWeight.bold,
+            color: textColor ?? Colors.white,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: backgroundColor ?? Colors.grey[800],
+          foregroundColor: textColor ?? Colors.white,
+          padding: const EdgeInsets.symmetric(
+              horizontal: 6, vertical: 3), // More compact
+          minimumSize: const Size(50, 30), // Smaller minimum size
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(4), // Smaller radius
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.loading) {
@@ -278,6 +363,12 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
             icon: const Icon(Icons.clear_all),
             tooltip: 'Clear Terminal',
           ),
+          // Toggle hotkeys button
+          IconButton(
+            onPressed: () => setState(() => _showHotkeys = !_showHotkeys),
+            icon: Icon(_showHotkeys ? Icons.keyboard_hide : Icons.keyboard),
+            tooltip: _showHotkeys ? 'Hide Hotkeys' : 'Show Hotkeys',
+          ),
           // Quick commands menu
           PopupMenuButton<String>(
             onSelected: _sendCommand,
@@ -328,43 +419,258 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
           ),
         ],
       ),
-      body: Container(
-        color: Colors.black,
-        child: TerminalView(
-          _terminal,
-          controller: _controller,
-          scrollController: _scrollController,
-          autofocus: true,
-          deleteDetection: true,
-          keyboardType: TextInputType.text,
-          readOnly: false,
-          hardwareKeyboardOnly: false,
-          theme: TerminalTheme(
-            cursor: Colors.greenAccent,
-            selection: Colors.grey.withValues(alpha: 0.3),
-            foreground: Colors.white,
-            background: Colors.black,
-            black: Colors.black,
-            red: Colors.red,
-            green: Colors.green,
-            yellow: Colors.yellow,
-            blue: Colors.blue,
-            magenta: Colors.purple,
-            cyan: Colors.cyan,
-            white: Colors.white,
-            brightBlack: Colors.grey,
-            brightRed: Colors.redAccent,
-            brightGreen: Colors.greenAccent,
-            brightYellow: Colors.yellowAccent,
-            brightBlue: Colors.blueAccent,
-            brightMagenta: Colors.purpleAccent,
-            brightCyan: Colors.cyanAccent,
-            brightWhite: Colors.white,
-            searchHitBackground: Colors.yellow.withValues(alpha: 0.5),
-            searchHitBackgroundCurrent: Colors.orange.withValues(alpha: 0.7),
-            searchHitForeground: Colors.black,
+      body: Column(
+        children: [
+          // Terminal view
+          Expanded(
+            child: Container(
+              color: Colors.black,
+              child: TerminalView(
+                _terminal,
+                controller: _controller,
+                scrollController: _scrollController,
+                autofocus: true,
+                deleteDetection: true,
+                keyboardType: TextInputType.text,
+                readOnly: false,
+                hardwareKeyboardOnly: false,
+                theme: TerminalTheme(
+                  cursor: Colors.greenAccent,
+                  selection: Colors.grey.withValues(alpha: 0.3),
+                  foreground: Colors.white,
+                  background: Colors.black,
+                  black: Colors.black,
+                  red: Colors.red,
+                  green: Colors.green,
+                  yellow: Colors.yellow,
+                  blue: Colors.blue,
+                  magenta: Colors.purple,
+                  cyan: Colors.cyan,
+                  white: Colors.white,
+                  brightBlack: Colors.grey,
+                  brightRed: Colors.redAccent,
+                  brightGreen: Colors.greenAccent,
+                  brightYellow: Colors.yellowAccent,
+                  brightBlue: Colors.blueAccent,
+                  brightMagenta: Colors.purpleAccent,
+                  brightCyan: Colors.cyanAccent,
+                  brightWhite: Colors.white,
+                  searchHitBackground: Colors.yellow.withValues(alpha: 0.5),
+                  searchHitBackgroundCurrent:
+                      Colors.orange.withValues(alpha: 0.7),
+                  searchHitForeground: Colors.black,
+                ),
+              ),
+            ),
           ),
-        ),
+          // Hotkey row (conditional)
+          if (_showHotkeys)
+            Container(
+              color: Colors.grey[900],
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 8, vertical: 4), // Reduced padding
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Scroll indicator
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.swipe,
+                        size: 12,
+                        color: Colors.grey[600],
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Swipe for more hotkeys',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  // First row - Control keys (scrollable)
+                  SizedBox(
+                    height: 40,
+                    child: ShaderMask(
+                      shaderCallback: (Rect bounds) {
+                        return const LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black,
+                            Colors.black,
+                            Colors.transparent,
+                          ],
+                          stops: [0.0, 0.05, 0.95, 1.0],
+                        ).createShader(bounds);
+                      },
+                      blendMode: BlendMode.dstIn,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            const SizedBox(width: 8), // Start padding
+                            _buildHotkeyButton(
+                              label: 'Ctrl+C',
+                              icon: Icons.stop,
+                              onPressed: () => _sendSpecialKey('CTRL_C'),
+                              backgroundColor: Colors.red[700],
+                              tooltip: 'Send interrupt signal (Ctrl+C)',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: 'Ctrl+Z',
+                              icon: Icons.pause,
+                              onPressed: () => _sendSpecialKey('CTRL_Z'),
+                              backgroundColor: Colors.orange[700],
+                              tooltip: 'Suspend process (Ctrl+Z)',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: 'Ctrl+D',
+                              icon: Icons.exit_to_app,
+                              onPressed: () => _sendSpecialKey('CTRL_D'),
+                              backgroundColor: Colors.blue[700],
+                              tooltip: 'End of transmission (Ctrl+D)',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: 'Ctrl+L',
+                              icon: Icons.clear_all,
+                              onPressed: () => _sendSpecialKey('CTRL_L'),
+                              backgroundColor: Colors.green[700],
+                              tooltip: 'Clear screen (Ctrl+L)',
+                            ),
+                            const SizedBox(width: 8),
+                            // Arrow keys
+                            _buildHotkeyButton(
+                              label: '↑',
+                              icon: Icons.keyboard_arrow_up,
+                              onPressed: () => _sendSpecialKey('UP'),
+                              tooltip: 'Up arrow',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: '↓',
+                              icon: Icons.keyboard_arrow_down,
+                              onPressed: () => _sendSpecialKey('DOWN'),
+                              tooltip: 'Down arrow',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: '←',
+                              icon: Icons.keyboard_arrow_left,
+                              onPressed: () => _sendSpecialKey('LEFT'),
+                              tooltip: 'Left arrow',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: '→',
+                              icon: Icons.keyboard_arrow_right,
+                              onPressed: () => _sendSpecialKey('RIGHT'),
+                              tooltip: 'Right arrow',
+                            ),
+                            const SizedBox(width: 8), // End padding
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  // Second row - Special characters and functions (scrollable)
+                  SizedBox(
+                    height: 40,
+                    child: ShaderMask(
+                      shaderCallback: (Rect bounds) {
+                        return const LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black,
+                            Colors.black,
+                            Colors.transparent,
+                          ],
+                          stops: [0.0, 0.05, 0.95, 1.0],
+                        ).createShader(bounds);
+                      },
+                      blendMode: BlendMode.dstIn,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            const SizedBox(width: 8), // Start padding
+                            _buildHotkeyButton(
+                              label: 'Tab',
+                              icon: Icons.keyboard_tab,
+                              onPressed: () => _sendSpecialKey('TAB'),
+                              tooltip: 'Tab key for auto-completion',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: 'Esc',
+                              icon: Icons.keyboard_return,
+                              onPressed: () => _sendSpecialKey('ESC'),
+                              tooltip: 'Escape key',
+                            ),
+                            const SizedBox(width: 8),
+                            // Common symbols
+                            _buildHotkeyButton(
+                              label: '|',
+                              icon: Icons.vertical_split,
+                              onPressed: () => _sendText('|'),
+                              tooltip: 'Pipe symbol',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: '&',
+                              icon: Icons.add,
+                              onPressed: () => _sendText('&'),
+                              tooltip: 'Ampersand',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: ';',
+                              icon: Icons.more_vert,
+                              onPressed: () => _sendText(';'),
+                              tooltip: 'Semicolon',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: '~',
+                              icon: Icons.home,
+                              onPressed: () => _sendText('~'),
+                              tooltip: 'Tilde (home directory)',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: '*',
+                              icon: Icons.star,
+                              onPressed: () => _sendText('*'),
+                              tooltip: 'Asterisk (wildcard)',
+                            ),
+                            const SizedBox(width: 4),
+                            _buildHotkeyButton(
+                              label: '?',
+                              icon: Icons.help_outline,
+                              onPressed: () => _sendText('?'),
+                              tooltip: 'Question mark (single char wildcard)',
+                            ),
+                            const SizedBox(width: 8), // End padding
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }
