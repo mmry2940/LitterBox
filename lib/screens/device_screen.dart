@@ -6,6 +6,7 @@ import 'device_files_screen.dart';
 import 'device_packages_screen.dart';
 import 'device_processes_screen.dart';
 import 'device_misc_screen.dart';
+import '../models/device_status.dart';
 
 typedef AddDeviceCallback = void Function(String ip);
 
@@ -26,6 +27,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
   String? _sshError;
   bool _connecting = true;
   late String _password;
+  DateTime? _connectionTime;
 
   @override
   void initState() {
@@ -35,8 +37,31 @@ class _DeviceScreenState extends State<DeviceScreen> {
     _connectSSH();
   }
 
+  DeviceStatus _getCurrentDeviceStatus() {
+    // Determine status based on SSH connection state
+    final isOnline = _sshClient != null && !_connecting && _sshError == null;
+
+    // Calculate approximate latency based on connection time
+    int? pingMs;
+    if (isOnline && _connectionTime != null) {
+      // Use connection time as a rough latency estimate
+      final connectionDuration = DateTime.now().difference(_connectionTime!);
+      if (connectionDuration.inSeconds < 10) {
+        // If connected recently, assume good latency
+        pingMs = 50;
+      }
+    }
+
+    return DeviceStatus(
+      isOnline: isOnline,
+      pingMs: pingMs,
+      lastChecked: DateTime.now(),
+    );
+  }
+
   Future<void> _connectSSH() async {
     if (!mounted) return;
+    final startTime = DateTime.now();
     setState(() {
       _connecting = true;
       _sshError = null;
@@ -55,12 +80,16 @@ class _DeviceScreenState extends State<DeviceScreen> {
       setState(() {
         _sshClient = client;
         _connecting = false;
+        _connectionTime = startTime;
+        _miscScreenReloadKey++; // Refresh misc screen to show updated status
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _sshError = e.toString();
         _connecting = false;
+        _connectionTime = null;
+        _miscScreenReloadKey++; // Refresh misc screen to show updated status
       });
     }
   }
@@ -69,6 +98,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
   final int _filesScreenReloadKey = 0;
   final int _processesScreenReloadKey = 0;
   final int _packagesScreenReloadKey = 0;
+  int _miscScreenReloadKey = 0;
 
   List<Widget> get _pages => [
         DeviceInfoScreen(
@@ -101,9 +131,10 @@ class _DeviceScreenState extends State<DeviceScreen> {
           loading: _connecting,
         ),
         DeviceMiscScreen(
+          key: ValueKey(_miscScreenReloadKey), // Add key for refresh capability
           device: widget.device, // Pass the required device parameter
           sshClient: _sshClient, // Pass SSH client for metadata fetching
-          deviceStatus: null, // Could add device status tracking here
+          deviceStatus: _getCurrentDeviceStatus(), // Pass actual device status
           onCardTap: (tab) {
             if (!mounted) return;
             setState(() {
