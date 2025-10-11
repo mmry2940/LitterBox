@@ -23,11 +23,11 @@ class DeviceListScreen extends StatelessWidget {
   final Set<String> favoriteDeviceHosts;
   final Function(Map<String, dynamic>)? onDeviceTap;
   const DeviceListScreen({
-    Key? key,
+    super.key,
     required this.devices,
     required this.favoriteDeviceHosts,
     this.onDeviceTap,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -92,10 +92,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   bool _multiSelectMode = false;
-  Set<int> _selectedDeviceIndexes = {};
+  final Set<int> _selectedDeviceIndexes = {};
   String _deviceSearchQuery = '';
   String _selectedGroupFilter = 'All';
-  Map<String, DeviceStatus> _deviceStatuses = {};
+  final Map<String, DeviceStatus> _deviceStatuses = {};
 
   final Set<String> _favoriteDeviceHosts = {};
   // Customizable dashboard tiles
@@ -432,7 +432,9 @@ class _HomeScreenState extends State<HomeScreen> {
               });
               if (errorHost != null ||
                   errorPort != null ||
-                  errorUsername != null) return;
+                  errorUsername != null) {
+                return;
+              }
               setModalState(() {
                 connecting = true;
                 status = 'Connecting...';
@@ -574,7 +576,9 @@ class _HomeScreenState extends State<HomeScreen> {
               });
               if (errorHost != null ||
                   errorPort != null ||
-                  errorUsername != null) return;
+                  errorUsername != null) {
+                return;
+              }
               setModalState(() {
                 connecting = true;
                 status = 'Connecting...';
@@ -658,7 +662,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
-                      value: selectedGroup,
+                      initialValue: selectedGroup,
                       decoration: const InputDecoration(
                         labelText: 'Device Group',
                         border: OutlineInputBorder(),
@@ -786,7 +790,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: DropdownButtonFormField<String>(
-              value: _selectedGroupFilter,
+              initialValue: _selectedGroupFilter,
               decoration: const InputDecoration(
                 labelText: 'Filter by Group',
                 border: OutlineInputBorder(),

@@ -612,7 +612,7 @@ class _RDPScreenState extends State<RDPScreen> {
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<RDPConnectionMode>(
-                      value: _connectionMode,
+                      initialValue: _connectionMode,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         contentPadding:

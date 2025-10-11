@@ -494,21 +494,21 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
             TextButton(
               onPressed: () => Navigator.pop(ctx,
                   {'confirmed': true, 'useSudo': false, 'useTerminal': true}),
-              child: const Text('Run in Terminal'),
               style: TextButton.styleFrom(foregroundColor: Colors.blue),
+              child: const Text('Run in Terminal'),
             ),
           if (!mightNeedSudo)
             TextButton(
               onPressed: () => Navigator.pop(ctx,
                   {'confirmed': true, 'useSudo': true, 'useTerminal': false}),
-              child: const Text('Try with sudo -n'),
               style: TextButton.styleFrom(foregroundColor: Colors.orange),
+              child: const Text('Try with sudo -n'),
             ),
           TextButton(
             onPressed: () => Navigator.pop(ctx,
                 {'confirmed': true, 'useSudo': false, 'useTerminal': false}),
-            child: Text(mightNeedSudo ? 'Send Signal' : 'Try Anyway'),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: Text(mightNeedSudo ? 'Send Signal' : 'Try Anyway'),
           ),
         ],
       ),
@@ -648,7 +648,7 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
         // Wait for streams and exit code
         await stdout; // Consume stdout
         final stderr = await stderrFuture;
-        final exitCode = await session.exitCode ?? 1;
+        final exitCode = session.exitCode ?? 1;
 
         if (mounted) {
           if (exitCode == 0) {
@@ -870,7 +870,7 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               color:
-                  Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+                  Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
               child: Row(
                 children: [
                   Expanded(
@@ -985,7 +985,7 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
                               selectedColor: Colors.blue.shade200,
                             ),
                           );
-                        }).toList(),
+                        }),
                       ],
                     ),
                   ),
@@ -1030,7 +1030,7 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
                               selectedColor: Colors.green.shade200,
                             ),
                           );
-                        }).toList(),
+                        }),
                       ],
                     ),
                   ),
@@ -1279,8 +1279,9 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
 
   Color _getStatColor(String stat) {
     if (stat.startsWith('R')) return Colors.green.shade50;
-    if (stat.startsWith('S') || stat.startsWith('I'))
+    if (stat.startsWith('S') || stat.startsWith('I')) {
       return Colors.blue.shade50;
+    }
     if (stat.startsWith('Z')) return Colors.red.shade50;
     if (stat.startsWith('T')) return Colors.orange.shade50;
     return Colors.grey.shade50;

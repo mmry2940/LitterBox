@@ -47,7 +47,7 @@ dependencies:
   webview_flutter: ^4.4.2
   crypto: ^3.0.3
   pointycastle: ^3.7.3
-  file_picker: ^10.3.1
+  file_picker: ^8.0.3
   provider: ^6.0.5
   multicast_dns: ^0.3.2
   flutter_adb: ^0.1.1
@@ -72,10 +72,6 @@ flutter:
     - assets/splash_1.jpg
     - assets/splash_2.jpg
     - assets/splash_3.jpg
-    # Embedded adb/fastboot binaries (placeholders – add actual binaries per ABI)
-    - assets/adb/bin/armeabi-v7a/
-    - assets/adb/bin/arm64-v8a/
-    - assets/adb/bin/x86_64/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -115,8 +111,9 @@ flutter_icons:
     generate: true
     image_path: "icon.png"
   image_path: "icon.png"
-  adaptive_icon_background: "#ffffff"
+  adaptive_icon_background: "#2196F3"
   adaptive_icon_foreground: "icon.png"
+  min_sdk_android: 21
 
 flutter_native_splash:
   color: "#ffffff"

@@ -178,7 +178,7 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
     } else if (error.contains('Missing host')) {
       return 'Device configuration incomplete.';
     }
-    return 'Connection failed: ${error.length > 100 ? error.substring(0, 100) + '...' : error}';
+    return 'Connection failed: ${error.length > 100 ? '${error.substring(0, 100)}...' : error}';
   }
 
   Future<void> _fetchSystemInfo() async {

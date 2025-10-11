@@ -1518,7 +1518,7 @@ class _VNCScreenState extends State<VNCScreen>
 
                         // Connection Mode Dropdown
                         DropdownButtonFormField<VNCConnectionMode>(
-                          value: _connectionMode,
+                          initialValue: _connectionMode,
                           decoration: const InputDecoration(
                             labelText: 'VNC Client Type',
                             border: OutlineInputBorder(),
@@ -1566,7 +1566,7 @@ class _VNCScreenState extends State<VNCScreen>
                         // Scaling Mode Dropdown (only show for native VNC)
                         if (_connectionMode == VNCConnectionMode.native) ...[
                           DropdownButtonFormField<VNCScalingMode>(
-                            value: _scalingMode,
+                            initialValue: _scalingMode,
                             decoration: const InputDecoration(
                               labelText: 'Display Scaling Mode',
                               border: OutlineInputBorder(),
@@ -1659,7 +1659,7 @@ class _VNCScreenState extends State<VNCScreen>
 
                           // Input Mode Dropdown
                           DropdownButtonFormField<VNCInputMode>(
-                            value: _inputMode,
+                            initialValue: _inputMode,
                             decoration: const InputDecoration(
                               labelText: 'Input Mode',
                               border: OutlineInputBorder(),
@@ -1697,7 +1697,7 @@ class _VNCScreenState extends State<VNCScreen>
 
                           // Resolution Mode Dropdown
                           DropdownButtonFormField<VNCResolutionMode>(
-                            value: _resolutionMode,
+                            initialValue: _resolutionMode,
                             decoration: const InputDecoration(
                               labelText: 'Resolution Mode',
                               border: OutlineInputBorder(),

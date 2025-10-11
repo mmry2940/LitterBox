@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 class MarqueeText extends StatefulWidget {
   final String text;
   final double velocity;
-  const MarqueeText({Key? key, required this.text, this.velocity = 30.0}) : super(key: key);
+  const MarqueeText({super.key, required this.text, this.velocity = 30.0});
   @override
   State<MarqueeText> createState() => _MarqueeTextState();
 }

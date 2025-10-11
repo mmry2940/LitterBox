@@ -89,13 +89,13 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
   List<AppInfo> _systemApps = [];
   bool _loadingApps = false;
   String _appSearchQuery = '';
-  String _selectedAppFilter = 'All'; // All, User, System, Enabled, Disabled
+  final String _selectedAppFilter = 'All'; // All, User, System, Enabled, Disabled
 
   // Sorting options
   String _deviceSortOption = 'Alphabetical';
 
   // Multi-select batch operations state
-  Set<String> _selectedDeviceNames = {};
+  final Set<String> _selectedDeviceNames = {};
   bool _batchMode = false;
 
   @override
@@ -430,7 +430,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<ADBConnectionType>(
-                    value: selectedType,
+                    initialValue: selectedType,
                     items: ADBConnectionType.values
                         .map((t) => DropdownMenuItem(
                               value: t,
@@ -517,162 +517,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
     );
   }
 
-  Widget _connectionDialogContent() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Connection Type'),
-        const SizedBox(height: 8),
-        DropdownButtonFormField<ADBConnectionType>(
-          value: _connectionType,
-          items: ADBConnectionType.values
-              .map((t) => DropdownMenuItem(value: t, child: Text(t.displayName)))
-              .toList(),
-          onChanged: (v) {
-            if (mounted) {
-              setState(() => _connectionType = v ?? ADBConnectionType.wifi);
-            }
-          },
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            isDense: true,
-          ),
-        ),
-        const SizedBox(height: 12),
-        if (_connectionType != ADBConnectionType.usb) ...[
-          TextField(
-            controller: _host,
-            decoration: const InputDecoration(
-              labelText: 'Host / IP',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (_connectionType != ADBConnectionType.pairing)
-            TextField(
-              controller: _port,
-              decoration: const InputDecoration(
-                labelText: 'Port',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              keyboardType: TextInputType.number,
-            ),
-        ],
-        if (_connectionType == ADBConnectionType.pairing) ...[
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _pairingPort,
-                  decoration: const InputDecoration(
-                    labelText: 'Pair Port',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  controller: _port,
-                  decoration: const InputDecoration(
-                    labelText: 'Connect Port',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _pairingCode,
-            decoration: const InputDecoration(
-              labelText: 'Pairing Code',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-            keyboardType: TextInputType.number,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Enable Wireless debugging > Pair device with code',
-            style: TextStyle(fontSize: 11),
-          ),
-        ],
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: ElevatedButton.icon(
-                icon: _loadingConnect
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(_connectionType == ADBConnectionType.pairing
-                        ? Icons.link
-                        : Icons.wifi),
-                label: Text(_loadingConnect
-                    ? (_connectionType == ADBConnectionType.pairing
-                        ? 'Pairing...'
-                        : 'Connecting...')
-                    : (_connectionType == ADBConnectionType.pairing
-                        ? 'Pair & Connect'
-                        : 'Connect')),
-                onPressed: _loadingConnect
-                    ? null
-                    : () async {
-                        setState(() => _loadingConnect = true);
-                        bool ok = false;
-                        switch (_connectionType) {
-                          case ADBConnectionType.wifi:
-                          case ADBConnectionType.custom:
-                            ok = await _adb.connectWifi(
-                                _host.text.trim(), int.tryParse(_port.text) ?? 5555);
-                            break;
-                          case ADBConnectionType.usb:
-                            ok = await _adb.connectUSB();
-                            break;
-                          case ADBConnectionType.pairing:
-                            await _adb.pairDevice(
-                                _host.text.trim(),
-                                int.tryParse(_pairingPort.text) ?? 37205,
-                                _pairingCode.text.trim(),
-                                int.tryParse(_port.text) ?? 5555);
-                            ok = true;
-                            break;
-                        }
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                              content: Text(ok ? 'Success' : 'Failed'),
-                              backgroundColor: ok ? Colors.green : Colors.red));
-                          if (ok) Navigator.pop(context);
-                        }
-                        setState(() => _loadingConnect = false);
-                      },
-              ),
-            ),
-            const SizedBox(width: 8),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.save),
-              label: const Text('Save'),
-              onPressed: () async {
-                await _saveDevice();
-                if (mounted) Navigator.pop(context);
-              },
-            ),
-          ],
-        ),
-      ],
-    );
-  }
 
   void _autoScroll() {
     if (!_consoleScroll.hasClients) return;
@@ -1549,7 +1393,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
             ],
             const SizedBox(height: 12),
             DropdownButtonFormField<ADBConnectionType>(
-              value: _connectionType,
+              initialValue: _connectionType,
               items: ADBConnectionType.values
                   .map((t) =>
                       DropdownMenuItem(value: t, child: Text(t.displayName)))

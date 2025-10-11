@@ -68,7 +68,6 @@ class DevicePackagesScreen extends StatefulWidget {
 class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
   List<PackageInfo>? _packages;
   List<PackageInfo>? _filteredPackages;
-  List<PackageInfo>? _availablePackages;
   String? _error;
   bool _loading = false;
   String _search = '';
@@ -76,7 +75,6 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
   bool _sortAsc = true;
   PackageManager _detectedPackageManager = PackageManager.unknown;
   String _selectedFilter = 'All';
-  bool _showAvailablePackages = false;
   late final TextEditingController _searchController;
   final Set<int> _selectedRows = {};
 
@@ -639,12 +637,6 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
     );
   }
 
-  Future<void> _updatePackages() async {
-    // Implementation for update would go here
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Update feature coming soon')),
-    );
-  }
 
   Future<void> _showPackageDetails(PackageInfo package) async {
     await showDialog(
@@ -773,7 +765,7 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
                         // Filter dropdown
                         Expanded(
                           child: DropdownButtonFormField<String>(
-                            value: _selectedFilter,
+                            initialValue: _selectedFilter,
                             decoration: const InputDecoration(
                               labelText: 'Filter',
                               border: OutlineInputBorder(),
@@ -1038,9 +1030,9 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
                 ],
                 FloatingActionButton(
                   heroTag: 'install',
-                  child: const Icon(Icons.add),
                   tooltip: 'Install Package',
                   onPressed: _installPackage,
+                  child: const Icon(Icons.add),
                 ),
               ],
             ),
@@ -1073,37 +1065,51 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
 
   IconData _getPackageIcon(PackageInfo package) {
     if (package.name.startsWith('lib')) return Icons.library_books;
-    if (package.name.contains('dev') || package.name.contains('compiler'))
+    if (package.name.contains('dev') || package.name.contains('compiler')) {
       return Icons.code;
+    }
     if (package.name.contains('game')) return Icons.sports_esports;
     if (package.name.contains('media') ||
         package.name.contains('video') ||
-        package.name.contains('audio')) return Icons.play_circle;
-    if (package.name.contains('network') || package.name.contains('net'))
+        package.name.contains('audio')) {
+      return Icons.play_circle;
+    }
+    if (package.name.contains('network') || package.name.contains('net')) {
       return Icons.network_check;
-    if (package.name.contains('system') || package.name.contains('kernel'))
+    }
+    if (package.name.contains('system') || package.name.contains('kernel')) {
       return Icons.settings_system_daydream;
+    }
     if (package.name.contains('security') ||
         package.name.contains('ssl') ||
-        package.name.contains('crypto')) return Icons.security;
+        package.name.contains('crypto')) {
+      return Icons.security;
+    }
     return Icons.apps;
   }
 
   Color _getPackageIconColor(PackageInfo package) {
     if (package.name.startsWith('lib')) return Colors.blue;
-    if (package.name.contains('dev') || package.name.contains('compiler'))
+    if (package.name.contains('dev') || package.name.contains('compiler')) {
       return Colors.green;
+    }
     if (package.name.contains('game')) return Colors.purple;
     if (package.name.contains('media') ||
         package.name.contains('video') ||
-        package.name.contains('audio')) return Colors.red;
-    if (package.name.contains('network') || package.name.contains('net'))
+        package.name.contains('audio')) {
+      return Colors.red;
+    }
+    if (package.name.contains('network') || package.name.contains('net')) {
       return Colors.orange;
-    if (package.name.contains('system') || package.name.contains('kernel'))
+    }
+    if (package.name.contains('system') || package.name.contains('kernel')) {
       return Colors.grey;
+    }
     if (package.name.contains('security') ||
         package.name.contains('ssl') ||
-        package.name.contains('crypto')) return Colors.indigo;
+        package.name.contains('crypto')) {
+      return Colors.indigo;
+    }
     return Colors.blueGrey;
   }
 }

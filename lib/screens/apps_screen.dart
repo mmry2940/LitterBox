@@ -385,7 +385,7 @@ class _AppsScreenState extends State<AppsScreen> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: DropdownButtonFormField<String>(
-                            value: _selectedAppFilter,
+                            initialValue: _selectedAppFilter,
                             decoration: const InputDecoration(
                               labelText: 'Filter',
                               isDense: true,
