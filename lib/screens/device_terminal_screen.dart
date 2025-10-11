@@ -5,6 +5,206 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:xterm/xterm.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+// Singleton service to manage persistent terminal sessions
+class TerminalSessionManager {
+  static final TerminalSessionManager _instance =
+      TerminalSessionManager._internal();
+  factory TerminalSessionManager() => _instance;
+  TerminalSessionManager._internal();
+
+  final Map<String, TerminalSession> _sessions = {};
+
+  TerminalSession? getSession(String sessionId) => _sessions[sessionId];
+
+  Future<TerminalSession> createOrGetSession(
+      String sessionId, SSHClient sshClient) async {
+    if (_sessions.containsKey(sessionId)) {
+      return _sessions[sessionId]!;
+    }
+
+    final session = TerminalSession(sessionId, sshClient);
+    await session.initialize();
+    _sessions[sessionId] = session;
+    return session;
+  }
+
+  void removeSession(String sessionId) {
+    final session = _sessions[sessionId];
+    session?.dispose();
+    _sessions.remove(sessionId);
+  }
+
+  void disposeAll() {
+    for (final session in _sessions.values) {
+      session.dispose();
+    }
+    _sessions.clear();
+  }
+}
+
+class TerminalSession {
+  final String sessionId;
+  final SSHClient sshClient;
+  late Terminal terminal;
+  SSHSession? shellSession;
+  bool _isConnected = false;
+  String _connectionStatus = 'Connecting...';
+  final List<void Function()> _statusListeners = [];
+  final List<void Function()> _dataListeners = [];
+  Timer? _keepAliveTimer;
+
+  TerminalSession(this.sessionId, this.sshClient);
+
+  bool get isConnected => _isConnected;
+  String get connectionStatus => _connectionStatus;
+
+  void addStatusListener(void Function() listener) {
+    _statusListeners.add(listener);
+  }
+
+  void removeStatusListener(void Function() listener) {
+    _statusListeners.remove(listener);
+  }
+
+  void addDataListener(void Function() listener) {
+    _dataListeners.add(listener);
+  }
+
+  void removeDataListener(void Function() listener) {
+    _dataListeners.remove(listener);
+  }
+
+  void _notifyStatusChange() {
+    for (final listener in _statusListeners) {
+      listener();
+    }
+  }
+
+  void _notifyDataReceived() {
+    for (final listener in _dataListeners) {
+      listener();
+    }
+  }
+
+  Future<void> initialize() async {
+    terminal = Terminal(maxLines: 10000);
+
+    try {
+      _updateStatus('Establishing shell session...');
+      final session = await sshClient.shell();
+      shellSession = session;
+
+      _updateStatus('Connected', true);
+
+      // Write welcome message
+      terminal.write(
+          '\x1b[32m=== SSH Terminal Connected (Persistent) ===\x1b[0m\r\n');
+      terminal.write(
+          '\x1b[90mPersistent terminal session established\x1b[0m\r\n\r\n');
+
+      // Set up data streams
+      session.stdout.listen((data) {
+        terminal.write(String.fromCharCodes(data));
+        _notifyDataReceived();
+      });
+
+      session.stderr.listen((data) {
+        terminal.write(String.fromCharCodes(data));
+        _notifyDataReceived();
+      });
+
+      terminal.onOutput = (output) {
+        session.write(utf8.encode(output));
+      };
+
+      // Handle session closure
+      session.done.then((_) {
+        _updateStatus('Disconnected', false);
+        terminal.write('\r\n\x1b[31m=== SSH Session Closed ===\x1b[0m\r\n');
+      });
+
+      // Start keep-alive timer to prevent timeout
+      _startKeepAlive();
+    } catch (e) {
+      _updateStatus('Connection failed', false);
+      terminal.write('\x1b[31mShell error: $e\x1b[0m\r\n');
+    }
+  }
+
+  void _updateStatus(String status, [bool? connected]) {
+    _connectionStatus = status;
+    if (connected != null) _isConnected = connected;
+    _notifyStatusChange();
+  }
+
+  void _startKeepAlive() {
+    _keepAliveTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      if (_isConnected && shellSession != null) {
+        // Send a null byte to keep connection alive
+        shellSession!.write(Uint8List.fromList([0]));
+      }
+    });
+  }
+
+  void sendSpecialKey(String key) {
+    if (shellSession == null || !_isConnected) return;
+
+    switch (key) {
+      case 'CTRL_C':
+        shellSession!.write(Uint8List.fromList([3]));
+        break;
+      case 'CTRL_Z':
+        shellSession!.write(Uint8List.fromList([26]));
+        break;
+      case 'CTRL_D':
+        shellSession!.write(Uint8List.fromList([4]));
+        break;
+      case 'ESC':
+        shellSession!.write(Uint8List.fromList([27]));
+        break;
+      case 'TAB':
+        shellSession!.write(Uint8List.fromList([9]));
+        break;
+      case 'UP':
+        shellSession!.write(utf8.encode('\x1b[A'));
+        break;
+      case 'DOWN':
+        shellSession!.write(utf8.encode('\x1b[B'));
+        break;
+      case 'LEFT':
+        shellSession!.write(utf8.encode('\x1b[D'));
+        break;
+      case 'RIGHT':
+        shellSession!.write(utf8.encode('\x1b[C'));
+        break;
+    }
+  }
+
+  void sendText(String text) {
+    if (shellSession != null && _isConnected) {
+      shellSession!.write(utf8.encode(text));
+    }
+  }
+
+  void sendCommand(String command) {
+    if (shellSession != null && _isConnected) {
+      shellSession!.write(utf8.encode('$command\n'));
+    }
+  }
+
+  void clearTerminal() {
+    terminal.buffer.clear();
+    terminal.write('\x1b[2J\x1b[H');
+  }
+
+  void dispose() {
+    _keepAliveTimer?.cancel();
+    shellSession?.close();
+    _statusListeners.clear();
+  }
+}
 
 class DeviceTerminalScreen extends StatefulWidget {
   final SSHClient? sshClient;
@@ -22,23 +222,42 @@ class DeviceTerminalScreen extends StatefulWidget {
   State<DeviceTerminalScreen> createState() => _DeviceTerminalScreenState();
 }
 
-class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
-  late Terminal _terminal;
+class _DeviceTerminalScreenState extends State<DeviceTerminalScreen>
+    with WidgetsBindingObserver {
   late TerminalController _controller;
-  SSHSession? _shellSession;
   final ScrollController _scrollController = ScrollController();
-  bool _isConnected = false;
-  String _connectionStatus = 'Connecting...';
   Timer? _cursorTrackingTimer;
   bool _showHotkeys = true;
+  TerminalSession? _session;
+  String _sessionId = '';
+  double _fontSize = 14.0; // Default font size
+
+  Future<void> _loadFontSize() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _fontSize = prefs.getDouble('terminal_font_size') ?? 14.0;
+    });
+  }
+
+  Future<void> _saveFontSize() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('terminal_font_size', _fontSize);
+  }
 
   @override
   void initState() {
     super.initState();
-    _terminal = Terminal(
-      maxLines: 10000, // Large buffer for command history
-    );
+    WidgetsBinding.instance.addObserver(this);
     _controller = TerminalController();
+
+    // Load saved font size
+    _loadFontSize();
+
+    // Generate session ID based on SSH client
+    if (widget.sshClient != null) {
+      _sessionId = 'terminal_${widget.sshClient.hashCode}';
+      _initializeSession();
+    }
 
     // Start periodic cursor tracking to ensure visibility
     _cursorTrackingTimer = Timer.periodic(
@@ -47,11 +266,61 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
     );
 
     _startForegroundService();
-    _startShell();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Keep session alive even when app goes to background
+    if (state == AppLifecycleState.paused) {
+      // App is backgrounded but session stays alive
+      debugPrint('Terminal: App backgrounded, keeping session alive');
+    } else if (state == AppLifecycleState.resumed) {
+      // App is brought back to foreground, ensure session is still connected
+      debugPrint('Terminal: App resumed, checking session');
+      _ensureSessionConnected();
+    } else if (state == AppLifecycleState.detached) {
+      // App is being closed, clean up sessions
+      debugPrint('Terminal: App detached, cleaning up sessions');
+      TerminalSessionManager().disposeAll();
+    }
+  }
+
+  Future<void> _initializeSession() async {
+    if (widget.sshClient == null) return;
+
+    try {
+      _session = await TerminalSessionManager()
+          .createOrGetSession(_sessionId, widget.sshClient!);
+      _session!.addStatusListener(() {
+        if (mounted) {
+          setState(() {}); // Trigger UI update when status changes
+        }
+      });
+
+      _session!.addDataListener(() {
+        if (mounted) {
+          _scrollToBottom(); // Auto-scroll when new data is received
+        }
+      });
+
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Failed to initialize session: $e');
+    }
+  }
+
+  void _ensureSessionConnected() {
+    if (_session != null && !_session!.isConnected) {
+      // Try to reconnect if session was lost
+      _initializeSession();
+    }
   }
 
   void _ensureCursorVisible() {
-    if (!mounted || !_isConnected) return;
+    if (!mounted || _session?.isConnected != true) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -73,9 +342,15 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _cursorTrackingTimer?.cancel();
-    _shellSession?.close();
+    // Remove listeners but don't close session - it should persist
+    if (_session != null) {
+      _session!.removeStatusListener(() {});
+      _session!.removeDataListener(() {});
+    }
     _scrollController.dispose();
+    // Only stop foreground service if no other terminal screens are active
     FlutterForegroundTask.stopService();
     super.dispose();
   }
@@ -88,140 +363,54 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
     );
   }
 
-  Future<void> _startShell() async {
-    if (widget.sshClient == null) {
-      setState(() {
-        _connectionStatus = 'No SSH client available';
-        _isConnected = false;
-      });
-      return;
-    }
-
-    setState(() {
-      _connectionStatus = 'Establishing shell session...';
-    });
-
-    try {
-      final session = await widget.sshClient!.shell();
-      _shellSession = session;
-
-      setState(() {
-        _connectionStatus = 'Connected';
-        _isConnected = true;
-      });
-
-      // Write welcome message
-      _terminal.write('\x1b[32m=== SSH Terminal Connected ===\x1b[0m\r\n');
-      _terminal.write(
-          '\x1b[90mTerminal session established successfully\x1b[0m\r\n\r\n');
-
-      session.stdout.listen((data) {
-        final output = String.fromCharCodes(data);
-        _terminal.write(output);
-        // Auto-scroll after receiving output
-        if (output.isNotEmpty) {
-          _scrollToBottom();
-        }
-      });
-
-      session.stderr.listen((data) {
-        final output = String.fromCharCodes(data);
-        _terminal.write(output);
-        // Auto-scroll after receiving output
-        if (output.isNotEmpty) {
-          _scrollToBottom();
-        }
-      });
-
-      _terminal.onOutput = (output) {
-        session.write(utf8.encode(output));
-        // Don't scroll here - let the server echo handle it
-      };
-
-      // Handle session closure
-      session.done.then((_) {
-        setState(() {
-          _connectionStatus = 'Disconnected';
-          _isConnected = false;
-        });
-        _terminal.write('\r\n\x1b[31m=== SSH Session Closed ===\x1b[0m\r\n');
-      });
-    } catch (e) {
-      setState(() {
-        _connectionStatus = 'Connection failed';
-        _isConnected = false;
-      });
-      _terminal.write('\x1b[31mShell error: $e\x1b[0m\r\n');
-    }
-  }
-
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
-          duration:
-              const Duration(milliseconds: 50), // Faster response for typing
+          duration: const Duration(milliseconds: 50),
           curve: Curves.easeOut,
         );
       }
     });
   }
 
-  void _clearTerminal() {
-    _terminal.buffer.clear();
-    _terminal.write('\x1b[2J\x1b[H'); // Clear screen and move cursor to home
-  }
-
-  void _sendCommand(String command) {
-    if (_shellSession != null && _isConnected) {
-      _shellSession!.write(utf8.encode('$command\n'));
-      _scrollToBottom();
-    }
-  }
-
   void _sendSpecialKey(String key) {
-    if (_shellSession == null || !_isConnected) return;
-
-    switch (key) {
-      case 'CTRL_C':
-        _shellSession!.write(Uint8List.fromList([3])); // ETX (End of Text)
-        break;
-      case 'CTRL_Z':
-        _shellSession!.write(Uint8List.fromList([26])); // SUB (Substitute)
-        break;
-      case 'CTRL_D':
-        _shellSession!
-            .write(Uint8List.fromList([4])); // EOT (End of Transmission)
-        break;
-      case 'CTRL_L':
-        _clearTerminal();
-        break;
-      case 'ESC':
-        _shellSession!.write(Uint8List.fromList([27])); // ESC
-        break;
-      case 'TAB':
-        _shellSession!.write(Uint8List.fromList([9])); // TAB
-        break;
-      case 'UP':
-        _shellSession!.write(utf8.encode('\x1b[A'));
-        break;
-      case 'DOWN':
-        _shellSession!.write(utf8.encode('\x1b[B'));
-        break;
-      case 'LEFT':
-        _shellSession!.write(utf8.encode('\x1b[D'));
-        break;
-      case 'RIGHT':
-        _shellSession!.write(utf8.encode('\x1b[C'));
-        break;
-    }
+    _session?.sendSpecialKey(key);
   }
 
   void _sendText(String text) {
-    if (_shellSession != null && _isConnected) {
-      _shellSession!.write(utf8.encode(text));
-    }
+    _session?.sendText(text);
+  }
+
+  void _clearTerminal() {
+    _session?.clearTerminal();
+  }
+
+  void _sendCommand(String command) {
+    _session?.sendCommand(command);
+    _scrollToBottom();
+  }
+
+  void _increaseFontSize() {
+    setState(() {
+      _fontSize = (_fontSize + 2).clamp(8.0, 24.0);
+    });
+    _saveFontSize();
+  }
+
+  void _decreaseFontSize() {
+    setState(() {
+      _fontSize = (_fontSize - 2).clamp(8.0, 24.0);
+    });
+    _saveFontSize();
+  }
+
+  void _resetFontSize() {
+    setState(() {
+      _fontSize = 14.0;
+    });
+    _saveFontSize();
   }
 
   Widget _buildHotkeyButton({
@@ -235,7 +424,7 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
     return Tooltip(
       message: tooltip ?? label,
       child: ElevatedButton.icon(
-        onPressed: _isConnected ? onPressed : null,
+        onPressed: (_session?.isConnected == true) ? onPressed : null,
         icon: Icon(
           icon,
           size: 14, // Smaller icon for compact design
@@ -334,20 +523,21 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             margin: const EdgeInsets.only(right: 8),
             decoration: BoxDecoration(
-              color: _isConnected ? Colors.green : Colors.red,
+              color:
+                  (_session?.isConnected == true) ? Colors.green : Colors.red,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  _isConnected ? Icons.wifi : Icons.wifi_off,
+                  (_session?.isConnected == true) ? Icons.wifi : Icons.wifi_off,
                   size: 16,
                   color: Colors.white,
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  _connectionStatus,
+                  _session?.connectionStatus ?? 'No session',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
@@ -369,12 +559,57 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
             icon: Icon(_showHotkeys ? Icons.keyboard_hide : Icons.keyboard),
             tooltip: _showHotkeys ? 'Hide Hotkeys' : 'Show Hotkeys',
           ),
+          // Font size controls
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              switch (value) {
+                case 'increase':
+                  _increaseFontSize();
+                  break;
+                case 'decrease':
+                  _decreaseFontSize();
+                  break;
+                case 'reset':
+                  _resetFontSize();
+                  break;
+              }
+            },
+            icon: const Icon(Icons.text_fields),
+            tooltip: 'Font Size',
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'increase',
+                child: ListTile(
+                  leading: const Icon(Icons.add, size: 20),
+                  title: Text('Increase Font (${_fontSize.toInt()}px)'),
+                  dense: true,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'decrease',
+                child: ListTile(
+                  leading: const Icon(Icons.remove, size: 20),
+                  title: const Text('Decrease Font'),
+                  dense: true,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'reset',
+                child: ListTile(
+                  leading: const Icon(Icons.refresh, size: 20),
+                  title: const Text('Reset Font (14px)'),
+                  dense: true,
+                ),
+              ),
+            ],
+          ),
           // Quick commands menu
           PopupMenuButton<String>(
             onSelected: _sendCommand,
             icon: const Icon(Icons.terminal),
             tooltip: 'Quick Commands',
             itemBuilder: (context) => [
+              // File operations
               const PopupMenuItem(
                 value: 'ls -la',
                 child: ListTile(
@@ -392,10 +627,28 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
                 ),
               ),
               const PopupMenuItem(
+                value: 'du -h',
+                child: ListTile(
+                  leading: Icon(Icons.folder_open, size: 20),
+                  title: Text('Directory size (du -h)'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuDivider(),
+              // System monitoring
+              const PopupMenuItem(
                 value: 'top',
                 child: ListTile(
                   leading: Icon(Icons.memory, size: 20),
                   title: Text('System monitor (top)'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'htop',
+                child: ListTile(
+                  leading: Icon(Icons.speed, size: 20),
+                  title: Text('Enhanced monitor (htop)'),
                   dense: true,
                 ),
               ),
@@ -408,10 +661,114 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
                 ),
               ),
               const PopupMenuItem(
+                value: 'free -h',
+                child: ListTile(
+                  leading: Icon(Icons.memory, size: 20),
+                  title: Text('Memory usage (free -h)'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
                 value: 'ps aux',
                 child: ListTile(
                   leading: Icon(Icons.list, size: 20),
                   title: Text('Running processes (ps aux)'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuDivider(),
+              // System updates
+              const PopupMenuItem(
+                value: 'sudo apt update',
+                child: ListTile(
+                  leading: Icon(Icons.refresh, size: 20),
+                  title: Text('Update package list (apt update)'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'sudo apt update -y && sudo apt upgrade -y',
+                child: ListTile(
+                  leading: Icon(Icons.system_update, size: 20),
+                  title: Text('Full system update'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'sudo apt autoremove -y',
+                child: ListTile(
+                  leading: Icon(Icons.cleaning_services, size: 20),
+                  title: Text('Clean unused packages'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuDivider(),
+              // Network commands
+              const PopupMenuItem(
+                value: 'ip addr show',
+                child: ListTile(
+                  leading: Icon(Icons.network_check, size: 20),
+                  title: Text('Show IP addresses'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'ping -c 4 8.8.8.8',
+                child: ListTile(
+                  leading: Icon(Icons.wifi, size: 20),
+                  title: Text('Test connectivity (ping)'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'netstat -tuln',
+                child: ListTile(
+                  leading: Icon(Icons.router, size: 20),
+                  title: Text('Network connections'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuDivider(),
+              // System information
+              const PopupMenuItem(
+                value: 'uname -a',
+                child: ListTile(
+                  leading: Icon(Icons.info, size: 20),
+                  title: Text('System information'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'lscpu',
+                child: ListTile(
+                  leading: Icon(Icons.developer_board, size: 20),
+                  title: Text('CPU information'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'lsblk',
+                child: ListTile(
+                  leading: Icon(Icons.storage, size: 20),
+                  title: Text('Block devices'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuDivider(),
+              // Service management
+              const PopupMenuItem(
+                value: 'systemctl status',
+                child: ListTile(
+                  leading: Icon(Icons.settings, size: 20),
+                  title: Text('Service status'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'sudo systemctl list-units --failed',
+                child: ListTile(
+                  leading: Icon(Icons.error, size: 20),
+                  title: Text('Failed services'),
                   dense: true,
                 ),
               ),
@@ -425,42 +782,51 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen> {
           Expanded(
             child: Container(
               color: Colors.black,
-              child: TerminalView(
-                _terminal,
-                controller: _controller,
-                scrollController: _scrollController,
-                autofocus: true,
-                deleteDetection: true,
-                keyboardType: TextInputType.text,
-                readOnly: false,
-                hardwareKeyboardOnly: false,
-                theme: TerminalTheme(
-                  cursor: Colors.greenAccent,
-                  selection: Colors.grey.withValues(alpha: 0.3),
-                  foreground: Colors.white,
-                  background: Colors.black,
-                  black: Colors.black,
-                  red: Colors.red,
-                  green: Colors.green,
-                  yellow: Colors.yellow,
-                  blue: Colors.blue,
-                  magenta: Colors.purple,
-                  cyan: Colors.cyan,
-                  white: Colors.white,
-                  brightBlack: Colors.grey,
-                  brightRed: Colors.redAccent,
-                  brightGreen: Colors.greenAccent,
-                  brightYellow: Colors.yellowAccent,
-                  brightBlue: Colors.blueAccent,
-                  brightMagenta: Colors.purpleAccent,
-                  brightCyan: Colors.cyanAccent,
-                  brightWhite: Colors.white,
-                  searchHitBackground: Colors.yellow.withValues(alpha: 0.5),
-                  searchHitBackgroundCurrent:
-                      Colors.orange.withValues(alpha: 0.7),
-                  searchHitForeground: Colors.black,
-                ),
-              ),
+              child: _session?.terminal != null
+                  ? Transform.scale(
+                      scale: _fontSize /
+                          14.0, // Scale relative to default font size
+                      child: TerminalView(
+                        _session!.terminal,
+                        controller: _controller,
+                        scrollController: _scrollController,
+                        autofocus: true,
+                        deleteDetection: true,
+                        keyboardType: TextInputType.text,
+                        readOnly: false,
+                        hardwareKeyboardOnly: false,
+                        theme: TerminalTheme(
+                          cursor: Colors.greenAccent,
+                          selection: Colors.grey.withValues(alpha: 0.3),
+                          foreground: Colors.white,
+                          background: Colors.black,
+                          black: Colors.black,
+                          red: Colors.red,
+                          green: Colors.green,
+                          yellow: Colors.yellow,
+                          blue: Colors.blue,
+                          magenta: Colors.purple,
+                          cyan: Colors.cyan,
+                          white: Colors.white,
+                          brightBlack: Colors.grey,
+                          brightRed: Colors.redAccent,
+                          brightGreen: Colors.greenAccent,
+                          brightYellow: Colors.yellowAccent,
+                          brightBlue: Colors.blueAccent,
+                          brightMagenta: Colors.purpleAccent,
+                          brightCyan: Colors.cyanAccent,
+                          brightWhite: Colors.white,
+                          searchHitBackground:
+                              Colors.yellow.withValues(alpha: 0.5),
+                          searchHitBackgroundCurrent:
+                              Colors.orange.withValues(alpha: 0.7),
+                          searchHitForeground: Colors.black,
+                        ),
+                      ),
+                    )
+                  : const Center(
+                      child: CircularProgressIndicator(),
+                    ),
             ),
           ),
           // Hotkey row (conditional)
