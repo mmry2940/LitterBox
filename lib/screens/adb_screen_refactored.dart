@@ -12,6 +12,8 @@ import '../adb/adb_mdns_discovery.dart';
 import '../adb/usb_bridge.dart';
 import '../services/shared_adb_manager.dart';
 import 'apps_screen.dart';
+import '../widgets/enhanced_adb_dashboard.dart';
+import '../widgets/adb_connection_wizard.dart';
 
 /// Modular refactored ADB & WebADB UI.
 class AdbRefactoredScreen extends StatefulWidget {
@@ -220,6 +222,456 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
       _connectionType = d.connectionType;
       _selectedSaved = d;
     });
+    // Auto-connect when loading a device
+    _connectToDevice(d);
+  }
+
+  Future<void> _connectToDevice(SavedADBDevice d) async {
+    setState(() => _loadingConnect = true);
+    bool ok = false;
+    
+    switch (d.connectionType) {
+      case ADBConnectionType.wifi:
+      case ADBConnectionType.custom:
+        ok = await _adb.connectWifi(d.host, d.port);
+        break;
+      case ADBConnectionType.usb:
+        ok = await _adb.connectUSB();
+        break;
+      case ADBConnectionType.pairing:
+        // For paired devices, try direct WiFi connection
+        ok = await _adb.connectWifi(d.host, d.port);
+        break;
+    }
+    
+    // Update last used timestamp
+    if (ok) {
+      final index = _savedDevices.indexWhere((device) => device.name == d.name);
+      if (index != -1) {
+        _savedDevices[index] = SavedADBDevice(
+          name: d.name,
+          host: d.host,
+          port: d.port,
+          connectionType: d.connectionType,
+          label: d.label,
+          note: d.note,
+          lastUsed: DateTime.now(),
+        );
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setStringList('adb_devices',
+            _savedDevices.map((device) => jsonEncode(device.toJson())).toList());
+      }
+    }
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(ok ? 'Connected to ${d.name}' : 'Failed to connect to ${d.name}'),
+          backgroundColor: ok ? Colors.green : Colors.red,
+        ),
+      );
+    }
+    setState(() => _loadingConnect = false);
+  }
+
+  void _editDevice(SavedADBDevice d) {
+    // Show dialog to edit device
+    _showEditDeviceDialog(d);
+  }
+
+  Future<void> _deleteDevice(SavedADBDevice d) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Device'),
+        content: Text('Delete "${d.name}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirm == true) {
+      setState(() {
+        _savedDevices.removeWhere((device) => device.name == d.name);
+        _favoriteConnections.remove(d.name);
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('adb_devices',
+          _savedDevices.map((device) => jsonEncode(device.toJson())).toList());
+      await prefs.setStringList('favorite_connections', _favoriteConnections.toList());
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Deleted ${d.name}')),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveFavorites() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('favorite_connections', _favoriteConnections.toList());
+  }
+
+  void _showConnectionDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AdbConnectionWizard(
+        onConnect: (host, port, type, label) async {
+          setState(() => _loadingConnect = true);
+          
+          bool success = false;
+          if (type == ADBConnectionType.usb) {
+            success = await _adb.connectUSB();
+          } else if (type == ADBConnectionType.pairing) {
+            // Handle pairing
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Pairing not yet fully implemented')),
+              );
+            }
+          } else {
+            success = await _adb.connectWifi(host, port);
+          }
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(success ? 'Connected successfully' : 'Connection failed'),
+                backgroundColor: success ? Colors.green : Colors.red,
+              ),
+            );
+          }
+          setState(() => _loadingConnect = false);
+        },
+        onCancel: () => Navigator.of(context).pop(),
+      ),
+    ).then((result) {
+      if (result != null && result is Map<String, dynamic>) {
+        if (result['save'] == true) {
+          // Save the device
+          final label = result['label'] as String?;
+          final host = result['host'] as String? ?? '';
+          final port = result['port'] as int? ?? 5555;
+          final type = result['type'] as ADBConnectionType? ?? ADBConnectionType.wifi;
+          
+          final device = SavedADBDevice(
+            name: label ?? '$host:$port',
+            host: host,
+            port: port,
+            connectionType: type,
+            label: label,
+            note: '',
+            lastUsed: DateTime.now(),
+            isConnected: true,
+          );
+          setState(() {
+            _savedDevices.add(device);
+            if (result['favorite'] == true) {
+              _favoriteConnections.add(device.name);
+            }
+          });
+          _saveDevice();
+          _saveFavorites();
+        }
+      }
+    });
+  }
+
+  void _showEditDeviceDialog(SavedADBDevice d) {
+    final nameController = TextEditingController(text: d.name);
+    final hostController = TextEditingController(text: d.host);
+    final portController = TextEditingController(text: d.port.toString());
+    final groupController = TextEditingController(text: d.label ?? '');
+    ADBConnectionType selectedType = d.connectionType;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Edit Device'),
+          content: SizedBox(
+            width: 400,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Device Name',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: hostController,
+                    decoration: const InputDecoration(
+                      labelText: 'Host / IP',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: portController,
+                    decoration: const InputDecoration(
+                      labelText: 'Port',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<ADBConnectionType>(
+                    value: selectedType,
+                    items: ADBConnectionType.values
+                        .map((t) => DropdownMenuItem(
+                              value: t,
+                              child: Text(t.displayName),
+                            ))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) {
+                        setDialogState(() {
+                          selectedType = v;
+                        });
+                      }
+                    },
+                    decoration: const InputDecoration(
+                      labelText: 'Connection Type',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: groupController,
+                    decoration: const InputDecoration(
+                      labelText: 'Label / Group (optional)',
+                      border: OutlineInputBorder(),
+                      hintText: 'e.g., Work, Home, Test',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final updatedDevice = SavedADBDevice(
+                  name: nameController.text.trim().isEmpty
+                      ? '${hostController.text}:${portController.text}'
+                      : nameController.text.trim(),
+                  host: hostController.text.trim(),
+                  port: int.tryParse(portController.text) ?? 5555,
+                  connectionType: selectedType,
+                  label: groupController.text.trim().isEmpty
+                      ? null
+                      : groupController.text.trim(),
+                  note: d.note,
+                  lastUsed: d.lastUsed,
+                );
+
+                setState(() {
+                  final index = _savedDevices.indexWhere((device) => device.name == d.name);
+                  if (index != -1) {
+                    _savedDevices[index] = updatedDevice;
+                    
+                    // Update favorites if name changed
+                    if (d.name != updatedDevice.name && _favoriteConnections.contains(d.name)) {
+                      _favoriteConnections.remove(d.name);
+                      _favoriteConnections.add(updatedDevice.name);
+                    }
+                  }
+                });
+
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setStringList('adb_devices',
+                    _savedDevices.map((device) => jsonEncode(device.toJson())).toList());
+                await prefs.setStringList(
+                    'favorite_connections', _favoriteConnections.toList());
+
+                if (mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Updated ${updatedDevice.name}')),
+                  );
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _connectionDialogContent() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Connection Type'),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<ADBConnectionType>(
+          value: _connectionType,
+          items: ADBConnectionType.values
+              .map((t) => DropdownMenuItem(value: t, child: Text(t.displayName)))
+              .toList(),
+          onChanged: (v) {
+            if (mounted) {
+              setState(() => _connectionType = v ?? ADBConnectionType.wifi);
+            }
+          },
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (_connectionType != ADBConnectionType.usb) ...[
+          TextField(
+            controller: _host,
+            decoration: const InputDecoration(
+              labelText: 'Host / IP',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (_connectionType != ADBConnectionType.pairing)
+            TextField(
+              controller: _port,
+              decoration: const InputDecoration(
+                labelText: 'Port',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              keyboardType: TextInputType.number,
+            ),
+        ],
+        if (_connectionType == ADBConnectionType.pairing) ...[
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _pairingPort,
+                  decoration: const InputDecoration(
+                    labelText: 'Pair Port',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _port,
+                  decoration: const InputDecoration(
+                    labelText: 'Connect Port',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _pairingCode,
+            decoration: const InputDecoration(
+              labelText: 'Pairing Code',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Enable Wireless debugging > Pair device with code',
+            style: TextStyle(fontSize: 11),
+          ),
+        ],
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                icon: _loadingConnect
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(_connectionType == ADBConnectionType.pairing
+                        ? Icons.link
+                        : Icons.wifi),
+                label: Text(_loadingConnect
+                    ? (_connectionType == ADBConnectionType.pairing
+                        ? 'Pairing...'
+                        : 'Connecting...')
+                    : (_connectionType == ADBConnectionType.pairing
+                        ? 'Pair & Connect'
+                        : 'Connect')),
+                onPressed: _loadingConnect
+                    ? null
+                    : () async {
+                        setState(() => _loadingConnect = true);
+                        bool ok = false;
+                        switch (_connectionType) {
+                          case ADBConnectionType.wifi:
+                          case ADBConnectionType.custom:
+                            ok = await _adb.connectWifi(
+                                _host.text.trim(), int.tryParse(_port.text) ?? 5555);
+                            break;
+                          case ADBConnectionType.usb:
+                            ok = await _adb.connectUSB();
+                            break;
+                          case ADBConnectionType.pairing:
+                            await _adb.pairDevice(
+                                _host.text.trim(),
+                                int.tryParse(_pairingPort.text) ?? 37205,
+                                _pairingCode.text.trim(),
+                                int.tryParse(_port.text) ?? 5555);
+                            ok = true;
+                            break;
+                        }
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(ok ? 'Success' : 'Failed'),
+                              backgroundColor: ok ? Colors.green : Colors.red));
+                          if (ok) Navigator.pop(context);
+                        }
+                        setState(() => _loadingConnect = false);
+                      },
+              ),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.save),
+              label: const Text('Save'),
+              onPressed: () async {
+                await _saveDevice();
+                if (mounted) Navigator.pop(context);
+              },
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   void _autoScroll() {
@@ -970,75 +1422,79 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
 
   // Dashboard (connection + saved devices + quick actions)
   Widget _dashboardTab() {
-    return LayoutBuilder(builder: (context, c) {
-      final wide = c.maxWidth > 950;
-      final left = _connectionCard();
-      return Padding(
-        padding: const EdgeInsets.all(12),
-        child: wide
-            ? Row(children: [
-                Expanded(child: left),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(children: [
-                    _currentDeviceCard(),
-                    const SizedBox(height: 8),
-                    _quickActionsCard(),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        const Text('Filter:'),
-                        const SizedBox(width: 8),
-                        DropdownButton<String>(
-                          value: _connectionFilter,
-                          items: ['All', 'Favorites']
-                              .map((f) => DropdownMenuItem(
-                                    value: f,
-                                    child: Text(f),
-                                  ))
-                              .toList(),
-                          onChanged: (v) => setState(() {
-                            _connectionFilter = v ?? 'All';
-                          }),
-                        ),
-                      ],
-                    ),
-                    Expanded(
-                        child: _savedDevicesWidget(scrollableParent: false)),
-                  ]),
-                )
-              ])
-            : SingleChildScrollView(
-                child: Column(children: [
-                  left,
-                  const SizedBox(height: 12),
-                  _currentDeviceCard(),
-                  const SizedBox(height: 8),
-                  _quickActionsCard(),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      const Text('Filter:'),
-                      const SizedBox(width: 8),
-                      DropdownButton<String>(
-                        value: _connectionFilter,
-                        items: ['All', 'Favorites']
-                            .map((f) => DropdownMenuItem(
-                                  value: f,
-                                  child: Text(f),
-                                ))
-                            .toList(),
-                        onChanged: (v) => setState(() {
-                          _connectionFilter = v ?? 'All';
-                        }),
-                      ),
-                    ],
+    return Column(
+      children: [
+        // Current device status banner
+        if (_adb.currentState == ADBConnectionState.connected)
+          _currentDeviceCard(),
+        
+        // Enhanced dashboard
+        Expanded(
+          child: EnhancedAdbDashboard(
+            savedDevices: _savedDevices,
+            mdnsServices: _mdnsServices,
+            usbDevices: _usbDevices,
+            favoriteConnections: _favoriteConnections,
+            connectionFilter: _connectionFilter,
+            mdnsScanning: _mdnsScanning,
+            lastMdnsScan: _lastMdnsScan,
+            onLoadDevice: _loadDevice,
+            onEditDevice: _editDevice,
+            onDeleteDevice: _deleteDevice,
+            onToggleFavorite: (device) {
+              setState(() {
+                if (_favoriteConnections.contains(device.name)) {
+                  _favoriteConnections.remove(device.name);
+                } else {
+                  _favoriteConnections.add(device.name);
+                }
+                _saveFavorites();
+              });
+            },
+            onConnectWifi: (host, port) async {
+              setState(() => _loadingConnect = true);
+              final ok = await _adb.connectWifi(host, port);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(ok ? 'Connected successfully' : 'Connection failed'),
+                    backgroundColor: ok ? Colors.green : Colors.red,
                   ),
-                  _savedDevicesWidget(scrollableParent: true),
-                ]),
-              ),
-      );
-    });
+                );
+              }
+              setState(() => _loadingConnect = false);
+            },
+            onConnectUsb: () async {
+              setState(() => _loadingConnect = true);
+              final ok = await _adb.connectUSB();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(ok ? 'Connected successfully' : 'Connection failed'),
+                    backgroundColor: ok ? Colors.green : Colors.red,
+                  ),
+                );
+              }
+              setState(() => _loadingConnect = false);
+            },
+            onRunMdnsScan: _runMdnsScan,
+            onRefreshUsb: _refreshUsb,
+            onAddNewDevice: () => _showConnectionDialog(),
+            onConnectionFilterChanged: (filter) {
+              setState(() => _connectionFilter = filter);
+            },
+            searchQuery: _appSearchQuery,
+            onSearchChanged: (query) {
+              setState(() => _appSearchQuery = query);
+            },
+            sortOption: _deviceSortOption,
+            onSortChanged: (option) {
+              setState(() => _deviceSortOption = option);
+            },
+          ),
+        ),
+      ],
+    );
   }
 
   Card _connectionCard() {
@@ -2928,59 +3384,4 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
     }
   }
 
-  // Edit device dialog
-  void _showEditDeviceDialog(SavedADBDevice device) {
-    final labelController = TextEditingController(text: device.label);
-    final noteController = TextEditingController(text: device.note);
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit Device'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: labelController,
-                decoration: const InputDecoration(
-                  labelText: 'Custom Label',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: noteController,
-                decoration: const InputDecoration(
-                  labelText: 'Note',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-              ),
-              const SizedBox(height: 8),
-              // Add any additional fields for device info here
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              setState(() {
-                device.label = labelController.text;
-                device.note = noteController.text;
-              });
-              Navigator.of(context).pop();
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
 }

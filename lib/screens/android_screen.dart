@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'adb_screen_refactored.dart';
 
+/// Deprecated Android screen - redirects to the new ADB screen
 @deprecated
 class AndroidScreen extends StatelessWidget {
   const AndroidScreen({super.key});
