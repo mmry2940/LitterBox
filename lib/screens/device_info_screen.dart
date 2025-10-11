@@ -800,16 +800,22 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen>
       child: Theme(
         data: theme.copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          leading: Icon(
-            Icons.expand_more,
-            color: colorScheme.primary,
-          ),
-          title: Text(
-            'Additional Information',
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.bold,
-              color: colorScheme.onSurface,
-            ),
+          title: Row(
+            children: [
+              Icon(
+                Icons.info_outline,
+                color: colorScheme.primary,
+                size: 24,
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Additional Information',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface,
+                ),
+              ),
+            ],
           ),
           initiallyExpanded: _expandedSections['additional'] ?? false,
           onExpansionChanged: (expanded) {
