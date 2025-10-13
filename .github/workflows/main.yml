@@ -70,6 +70,9 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | sdkmanager --licenses
 
+      - name: Flutter Pub Update
+        run: flutter pub outdated
+
       - name: Build APK
         run: flutter build apk --release
 
