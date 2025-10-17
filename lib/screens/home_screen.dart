@@ -10,6 +10,7 @@ import 'device_screen.dart';
 import 'adb_screen_refactored.dart';
 import 'vnc_screen.dart';
 import 'rdp_screen.dart';
+import 'esp32_screen.dart';
 import '_host_tile_with_retry.dart';
 import '../network_init.dart';
 import '../isolate_scanner.dart';
@@ -1054,6 +1055,15 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: () {
                 Navigator.of(context).push(MaterialPageRoute(
                   builder: (context) => const AdbRefactoredScreen(),
+                ));
+              },
+            ),
+            ListTile(
+              title: const Text('ESP32'),
+              leading: const Icon(Icons.memory),
+              onTap: () {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (context) => const ESP32Screen(),
                 ));
               },
             ),

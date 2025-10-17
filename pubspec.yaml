@@ -52,6 +52,8 @@ dependencies:
   multicast_dns: ^0.3.2
   flutter_adb: ^0.1.1
   flutter_foreground_task: ^9.1.0
+  http: ^1.2.0
+  web_socket_channel: ^3.0.1
 
 
 dev_dependencies:
