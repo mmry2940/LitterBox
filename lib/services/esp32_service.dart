@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:network_info_plus/network_info_plus.dart';
 
 enum ESP32ConnectionType { bluetooth, lan }
+
 enum ESP32ConnectionStatus { disconnected, connecting, connected, error }
 
 class ESP32Device {
@@ -17,7 +18,7 @@ class ESP32Device {
   final String? password;
   ESP32ConnectionStatus status;
   DateTime? lastConnected;
-  
+
   // Enhanced device information
   String? firmwareVersion;
   String? chipModel;
@@ -54,58 +55,59 @@ class ESP32Device {
   });
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'connectionType': connectionType.index,
-    'address': address,
-    'port': port,
-    'password': password,
-    'status': status.index,
-    'lastConnected': lastConnected?.toIso8601String(),
-    'firmwareVersion': firmwareVersion,
-    'chipModel': chipModel,
-    'macAddress': macAddress,
-    'freeMemory': freeMemory,
-    'totalMemory': totalMemory,
-    'cpuFrequency': cpuFrequency,
-    'gpioStates': gpioStates,
-    'sensorData': sensorData,
-    'availableLibraries': availableLibraries,
-    'currentFile': currentFile,
-    'isRunning': isRunning,
-  };
+        'id': id,
+        'name': name,
+        'connectionType': connectionType.index,
+        'address': address,
+        'port': port,
+        'password': password,
+        'status': status.index,
+        'lastConnected': lastConnected?.toIso8601String(),
+        'firmwareVersion': firmwareVersion,
+        'chipModel': chipModel,
+        'macAddress': macAddress,
+        'freeMemory': freeMemory,
+        'totalMemory': totalMemory,
+        'cpuFrequency': cpuFrequency,
+        'gpioStates': gpioStates,
+        'sensorData': sensorData,
+        'availableLibraries': availableLibraries,
+        'currentFile': currentFile,
+        'isRunning': isRunning,
+      };
 
   factory ESP32Device.fromJson(Map<String, dynamic> json) => ESP32Device(
-    id: json['id'],
-    name: json['name'],
-    connectionType: ESP32ConnectionType.values[json['connectionType']],
-    address: json['address'],
-    port: json['port'],
-    password: json['password'],
-    status: ESP32ConnectionStatus.values[json['status'] ?? 0],
-    lastConnected: json['lastConnected'] != null 
-        ? DateTime.parse(json['lastConnected']) 
-        : null,
-    firmwareVersion: json['firmwareVersion'],
-    chipModel: json['chipModel'],
-    macAddress: json['macAddress'],
-    freeMemory: json['freeMemory'],
-    totalMemory: json['totalMemory'],
-    cpuFrequency: json['cpuFrequency']?.toDouble(),
-    gpioStates: json['gpioStates'],
-    sensorData: json['sensorData'],
-    availableLibraries: json['availableLibraries']?.cast<String>(),
-    currentFile: json['currentFile'],
-    isRunning: json['isRunning'],
-  );
+        id: json['id'],
+        name: json['name'],
+        connectionType: ESP32ConnectionType.values[json['connectionType']],
+        address: json['address'],
+        port: json['port'],
+        password: json['password'],
+        status: ESP32ConnectionStatus.values[json['status'] ?? 0],
+        lastConnected: json['lastConnected'] != null
+            ? DateTime.parse(json['lastConnected'])
+            : null,
+        firmwareVersion: json['firmwareVersion'],
+        chipModel: json['chipModel'],
+        macAddress: json['macAddress'],
+        freeMemory: json['freeMemory'],
+        totalMemory: json['totalMemory'],
+        cpuFrequency: json['cpuFrequency']?.toDouble(),
+        gpioStates: json['gpioStates'],
+        sensorData: json['sensorData'],
+        availableLibraries: json['availableLibraries']?.cast<String>(),
+        currentFile: json['currentFile'],
+        isRunning: json['isRunning'],
+      );
 }
 
 class ESP32Connection {
   final ESP32Device device;
   HttpClient? _httpClient;
   Timer? _statusTimer;
-  final StreamController<String> _dataController = StreamController<String>.broadcast();
-  
+  final StreamController<String> _dataController =
+      StreamController<String>.broadcast();
+
   ESP32Connection(this.device);
 
   Stream<String> get dataStream => _dataController.stream;
@@ -114,7 +116,7 @@ class ESP32Connection {
   Future<bool> connect() async {
     try {
       device.status = ESP32ConnectionStatus.connecting;
-      
+
       if (device.connectionType == ESP32ConnectionType.bluetooth) {
         return await _connectBluetooth();
       } else {
@@ -133,19 +135,20 @@ class ESP32Connection {
     try {
       // Simulate connection delay
       await Future.delayed(const Duration(seconds: 2));
-      
+
       device.status = ESP32ConnectionStatus.connected;
       device.lastConnected = DateTime.now();
-      
+
       // Simulate receiving data periodically for demo
       Timer.periodic(const Duration(seconds: 5), (timer) {
         if (device.status == ESP32ConnectionStatus.connected) {
-          _dataController.add('MicroPython v1.20.0 on ${DateTime.now()}\\n>>> ');
+          _dataController
+              .add('MicroPython v1.20.0 on ${DateTime.now()}\\n>>> ');
         } else {
           timer.cancel();
         }
       });
-      
+
       return true;
     } catch (e) {
       debugPrint('Bluetooth connection error: $e');
@@ -161,14 +164,14 @@ class ESP32Connection {
         Uri.parse('http://${device.address}:${device.port ?? 80}/'),
         headers: {'Connection': 'close'},
       ).timeout(const Duration(seconds: 10));
-      
+
       if (response.statusCode == 200 || response.statusCode == 404) {
         device.status = ESP32ConnectionStatus.connected;
         device.lastConnected = DateTime.now();
-        
+
         // Set up HTTP client for commands
         _httpClient = HttpClient();
-        
+
         // Start periodic status updates
         _statusTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
           if (device.status == ESP32ConnectionStatus.connected) {
@@ -177,27 +180,28 @@ class ESP32Connection {
             timer.cancel();
           }
         });
-        
+
         // Send initial connection message
-        _dataController.add('Connected to ESP32 at ${device.address}:${device.port}\\n>>> ');
-        
+        _dataController.add(
+            'Connected to ESP32 at ${device.address}:${device.port}\\n>>> ');
+
         return true;
       }
     } catch (e) {
       debugPrint('LAN connection error: $e');
     }
-    
+
     device.status = ESP32ConnectionStatus.error;
     return false;
   }
-  
+
   Future<void> _checkDeviceStatus() async {
     try {
       final response = await http.get(
         Uri.parse('http://${device.address}:${device.port ?? 80}/status'),
         headers: {'Connection': 'close'},
       ).timeout(const Duration(seconds: 5));
-      
+
       if (response.statusCode == 200) {
         _dataController.add('Device status: OK - ${DateTime.now()}\\n');
       }
@@ -214,10 +218,10 @@ class ESP32Connection {
       if (device.connectionType == ESP32ConnectionType.bluetooth) {
         // For Bluetooth, simulate command echo and response
         _dataController.add('>>> $command\\n');
-        
+
         // Simulate some common MicroPython responses
         await Future.delayed(const Duration(milliseconds: 500));
-        
+
         if (command.trim() == 'help()') {
           _dataController.add('''Welcome to MicroPython!
 
@@ -238,22 +242,26 @@ For a list of available modules, type help('modules')
         } else if (command.trim() == 'import os') {
           _dataController.add('>>> ');
         } else if (command.trim().startsWith('os.listdir')) {
-          _dataController.add("['boot.py', 'main.py', 'lib', 'config.json']\\n>>> ");
+          _dataController
+              .add("['boot.py', 'main.py', 'lib', 'config.json']\\n>>> ");
         } else {
           _dataController.add('>>> ');
         }
       } else if (_httpClient != null) {
         // HTTP command sending for LAN connections
         try {
-          final response = await http.post(
-            Uri.parse('http://${device.address}:${device.port ?? 80}/command'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Connection': 'close',
-            },
-            body: jsonEncode({'command': command}),
-          ).timeout(const Duration(seconds: 10));
-          
+          final response = await http
+              .post(
+                Uri.parse(
+                    'http://${device.address}:${device.port ?? 80}/command'),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Connection': 'close',
+                },
+                body: jsonEncode({'command': command}),
+              )
+              .timeout(const Duration(seconds: 10));
+
           if (response.statusCode == 200) {
             _dataController.add('>>> $command\\n');
             _dataController.add('${response.body}\\n>>> ');
@@ -272,12 +280,13 @@ For a list of available modules, type help('modules')
     }
   }
 
-  Future<String?> sendCommandWithResponse(String command, {Duration timeout = const Duration(seconds: 5)}) async {
+  Future<String?> sendCommandWithResponse(String command,
+      {Duration timeout = const Duration(seconds: 5)}) async {
     if (!isConnected) return null;
 
     final completer = Completer<String>();
     late StreamSubscription subscription;
-    
+
     subscription = dataStream.listen((data) {
       if (!completer.isCompleted) {
         completer.complete(data);
@@ -286,7 +295,7 @@ For a list of available modules, type help('modules')
     });
 
     await sendCommand(command);
-    
+
     try {
       return await completer.future.timeout(timeout);
     } catch (e) {
@@ -296,7 +305,8 @@ For a list of available modules, type help('modules')
   }
 
   Future<List<String>> listFiles(String path) async {
-    final response = await sendCommandWithResponse('import os; print(os.listdir("$path"))');
+    final response =
+        await sendCommandWithResponse('import os; print(os.listdir("$path"))');
     if (response != null) {
       try {
         // Parse Python list output
@@ -309,7 +319,7 @@ For a list of available modules, type help('modules')
         debugPrint('Error parsing file list: $e');
       }
     }
-    
+
     // Return mock data if parsing fails
     return ['boot.py', 'main.py', 'lib', 'config.json'];
   }
@@ -322,11 +332,13 @@ try:
 except Exception as e:
     print("Error:", str(e))
 ''';
-    return await sendCommandWithResponse(command, timeout: const Duration(seconds: 10));
+    return await sendCommandWithResponse(command,
+        timeout: const Duration(seconds: 10));
   }
 
   Future<bool> writeFile(String filePath, String content) async {
-    final escapedContent = content.replaceAll('\\\\', '\\\\\\\\').replaceAll('"', '\\\\"');
+    final escapedContent =
+        content.replaceAll('\\\\', '\\\\\\\\').replaceAll('"', '\\\\"');
     final command = '''
 try:
     with open("$filePath", "w") as f:
@@ -335,8 +347,9 @@ try:
 except Exception as e:
     print("Error:", str(e))
 ''';
-    
-    final response = await sendCommandWithResponse(command, timeout: const Duration(seconds: 10));
+
+    final response = await sendCommandWithResponse(command,
+        timeout: const Duration(seconds: 10));
     return response?.contains('File written successfully') ?? false;
   }
 
@@ -354,7 +367,7 @@ except Exception as e:
   }
 
   // Enhanced ESP32 Functions
-  
+
   Future<Map<String, dynamic>?> getDeviceInfo() async {
     final command = '''
 import sys
@@ -388,8 +401,9 @@ try:
 except Exception as e:
     print("Error getting device info:", str(e))
 ''';
-    
-    final response = await sendCommandWithResponse(command, timeout: const Duration(seconds: 10));
+
+    final response = await sendCommandWithResponse(command,
+        timeout: const Duration(seconds: 10));
     if (response != null && response.contains('DEVICE_INFO:')) {
       try {
         final infoStr = response.split('DEVICE_INFO:')[1].trim();
@@ -422,7 +436,7 @@ try:
 except Exception as e:
     print("Error reading GPIO:", str(e))
 ''';
-    
+
     final response = await sendCommandWithResponse(command);
     if (response != null && response.contains('GPIO_STATES:')) {
       try {
@@ -446,7 +460,7 @@ try:
 except Exception as e:
     print("Error setting GPIO:", str(e))
 ''';
-    
+
     final response = await sendCommandWithResponse(command);
     return response?.contains('GPIO_SET_SUCCESS') ?? false;
   }
@@ -488,7 +502,7 @@ try:
 except Exception as e:
     print("Error reading sensors:", str(e))
 ''';
-    
+
     final response = await sendCommandWithResponse(command);
     if (response != null && response.contains('SENSOR_DATA:')) {
       try {
@@ -524,7 +538,7 @@ try:
 except Exception as e:
     print("Error getting libraries:", str(e))
 ''';
-    
+
     final response = await sendCommandWithResponse(command);
     if (response != null && response.contains('LIBRARIES:')) {
       try {
@@ -532,7 +546,10 @@ except Exception as e:
         // Simple parsing for Python list
         if (libStr.startsWith('[') && libStr.endsWith(']')) {
           final content = libStr.substring(1, libStr.length - 1);
-          final items = content.split(',').map((e) => e.trim().replaceAll("'", "").replaceAll('"', '')).toList();
+          final items = content
+              .split(',')
+              .map((e) => e.trim().replaceAll("'", "").replaceAll('"', ''))
+              .toList();
           return items.where((item) => item.isNotEmpty).toList();
         }
       } catch (e) {
@@ -566,8 +583,9 @@ try:
 except Exception as e:
     print("Upload error:", str(e))
 ''';
-    
-    final response = await sendCommandWithResponse(command, timeout: const Duration(seconds: 15));
+
+    final response = await sendCommandWithResponse(command,
+        timeout: const Duration(seconds: 15));
     return response?.contains('UPLOAD_SUCCESS') ?? false;
   }
 
@@ -579,8 +597,9 @@ try:
 except Exception as e:
     print("Script error:", str(e))
 ''';
-    
-    final response = await sendCommandWithResponse(command, timeout: const Duration(seconds: 30));
+
+    final response = await sendCommandWithResponse(command,
+        timeout: const Duration(seconds: 30));
     return response?.contains('SCRIPT_EXECUTED') ?? false;
   }
 
@@ -593,7 +612,7 @@ try:
 except Exception as e:
     print("Stop error:", str(e))
 ''';
-    
+
     final response = await sendCommandWithResponse(command);
     return response?.contains('SCRIPT_STOPPED') ?? false;
   }
@@ -616,7 +635,7 @@ try:
 except Exception as e:
     print("Status error:", str(e))
 ''';
-    
+
     final response = await sendCommandWithResponse(command);
     if (response != null && response.contains('SYSTEM_STATUS:')) {
       return response.split('SYSTEM_STATUS:')[1].trim();
@@ -633,8 +652,9 @@ try:
 except Exception as e:
     print("Install error:", str(e))
 ''';
-    
-    final response = await sendCommandWithResponse(command, timeout: const Duration(minutes: 5));
+
+    final response = await sendCommandWithResponse(command,
+        timeout: const Duration(minutes: 5));
     return response?.contains('LIBRARY_INSTALLED') ?? false;
   }
 
@@ -647,7 +667,7 @@ except Exception as e:
           .replaceAll('True', 'true')
           .replaceAll('False', 'false')
           .replaceAll('None', 'null');
-      
+
       return jsonDecode(jsonStr);
     } catch (e) {
       debugPrint('Error parsing Python dict: $e');
@@ -657,13 +677,13 @@ except Exception as e:
 
   void disconnect() {
     device.status = ESP32ConnectionStatus.disconnected;
-    
+
     _statusTimer?.cancel();
     _statusTimer = null;
-    
+
     _httpClient?.close();
     _httpClient = null;
-    
+
     _dataController.add('Disconnected from ${device.name}\n');
   }
 
@@ -679,7 +699,7 @@ class ESP32Service {
   ESP32Service._internal();
 
   final Map<String, ESP32Connection> _connections = {};
-  final StreamController<List<ESP32Device>> _devicesController = 
+  final StreamController<List<ESP32Device>> _devicesController =
       StreamController<List<ESP32Device>>.broadcast();
 
   Stream<List<ESP32Device>> get devicesStream => _devicesController.stream;
@@ -689,7 +709,7 @@ class ESP32Service {
     // In a real implementation, you would use platform channels or a Bluetooth plugin
     try {
       await Future.delayed(const Duration(seconds: 2)); // Simulate scan time
-      
+
       return [
         {
           'name': 'ESP32-DevBoard',
@@ -697,7 +717,7 @@ class ESP32Service {
         },
         {
           'name': 'ESP32-WROOM',
-          'address': '24:0A:C4:00:00:02',  
+          'address': '24:0A:C4:00:00:02',
         },
       ];
     } catch (e) {
@@ -708,41 +728,43 @@ class ESP32Service {
 
   Future<List<String>> scanLANDevices() async {
     final List<String> foundDevices = [];
-    
+
     try {
       // Get actual network information
       final info = NetworkInfo();
       final wifiIP = await info.getWifiIP();
-      
+
       if (wifiIP == null) {
         debugPrint('No WiFi connection detected');
         return [];
       }
-      
+
       // Extract network prefix (e.g., "192.168.1" from "192.168.1.100")
       final ipParts = wifiIP.split('.');
       if (ipParts.length != 4) {
         debugPrint('Invalid IP format: $wifiIP');
         return [];
       }
-      
+
       final networkPrefix = '${ipParts[0]}.${ipParts[1]}.${ipParts[2]}';
       final currentDeviceIP = int.parse(ipParts[3]);
-      
+
       debugPrint('Scanning network: $networkPrefix.x');
-      
+
       // Common ESP32 ports
       final ports = [80, 81, 8080, 8266, 8000, 8001, 8080, 443];
-      
+
       // Create a list of IP addresses to scan (prioritize nearby IPs)
       final List<int> ipsToScan = [];
-      
+
       // Add nearby IPs first (±10 from current device)
       for (int offset = 1; offset <= 10; offset++) {
-        if (currentDeviceIP - offset >= 1) ipsToScan.add(currentDeviceIP - offset);
-        if (currentDeviceIP + offset <= 254) ipsToScan.add(currentDeviceIP + offset);
+        if (currentDeviceIP - offset >= 1)
+          ipsToScan.add(currentDeviceIP - offset);
+        if (currentDeviceIP + offset <= 254)
+          ipsToScan.add(currentDeviceIP + offset);
       }
-      
+
       // Add common router/gateway IPs
       final commonIPs = [1, 254, 100, 101, 102, 10, 11, 12, 20, 21, 22];
       for (final ip in commonIPs) {
@@ -750,27 +772,28 @@ class ESP32Service {
           ipsToScan.add(ip);
         }
       }
-      
+
       // Add remaining IPs
       for (int i = 1; i <= 254; i++) {
         if (!ipsToScan.contains(i) && i != currentDeviceIP) {
           ipsToScan.add(i);
         }
       }
-      
+
       debugPrint('Scanning ${ipsToScan.length} IPs on ${ports.length} ports');
-      
+
       // Scan in batches to avoid overwhelming the network
       const batchSize = 20;
       for (int batch = 0; batch < ipsToScan.length; batch += batchSize) {
         final batchEnd = (batch + batchSize).clamp(0, ipsToScan.length);
         final batchIPs = ipsToScan.sublist(batch, batchEnd);
-        
+
         final futures = <Future<void>>[];
-        
+
         for (final ip in batchIPs) {
           for (final port in ports) {
-            futures.add(_checkESP32Device('$networkPrefix.$ip', port).then((isESP32) {
+            futures.add(
+                _checkESP32Device('$networkPrefix.$ip', port).then((isESP32) {
               if (isESP32) {
                 foundDevices.add('$networkPrefix.$ip:$port');
                 debugPrint('Found ESP32 device: $networkPrefix.$ip:$port');
@@ -778,22 +801,21 @@ class ESP32Service {
             }));
           }
         }
-        
+
         // Wait for this batch to complete with timeout
         try {
           await Future.wait(futures).timeout(const Duration(seconds: 10));
         } catch (e) {
           debugPrint('Batch $batch timeout: $e');
         }
-        
+
         // Small delay between batches
         await Future.delayed(const Duration(milliseconds: 100));
       }
-      
     } catch (e) {
       debugPrint('LAN scan error: $e');
     }
-    
+
     debugPrint('LAN scan complete. Found ${foundDevices.length} devices');
     return foundDevices;
   }
@@ -807,63 +829,85 @@ class ESP32Service {
           'User-Agent': 'LitterBox-ESP32-Scanner/1.0',
         },
       ).timeout(const Duration(seconds: 3));
-      
+
       if (response.statusCode != 200) {
         return false;
       }
-      
+
       // Check response body for ESP32/MicroPython indicators
       final body = response.body.toLowerCase();
       final headers = response.headers;
-      
+
       // Check for ESP32-specific keywords
       final esp32Keywords = [
-        'esp32', 'esp-32', 'espressif',
-        'micropython', 'micro python', 'circuitpython', 'circuit python',
-        'webrepl', 'web repl', 'repl', 'esp32cam', 'esp32-cam',
-        'esptool', 'esp tool', 'arduino', 'nodemcu', 'wemos',
-        'esp8266', 'esp-8266'
+        'esp32',
+        'esp-32',
+        'espressif',
+        'micropython',
+        'micro python',
+        'circuitpython',
+        'circuit python',
+        'webrepl',
+        'web repl',
+        'repl',
+        'esp32cam',
+        'esp32-cam',
+        'esptool',
+        'esp tool',
+        'arduino',
+        'nodemcu',
+        'wemos',
+        'esp8266',
+        'esp-8266'
       ];
-      
+
       final serverKeywords = [
-        'esp32', 'micropython', 'circuitpython', 'arduino',
-        'esp8266', 'nodemcu', 'wemos'
+        'esp32',
+        'micropython',
+        'circuitpython',
+        'arduino',
+        'esp8266',
+        'nodemcu',
+        'wemos'
       ];
-      
+
       // Check body content
       bool hasKeyword = esp32Keywords.any((keyword) => body.contains(keyword));
-      
+
       // Check server header
       final serverHeader = headers['server']?.toLowerCase() ?? '';
-      bool hasServerKeyword = serverKeywords.any((keyword) => serverHeader.contains(keyword));
-      
+      bool hasServerKeyword =
+          serverKeywords.any((keyword) => serverHeader.contains(keyword));
+
       // Check for MicroPython WebREPL specific patterns
-      bool hasWebREPL = body.contains('webrepl') || 
-                       body.contains('ws://') || 
-                       body.contains('websocket');
-      
+      bool hasWebREPL = body.contains('webrepl') ||
+          body.contains('ws://') ||
+          body.contains('websocket');
+
       // Check for common ESP32 file structure
-      bool hasESP32Structure = body.contains('boot.py') || 
-                              body.contains('main.py') || 
-                              body.contains('/files') ||
-                              body.contains('/upload');
-      
+      bool hasESP32Structure = body.contains('boot.py') ||
+          body.contains('main.py') ||
+          body.contains('/files') ||
+          body.contains('/upload');
+
       // Additional checks for ESP32 web interfaces
       bool hasESP32Interface = body.contains('gpio') ||
-                              body.contains('pin') ||
-                              body.contains('sensor') ||
-                              body.contains('wifi') ||
-                              body.contains('config');
-      
-      final isESP32 = hasKeyword || hasServerKeyword || hasWebREPL || 
-                     hasESP32Structure || hasESP32Interface;
-      
+          body.contains('pin') ||
+          body.contains('sensor') ||
+          body.contains('wifi') ||
+          body.contains('config');
+
+      final isESP32 = hasKeyword ||
+          hasServerKeyword ||
+          hasWebREPL ||
+          hasESP32Structure ||
+          hasESP32Interface;
+
       if (isESP32) {
         debugPrint('ESP32 detected at $ip:$port - Server: $serverHeader');
       }
-      
+
       return isESP32;
-      
     } catch (e) {
       // Silently fail for connection errors (expected for most IPs)
       return false;
@@ -877,11 +921,11 @@ class ESP32Service {
   Future<bool> connectDevice(ESP32Device device) async {
     final connection = ESP32Connection(device);
     final success = await connection.connect();
-    
+
     if (success) {
       _connections[device.id] = connection;
     }
-    
+
     _devicesController.add(_connections.values.map((c) => c.device).toList());
     return success;
   }

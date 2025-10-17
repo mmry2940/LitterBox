@@ -13,7 +13,8 @@ class ESP32Screen extends StatefulWidget {
   State<ESP32Screen> createState() => _ESP32ScreenState();
 }
 
-class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStateMixin {
+class _ESP32ScreenState extends State<ESP32Screen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   List<ESP32Device> _devices = [];
   ESP32Device? _selectedDevice;
@@ -36,8 +37,11 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
     _loadDevices();
     _devicesSubscription = _esp32Service.devicesStream.listen((devices) {
       setState(() {
-        final connectedDevices = devices.where((d) => d.status == ESP32ConnectionStatus.connected).toList();
-        _devices.addAll(connectedDevices.where((d) => !_devices.any((existing) => existing.id == d.id)));
+        final connectedDevices = devices
+            .where((d) => d.status == ESP32ConnectionStatus.connected)
+            .toList();
+        _devices.addAll(connectedDevices
+            .where((d) => !_devices.any((existing) => existing.id == d.id)));
       });
     });
   }
@@ -55,19 +59,22 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
     final prefs = await SharedPreferences.getInstance();
     final devicesJson = prefs.getStringList('esp32_devices') ?? [];
     setState(() {
-      _devices = devicesJson.map((json) => ESP32Device.fromJson(jsonDecode(json))).toList();
+      _devices = devicesJson
+          .map((json) => ESP32Device.fromJson(jsonDecode(json)))
+          .toList();
     });
   }
 
   Future<void> _saveDevices() async {
     final prefs = await SharedPreferences.getInstance();
-    final devicesJson = _devices.map((device) => jsonEncode(device.toJson())).toList();
+    final devicesJson =
+        _devices.map((device) => jsonEncode(device.toJson())).toList();
     await prefs.setStringList('esp32_devices', devicesJson);
   }
 
   Future<void> _scanForDevices() async {
     if (_isScanning) return;
-    
+
     setState(() {
       _isScanning = true;
     });
@@ -95,15 +102,16 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
               SizedBox(height: 8),
               Text('⏱️ This may take up to 2 minutes.'),
               SizedBox(height: 16),
-              Text('💡 Tip: Make sure your ESP32 is powered on and connected to the same network.',
-                style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+              Text(
+                  '💡 Tip: Make sure your ESP32 is powered on and connected to the same network.',
+                  style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
             ],
           ),
         ),
       );
 
       int foundDevices = 0;
-      
+
       // Scan for Bluetooth devices
       try {
         final bluetoothDevices = await _esp32Service.scanBluetoothDevices();
@@ -114,7 +122,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
             connectionType: ESP32ConnectionType.bluetooth,
             address: btDeviceMap['address']!,
           );
-          
+
           if (!_devices.any((d) => d.id == device.id)) {
             setState(() {
               _devices.add(device);
@@ -129,12 +137,12 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
       // Scan for LAN devices
       try {
         final lanDevices = await _esp32Service.scanLANDevices();
-        
+
         for (final lanAddress in lanDevices) {
           final parts = lanAddress.split(':');
           final ip = parts[0];
           final port = int.tryParse(parts[1]) ?? 80;
-          
+
           final device = ESP32Device(
             id: 'lan_$ip:$port',
             name: 'ESP32 ($ip:$port)',
@@ -142,7 +150,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
             address: ip,
             port: port,
           );
-          
+
           if (!_devices.any((d) => d.id == device.id)) {
             setState(() {
               _devices.add(device);
@@ -153,29 +161,31 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
       } catch (e) {
         debugPrint('LAN scan error: $e');
       }
-      
+
       // Close progress dialog
       if (mounted && Navigator.canPop(context)) {
         Navigator.pop(context);
       }
 
       _saveDevices();
-      
+
       // Show results with appropriate message
       if (mounted) {
-        final message = foundDevices > 0 
+        final message = foundDevices > 0
             ? 'Found $foundDevices ESP32 device${foundDevices == 1 ? '' : 's'}'
             : 'No ESP32 devices found. Try adding a device manually or check your network connection.';
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message),
             backgroundColor: foundDevices > 0 ? Colors.green : Colors.orange,
             duration: const Duration(seconds: 4),
-            action: foundDevices == 0 ? SnackBarAction(
-              label: 'Add Manual',
-              onPressed: _addDevice,
-            ) : null,
+            action: foundDevices == 0
+                ? SnackBarAction(
+                    label: 'Add Manual',
+                    onPressed: _addDevice,
+                  )
+                : null,
           ),
         );
       }
@@ -184,7 +194,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
       if (mounted && Navigator.canPop(context)) {
         Navigator.pop(context);
       }
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -209,7 +219,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
 
   Future<void> _connectToDevice(ESP32Device device) async {
     if (device.status == ESP32ConnectionStatus.connecting) return;
-    
+
     // Show connecting dialog
     showDialog(
       context: context,
@@ -232,22 +242,22 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
         ),
       ),
     );
-    
+
     try {
       final success = await _esp32Service.connectDevice(device);
-      
+
       // Close connecting dialog
       if (mounted && Navigator.canPop(context)) {
         Navigator.pop(context);
       }
-      
+
       if (success) {
         setState(() {
           _selectedDevice = device;
         });
         _saveDevices();
         _loadFiles();
-        
+
         // Listen for REPL data
         final connection = _esp32Service.getConnection(device.id);
         connection?.dataStream.listen((data) {
@@ -258,7 +268,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
             _scrollToBottom();
           }
         });
-        
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -273,7 +283,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
               duration: const Duration(seconds: 3),
             ),
           );
-          
+
           // Auto-switch to REPL tab on successful connection
           _tabController.animateTo(2);
         }
@@ -303,7 +313,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
       if (mounted && Navigator.canPop(context)) {
         Navigator.pop(context);
       }
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -326,7 +336,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
       }
     });
     _saveDevices();
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -348,7 +358,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
 
   Future<void> _loadFiles() async {
     if (_selectedDevice == null) return;
-    
+
     final connection = _esp32Service.getConnection(_selectedDevice!.id);
     if (connection != null) {
       final files = await connection.listFiles(_currentDirectory);
@@ -409,7 +419,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
       setState(() {
         _replHistory.add('>>> $command');
       });
-      
+
       await connection.sendCommand(command);
       _replController.clear();
       _scrollToBottom();
@@ -471,13 +481,13 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
               Expanded(
                 child: ElevatedButton.icon(
                   onPressed: _isScanning ? null : _scanForDevices,
-                  icon: _isScanning 
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.search),
+                  icon: _isScanning
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.search),
                   label: Text(_isScanning ? 'Scanning...' : 'Scan for Devices'),
                 ),
               ),
@@ -526,12 +536,14 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                   itemBuilder: (context, index) {
                     final device = _devices[index];
                     return Card(
-                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 4),
                       child: ListTile(
                         leading: CircleAvatar(
                           backgroundColor: _getStatusColor(device.status),
                           child: Icon(
-                            device.connectionType == ESP32ConnectionType.bluetooth
+                            device.connectionType ==
+                                    ESP32ConnectionType.bluetooth
                                 ? Icons.bluetooth
                                 : Icons.wifi,
                             color: Colors.white,
@@ -542,7 +554,8 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              device.connectionType == ESP32ConnectionType.bluetooth
+                              device.connectionType ==
+                                      ESP32ConnectionType.bluetooth
                                   ? 'Bluetooth: ${device.address}'
                                   : 'LAN: ${device.address}:${device.port}',
                             ),
@@ -557,7 +570,8 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                         ),
                         trailing: PopupMenuButton(
                           itemBuilder: (context) => [
-                            if (device.status == ESP32ConnectionStatus.disconnected)
+                            if (device.status ==
+                                ESP32ConnectionStatus.disconnected)
                               PopupMenuItem(
                                 value: 'connect',
                                 child: const Row(
@@ -568,7 +582,8 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                                   ],
                                 ),
                               ),
-                            if (device.status == ESP32ConnectionStatus.connected)
+                            if (device.status ==
+                                ESP32ConnectionStatus.connected)
                               PopupMenuItem(
                                 value: 'disconnect',
                                 child: const Row(
@@ -684,7 +699,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                   itemBuilder: (context, index) {
                     final file = _files[index];
                     final isDirectory = !file.contains('.');
-                    
+
                     return ListTile(
                       leading: Icon(
                         isDirectory ? Icons.folder : Icons.description,
@@ -695,7 +710,8 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                       onTap: () {
                         if (isDirectory) {
                           setState(() {
-                            _currentDirectory = '$_currentDirectory/$file'.replaceAll('//', '/');
+                            _currentDirectory = '$_currentDirectory/$file'
+                                .replaceAll('//', '/');
                           });
                           _loadFiles();
                         }
@@ -725,12 +741,15 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                                 ),
                               ],
                               onSelected: (value) async {
-                                final connection = _esp32Service.getConnection(_selectedDevice!.id);
+                                final connection = _esp32Service
+                                    .getConnection(_selectedDevice!.id);
                                 if (connection != null) {
-                                  final filePath = '$_currentDirectory/$file'.replaceAll('//', '/');
-                                  
+                                  final filePath = '$_currentDirectory/$file'
+                                      .replaceAll('//', '/');
+
                                   if (value == 'view') {
-                                    final content = await connection.readFile(filePath);
+                                    final content =
+                                        await connection.readFile(filePath);
                                     if (content != null && mounted) {
                                       showDialog(
                                         context: context,
@@ -741,7 +760,8 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                                           ),
                                           actions: [
                                             TextButton(
-                                              onPressed: () => Navigator.pop(context),
+                                              onPressed: () =>
+                                                  Navigator.pop(context),
                                               child: const Text('Close'),
                                             ),
                                           ],
@@ -753,22 +773,26 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                                       context: context,
                                       builder: (context) => AlertDialog(
                                         title: const Text('Delete File'),
-                                        content: Text('Are you sure you want to delete $file?'),
+                                        content: Text(
+                                            'Are you sure you want to delete $file?'),
                                         actions: [
                                           TextButton(
-                                            onPressed: () => Navigator.pop(context, false),
+                                            onPressed: () =>
+                                                Navigator.pop(context, false),
                                             child: const Text('Cancel'),
                                           ),
                                           TextButton(
-                                            onPressed: () => Navigator.pop(context, true),
+                                            onPressed: () =>
+                                                Navigator.pop(context, true),
                                             child: const Text('Delete'),
                                           ),
                                         ],
                                       ),
                                     );
-                                    
+
                                     if (confirmed == true) {
-                                      final success = await connection.deleteFile(filePath);
+                                      final success =
+                                          await connection.deleteFile(filePath);
                                       if (success) {
                                         _loadFiles();
                                       }
@@ -966,9 +990,12 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
             children: [
               _buildInfoCard('Device Information', [
                 _buildInfoRow('Name', _selectedDevice!.name),
-                _buildInfoRow('Address', '${_selectedDevice!.address}:${_selectedDevice!.port ?? 'N/A'}'),
-                _buildInfoRow('Connection', _selectedDevice!.connectionType.name.toUpperCase()),
-                _buildInfoRow('Status', _getStatusText(_selectedDevice!.status)),
+                _buildInfoRow('Address',
+                    '${_selectedDevice!.address}:${_selectedDevice!.port ?? 'N/A'}'),
+                _buildInfoRow('Connection',
+                    _selectedDevice!.connectionType.name.toUpperCase()),
+                _buildInfoRow(
+                    'Status', _getStatusText(_selectedDevice!.status)),
                 if (_selectedDevice!.firmwareVersion != null)
                   _buildInfoRow('Firmware', _selectedDevice!.firmwareVersion!),
                 if (_selectedDevice!.chipModel != null)
@@ -979,22 +1006,27 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
               const SizedBox(height: 16),
               _buildInfoCard('Memory Information', [
                 if (_selectedDevice!.freeMemory != null)
-                  _buildInfoRow('Free Memory', '${_selectedDevice!.freeMemory} bytes'),
+                  _buildInfoRow(
+                      'Free Memory', '${_selectedDevice!.freeMemory} bytes'),
                 if (_selectedDevice!.totalMemory != null)
-                  _buildInfoRow('Total Memory', '${_selectedDevice!.totalMemory} bytes'),
+                  _buildInfoRow(
+                      'Total Memory', '${_selectedDevice!.totalMemory} bytes'),
                 if (_selectedDevice!.cpuFrequency != null)
-                  _buildInfoRow('CPU Frequency', '${_selectedDevice!.cpuFrequency} MHz'),
+                  _buildInfoRow(
+                      'CPU Frequency', '${_selectedDevice!.cpuFrequency} MHz'),
               ]),
               const SizedBox(height: 16),
               _buildInfoCard('Available Libraries', [
                 if (_selectedDevice!.availableLibraries != null)
-                  ...(_selectedDevice!.availableLibraries!.take(10).map((lib) => 
-                    ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.library_books, size: 16),
-                      title: Text(lib, style: const TextStyle(fontSize: 14)),
-                    )
-                  ).toList())
+                  ...(_selectedDevice!.availableLibraries!
+                      .take(10)
+                      .map((lib) => ListTile(
+                            dense: true,
+                            leading: const Icon(Icons.library_books, size: 16),
+                            title:
+                                Text(lib, style: const TextStyle(fontSize: 14)),
+                          ))
+                      .toList())
                 else
                   const ListTile(
                     dense: true,
@@ -1006,15 +1038,17 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: _isLoadingDeviceInfo ? null : _refreshDeviceInfo,
-                      icon: _isLoadingDeviceInfo 
+                      onPressed:
+                          _isLoadingDeviceInfo ? null : _refreshDeviceInfo,
+                      icon: _isLoadingDeviceInfo
                           ? const SizedBox(
                               width: 16,
                               height: 16,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.refresh),
-                      label: Text(_isLoadingDeviceInfo ? 'Loading...' : 'Refresh Info'),
+                      label: Text(
+                          _isLoadingDeviceInfo ? 'Loading...' : 'Refresh Info'),
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -1023,7 +1057,8 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                       onPressed: _softResetDevice,
                       icon: const Icon(Icons.restart_alt),
                       label: const Text('Soft Reset'),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orange),
                     ),
                   ),
                 ],
@@ -1057,7 +1092,28 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
     }
 
     final gpioStates = _selectedDevice!.gpioStates ?? {};
-    final gpioPins = [0, 2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33];
+    final gpioPins = [
+      0,
+      2,
+      4,
+      5,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      21,
+      22,
+      23,
+      25,
+      26,
+      27,
+      32,
+      33
+    ];
 
     return RefreshIndicator(
       onRefresh: _refreshGPIOStates,
@@ -1076,7 +1132,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                 const Spacer(),
                 ElevatedButton.icon(
                   onPressed: _isLoadingGPIO ? null : _refreshGPIOStates,
-                  icon: _isLoadingGPIO 
+                  icon: _isLoadingGPIO
                       ? const SizedBox(
                           width: 16,
                           height: 16,
@@ -1101,7 +1157,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
               itemBuilder: (context, index) {
                 final pin = gpioPins[index];
                 final isHigh = gpioStates[pin.toString()] ?? false;
-                
+
                 return Card(
                   child: InkWell(
                     onTap: () => _toggleGPIO(pin, !isHigh),
@@ -1193,7 +1249,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                   const Spacer(),
                   ElevatedButton.icon(
                     onPressed: _isLoadingSensors ? null : _refreshSensorData,
-                    icon: _isLoadingSensors 
+                    icon: _isLoadingSensors
                         ? const SizedBox(
                             width: 16,
                             height: 16,
@@ -1206,13 +1262,17 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
               ),
               const SizedBox(height: 16),
               if (sensorData.isNotEmpty) ...[
-                _buildSensorCard('Temperature', sensorData['temperature_raw'], 'ADC Units', Icons.thermostat),
+                _buildSensorCard('Temperature', sensorData['temperature_raw'],
+                    'ADC Units', Icons.thermostat),
                 const SizedBox(height: 12),
-                _buildSensorCard('Light Level', sensorData['light_raw'], 'ADC Units', Icons.light_mode),
+                _buildSensorCard('Light Level', sensorData['light_raw'],
+                    'ADC Units', Icons.light_mode),
                 const SizedBox(height: 12),
-                _buildSensorCard('Hall Sensor', sensorData['hall_sensor'], 'ADC Units', Icons.explore),
+                _buildSensorCard('Hall Sensor', sensorData['hall_sensor'],
+                    'ADC Units', Icons.explore),
                 const SizedBox(height: 12),
-                _buildSensorCard('Uptime', sensorData['uptime'], 'ms', Icons.timer),
+                _buildSensorCard(
+                    'Uptime', sensorData['uptime'], 'ms', Icons.timer),
               ] else ...[
                 const Card(
                   child: Padding(
@@ -1299,9 +1359,10 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildSensorCard(String name, dynamic value, String unit, IconData icon) {
+  Widget _buildSensorCard(
+      String name, dynamic value, String unit, IconData icon) {
     final displayValue = value?.toString() ?? 'N/A';
-    
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -1315,7 +1376,8 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
                 children: [
                   Text(
                     name,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   Text(
                     '$displayValue $unit',
@@ -1334,33 +1396,35 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
 
   Future<void> _refreshDeviceInfo() async {
     if (_selectedDevice == null || _isLoadingDeviceInfo) return;
-    
+
     setState(() {
       _isLoadingDeviceInfo = true;
     });
-    
+
     try {
       final connection = _esp32Service.getConnection(_selectedDevice!.id);
       if (connection != null) {
         final deviceInfo = await connection.getDeviceInfo();
         if (deviceInfo != null && mounted) {
           setState(() {
-            _selectedDevice!.firmwareVersion = deviceInfo['firmware']?.toString();
+            _selectedDevice!.firmwareVersion =
+                deviceInfo['firmware']?.toString();
             _selectedDevice!.chipModel = deviceInfo['platform']?.toString();
             _selectedDevice!.macAddress = deviceInfo['mac']?.toString();
             _selectedDevice!.freeMemory = deviceInfo['memory_free'];
-            _selectedDevice!.totalMemory = (deviceInfo['memory_free'] ?? 0) + (deviceInfo['memory_alloc'] ?? 0);
+            _selectedDevice!.totalMemory = (deviceInfo['memory_free'] ?? 0) +
+                (deviceInfo['memory_alloc'] ?? 0);
             _selectedDevice!.cpuFrequency = deviceInfo['freq']?.toDouble();
           });
         }
-        
+
         final libraries = await connection.getAvailableLibraries();
         if (libraries != null && mounted) {
           setState(() {
             _selectedDevice!.availableLibraries = libraries;
           });
         }
-        
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -1392,20 +1456,21 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
 
   Future<void> _refreshGPIOStates() async {
     if (_selectedDevice == null || _isLoadingGPIO) return;
-    
+
     setState(() {
       _isLoadingGPIO = true;
     });
-    
+
     try {
       final connection = _esp32Service.getConnection(_selectedDevice!.id);
       if (connection != null) {
         final gpioStates = await connection.getGPIOStates();
         if (gpioStates != null && mounted) {
           setState(() {
-            _selectedDevice!.gpioStates = gpioStates.map((k, v) => MapEntry(k, v));
+            _selectedDevice!.gpioStates =
+                gpioStates.map((k, v) => MapEntry(k, v));
           });
-          
+
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('GPIO states updated'),
@@ -1436,11 +1501,11 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
 
   Future<void> _refreshSensorData() async {
     if (_selectedDevice == null || _isLoadingSensors) return;
-    
+
     setState(() {
       _isLoadingSensors = true;
     });
-    
+
     try {
       final connection = _esp32Service.getConnection(_selectedDevice!.id);
       if (connection != null) {
@@ -1449,7 +1514,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
           setState(() {
             _selectedDevice!.sensorData = sensorData;
           });
-          
+
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Sensor data updated'),
@@ -1480,18 +1545,18 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
 
   Future<void> _toggleGPIO(int pin, bool value) async {
     if (_selectedDevice == null) return;
-    
+
     // Show immediate feedback
     setState(() {
       _selectedDevice!.gpioStates ??= {};
       _selectedDevice!.gpioStates![pin.toString()] = value;
     });
-    
+
     try {
       final connection = _esp32Service.getConnection(_selectedDevice!.id);
       if (connection != null) {
         final success = await connection.setGPIO(pin, value);
-        
+
         if (success) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -1516,7 +1581,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
           setState(() {
             _selectedDevice!.gpioStates![pin.toString()] = !value;
           });
-          
+
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -1543,7 +1608,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
       setState(() {
         _selectedDevice!.gpioStates![pin.toString()] = !value;
       });
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1558,7 +1623,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
 
   Future<void> _softResetDevice() async {
     if (_selectedDevice == null) return;
-    
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1576,7 +1641,7 @@ class _ESP32ScreenState extends State<ESP32Screen> with SingleTickerProviderStat
         ],
       ),
     );
-    
+
     if (confirmed == true) {
       final connection = _esp32Service.getConnection(_selectedDevice!.id);
       if (connection != null) {
@@ -1616,9 +1681,12 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.device?.name ?? '');
-    _addressController = TextEditingController(text: widget.device?.address ?? '');
-    _portController = TextEditingController(text: widget.device?.port?.toString() ?? '80');
-    _passwordController = TextEditingController(text: widget.device?.password ?? '');
+    _addressController =
+        TextEditingController(text: widget.device?.address ?? '');
+    _portController =
+        TextEditingController(text: widget.device?.port?.toString() ?? '80');
+    _passwordController =
+        TextEditingController(text: widget.device?.password ?? '');
     _connectionType = widget.device?.connectionType ?? ESP32ConnectionType.lan;
   }
 
@@ -1634,7 +1702,8 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.device == null ? 'Add ESP32 Device' : 'Edit ESP32 Device'),
+      title: Text(
+          widget.device == null ? 'Add ESP32 Device' : 'Edit ESP32 Device'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1685,12 +1754,12 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
             TextField(
               controller: _addressController,
               decoration: InputDecoration(
-                labelText: _connectionType == ESP32ConnectionType.bluetooth 
-                    ? 'Bluetooth Address' 
+                labelText: _connectionType == ESP32ConnectionType.bluetooth
+                    ? 'Bluetooth Address'
                     : 'IP Address',
                 border: const OutlineInputBorder(),
-                hintText: _connectionType == ESP32ConnectionType.bluetooth 
-                    ? '00:11:22:33:44:55' 
+                hintText: _connectionType == ESP32ConnectionType.bluetooth
+                    ? '00:11:22:33:44:55'
                     : '192.168.1.100',
               ),
             ),
@@ -1725,19 +1794,22 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
         ),
         ElevatedButton(
           onPressed: () {
-            if (_nameController.text.isNotEmpty && _addressController.text.isNotEmpty) {
+            if (_nameController.text.isNotEmpty &&
+                _addressController.text.isNotEmpty) {
               final device = ESP32Device(
-                id: widget.device?.id ?? 
+                id: widget.device?.id ??
                     '${_connectionType.name}_${_addressController.text}_${DateTime.now().millisecondsSinceEpoch}',
                 name: _nameController.text,
                 connectionType: _connectionType,
                 address: _addressController.text,
-                port: _connectionType == ESP32ConnectionType.lan 
-                    ? int.tryParse(_portController.text) ?? 80 
+                port: _connectionType == ESP32ConnectionType.lan
+                    ? int.tryParse(_portController.text) ?? 80
                     : null,
-                password: _passwordController.text.isEmpty ? null : _passwordController.text,
+                password: _passwordController.text.isEmpty
+                    ? null
+                    : _passwordController.text,
               );
-              
+
               widget.onAdd(device);
               Navigator.pop(context);
             }

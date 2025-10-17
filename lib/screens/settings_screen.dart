@@ -33,21 +33,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _confirmClearLogcat = true;
   String _vncDefaultScaling = 'fit'; // fit, original, fill
   bool _adbProgressNotifications = true;
-  
+
   // Security settings
   bool _requireAuthentication = false;
   String _authenticationMethod = 'biometric'; // biometric, pin, password
   int _sessionTimeout = 30; // minutes
   bool _hideRecentApps = false;
   bool _enableAppLock = false;
-  
+
   // Performance settings
   bool _enableHardwareAcceleration = true;
   int _maxConcurrentConnections = 5;
   bool _enableConnectionPooling = true;
   int _networkTimeout = 30; // seconds
   bool _enableLowPowerMode = false;
-  
+
   // Advanced preferences
   String _defaultShell = '/bin/bash';
   String _terminalEmulator = 'xterm-256color';
@@ -55,19 +55,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int _scrollbackLines = 1000;
   String _fontFamily = 'Courier';
   double _fontSize = 14.0;
-  
+
   // Backup and restore
   bool _autoBackup = false;
   int _backupFrequency = 7; // days
   String _backupLocation = 'local'; // local, cloud
-  
+
   // Connection defaults
   int _defaultSSHPort = 22;
   int _defaultVNCPort = 5900;
   int _defaultRDPPort = 3389;
   bool _enableCompression = true;
   String _compressionLevel = 'medium'; // low, medium, high
-  
+
   // UI enhancements
   bool _showConnectionIndicator = true;
   bool _enableAnimations = true;
@@ -105,43 +105,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _vncDefaultScaling = prefs.getString('vnc_default_scaling') ?? 'fit';
       _adbProgressNotifications =
           prefs.getBool('adb_progress_notifications') ?? true;
-      
+
       // Security settings
       _requireAuthentication = prefs.getBool('require_authentication') ?? false;
-      _authenticationMethod = prefs.getString('authentication_method') ?? 'biometric';
+      _authenticationMethod =
+          prefs.getString('authentication_method') ?? 'biometric';
       _sessionTimeout = prefs.getInt('session_timeout') ?? 30;
       _hideRecentApps = prefs.getBool('hide_recent_apps') ?? false;
       _enableAppLock = prefs.getBool('enable_app_lock') ?? false;
-      
+
       // Performance settings
-      _enableHardwareAcceleration = prefs.getBool('enable_hardware_acceleration') ?? true;
-      _maxConcurrentConnections = prefs.getInt('max_concurrent_connections') ?? 5;
-      _enableConnectionPooling = prefs.getBool('enable_connection_pooling') ?? true;
+      _enableHardwareAcceleration =
+          prefs.getBool('enable_hardware_acceleration') ?? true;
+      _maxConcurrentConnections =
+          prefs.getInt('max_concurrent_connections') ?? 5;
+      _enableConnectionPooling =
+          prefs.getBool('enable_connection_pooling') ?? true;
       _networkTimeout = prefs.getInt('network_timeout') ?? 30;
       _enableLowPowerMode = prefs.getBool('enable_low_power_mode') ?? false;
-      
+
       // Advanced preferences
       _defaultShell = prefs.getString('default_shell') ?? '/bin/bash';
-      _terminalEmulator = prefs.getString('terminal_emulator') ?? 'xterm-256color';
+      _terminalEmulator =
+          prefs.getString('terminal_emulator') ?? 'xterm-256color';
       _enableUTF8 = prefs.getBool('enable_utf8') ?? true;
       _scrollbackLines = prefs.getInt('scrollback_lines') ?? 1000;
       _fontFamily = prefs.getString('font_family') ?? 'Courier';
       _fontSize = prefs.getDouble('font_size') ?? 14.0;
-      
+
       // Backup and restore
       _autoBackup = prefs.getBool('auto_backup') ?? false;
       _backupFrequency = prefs.getInt('backup_frequency') ?? 7;
       _backupLocation = prefs.getString('backup_location') ?? 'local';
-      
+
       // Connection defaults
       _defaultSSHPort = prefs.getInt('default_ssh_port') ?? 22;
       _defaultVNCPort = prefs.getInt('default_vnc_port') ?? 5900;
       _defaultRDPPort = prefs.getInt('default_rdp_port') ?? 3389;
       _enableCompression = prefs.getBool('enable_compression') ?? true;
       _compressionLevel = prefs.getString('compression_level') ?? 'medium';
-      
+
       // UI enhancements
-      _showConnectionIndicator = prefs.getBool('show_connection_indicator') ?? true;
+      _showConnectionIndicator =
+          prefs.getBool('show_connection_indicator') ?? true;
       _enableAnimations = prefs.getBool('enable_animations') ?? true;
       _compactMode = prefs.getBool('compact_mode') ?? false;
       _showTooltips = prefs.getBool('show_tooltips') ?? true;
@@ -167,21 +173,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setString('vnc_default_scaling', _vncDefaultScaling);
     await prefs.setBool(
         'adb_progress_notifications', _adbProgressNotifications);
-    
+
     // Save security settings
     await prefs.setBool('require_authentication', _requireAuthentication);
     await prefs.setString('authentication_method', _authenticationMethod);
     await prefs.setInt('session_timeout', _sessionTimeout);
     await prefs.setBool('hide_recent_apps', _hideRecentApps);
     await prefs.setBool('enable_app_lock', _enableAppLock);
-    
+
     // Save performance settings
-    await prefs.setBool('enable_hardware_acceleration', _enableHardwareAcceleration);
+    await prefs.setBool(
+        'enable_hardware_acceleration', _enableHardwareAcceleration);
     await prefs.setInt('max_concurrent_connections', _maxConcurrentConnections);
     await prefs.setBool('enable_connection_pooling', _enableConnectionPooling);
     await prefs.setInt('network_timeout', _networkTimeout);
     await prefs.setBool('enable_low_power_mode', _enableLowPowerMode);
-    
+
     // Save advanced preferences
     await prefs.setString('default_shell', _defaultShell);
     await prefs.setString('terminal_emulator', _terminalEmulator);
@@ -189,19 +196,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setInt('scrollback_lines', _scrollbackLines);
     await prefs.setString('font_family', _fontFamily);
     await prefs.setDouble('font_size', _fontSize);
-    
+
     // Save backup and restore
     await prefs.setBool('auto_backup', _autoBackup);
     await prefs.setInt('backup_frequency', _backupFrequency);
     await prefs.setString('backup_location', _backupLocation);
-    
+
     // Save connection defaults
     await prefs.setInt('default_ssh_port', _defaultSSHPort);
     await prefs.setInt('default_vnc_port', _defaultVNCPort);
     await prefs.setInt('default_rdp_port', _defaultRDPPort);
     await prefs.setBool('enable_compression', _enableCompression);
     await prefs.setString('compression_level', _compressionLevel);
-    
+
     // Save UI enhancements
     await prefs.setBool('show_connection_indicator', _showConnectionIndicator);
     await prefs.setBool('enable_animations', _enableAnimations);
@@ -432,24 +439,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _showSystemInfo() async {
     String systemInfoText = 'System Information\n' + '=' * 50 + '\n';
-    
+
     try {
       // App information - basic info without package_info_plus
       systemInfoText += 'App Information:\n';
       systemInfoText += 'Name: LitterBox\n';
       systemInfoText += 'Version: 1.0.0\n';
       systemInfoText += 'Built with Flutter\n\n';
-      
+
       // Platform information
       systemInfoText += 'Platform Information:\n';
       systemInfoText += 'Operating System: ${Platform.operatingSystem}\n';
-      systemInfoText += 'Operating System Version: ${Platform.operatingSystemVersion}\n';
+      systemInfoText +=
+          'Operating System Version: ${Platform.operatingSystemVersion}\n';
       systemInfoText += 'Locale: ${Platform.localeName}\n';
-      systemInfoText += 'Number of Processors: ${Platform.numberOfProcessors}\n';
+      systemInfoText +=
+          'Number of Processors: ${Platform.numberOfProcessors}\n';
       systemInfoText += 'Path Separator: ${Platform.pathSeparator}\n';
       systemInfoText += 'Executable: ${Platform.resolvedExecutable}\n';
       systemInfoText += 'Script: ${Platform.script}\n\n';
-      
+
       // Environment variables (selective)
       systemInfoText += 'Environment:\n';
       final env = Platform.environment;
@@ -459,12 +468,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
       }
       systemInfoText += '\n';
-      
+
       // Flutter/Dart version info
       final dartVersion = Platform.version;
       systemInfoText += 'Dart Information:\n';
       systemInfoText += 'Dart Version: $dartVersion\n\n';
-      
+
       // Settings summary
       systemInfoText += 'App Settings Summary:\n';
       systemInfoText += 'Theme Mode: ${_themeMode.name}\n';
@@ -475,7 +484,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       systemInfoText += 'Error getting system information: $e\n';
     }
-    
+
     if (mounted) {
       showDialog(
         context: context,
@@ -496,7 +505,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: systemInfoText));
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('System info copied to clipboard')),
+                  const SnackBar(
+                      content: Text('System info copied to clipboard')),
                 );
               },
               child: const Text('Copy'),
@@ -527,54 +537,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     await Future.delayed(const Duration(seconds: 2));
-    
+
     final diagnosticResults = StringBuffer();
     diagnosticResults.writeln('LitterBox Diagnostic Report');
     diagnosticResults.writeln('Generated: ${DateTime.now()}');
     diagnosticResults.writeln('=' * 50);
-    
+
     // Check SharedPreferences
     try {
       final prefs = await SharedPreferences.getInstance();
       final keys = prefs.getKeys();
-      diagnosticResults.writeln('✓ SharedPreferences: ${keys.length} keys stored');
+      diagnosticResults
+          .writeln('✓ SharedPreferences: ${keys.length} keys stored');
     } catch (e) {
       diagnosticResults.writeln('✗ SharedPreferences error: $e');
     }
-    
+
     // Check network connectivity (basic)
     try {
-      final socket = await Socket.connect('8.8.8.8', 53, timeout: Duration(seconds: 5));
+      final socket =
+          await Socket.connect('8.8.8.8', 53, timeout: Duration(seconds: 5));
       socket.destroy();
       diagnosticResults.writeln('✓ Network connectivity: OK');
     } catch (e) {
       diagnosticResults.writeln('✗ Network connectivity: Failed ($e)');
     }
-    
+
     // Check available storage
     try {
       final tempDir = Directory.systemTemp;
       final exists = await tempDir.exists();
-      diagnosticResults.writeln('✓ System temp directory access: ${exists ? 'OK' : 'Failed'}');
+      diagnosticResults.writeln(
+          '✓ System temp directory access: ${exists ? 'OK' : 'Failed'}');
     } catch (e) {
       diagnosticResults.writeln('✗ Storage access error: $e');
     }
-    
+
     // Check platform capabilities
     diagnosticResults.writeln('\nPlatform Capabilities:');
     diagnosticResults.writeln('- OS: ${Platform.operatingSystem}');
     diagnosticResults.writeln('- Version: ${Platform.operatingSystemVersion}');
     diagnosticResults.writeln('- Processors: ${Platform.numberOfProcessors}');
     diagnosticResults.writeln('- Locale: ${Platform.localeName}');
-    
+
     // Check app settings integrity
     diagnosticResults.writeln('\nSettings Integrity:');
     diagnosticResults.writeln('- Theme configured: ✓');
-    diagnosticResults.writeln('- Text scale valid: ${_textScale > 0 && _textScale <= 2 ? '✓' : '✗'}');
-    diagnosticResults.writeln('- Language set: ${_currentLang.isNotEmpty ? '✓' : '✗'}');
-    
+    diagnosticResults.writeln(
+        '- Text scale valid: ${_textScale > 0 && _textScale <= 2 ? '✓' : '✗'}');
+    diagnosticResults
+        .writeln('- Language set: ${_currentLang.isNotEmpty ? '✓' : '✗'}');
+
     Navigator.pop(context); // Close progress dialog
-    
+
     if (mounted) {
       showDialog(
         context: context,
@@ -593,9 +608,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           actions: [
             TextButton(
               onPressed: () {
-                Clipboard.setData(ClipboardData(text: diagnosticResults.toString()));
+                Clipboard.setData(
+                    ClipboardData(text: diagnosticResults.toString()));
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Diagnostic report copied to clipboard')),
+                  const SnackBar(
+                      content: Text('Diagnostic report copied to clipboard')),
                 );
               },
               child: const Text('Copy Report'),
@@ -615,20 +632,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final prefs = await SharedPreferences.getInstance();
       final keys = prefs.getKeys();
       final backup = <String, dynamic>{};
-      
+
       for (final key in keys) {
         backup[key] = prefs.get(key);
       }
-      
+
       final backupData = {
         'timestamp': DateTime.now().toIso8601String(),
         'app_version': '1.0.0',
         'platform': Platform.operatingSystem,
         'settings': backup,
       };
-      
+
       final jsonString = const JsonEncoder.withIndent('  ').convert(backupData);
-      
+
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -645,7 +662,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: SingleChildScrollView(
                     child: SelectableText(
                       jsonString,
-                      style: const TextStyle(fontSize: 10, fontFamily: 'monospace'),
+                      style: const TextStyle(
+                          fontSize: 10, fontFamily: 'monospace'),
                     ),
                   ),
                 ),
@@ -712,12 +730,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ElevatedButton(
             onPressed: () async {
               try {
-                final backupData = jsonDecode(controller.text) as Map<String, dynamic>;
+                final backupData =
+                    jsonDecode(controller.text) as Map<String, dynamic>;
                 final settings = backupData['settings'] as Map<String, dynamic>;
-                
+
                 final prefs = await SharedPreferences.getInstance();
                 await prefs.clear();
-                
+
                 for (final entry in settings.entries) {
                   final value = entry.value;
                   if (value is String) {
@@ -732,12 +751,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     await prefs.setStringList(entry.key, value);
                   }
                 }
-                
+
                 Navigator.pop(ctx);
                 _load(); // Reload settings
-                
+
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Settings restored successfully')),
+                  const SnackBar(
+                      content: Text('Settings restored successfully')),
                 );
               } catch (e) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -977,7 +997,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _pickDefaultShell() {
-    final shells = ['/bin/bash', '/bin/sh', '/bin/zsh', '/bin/fish', '/bin/csh'];
+    final shells = [
+      '/bin/bash',
+      '/bin/sh',
+      '/bin/zsh',
+      '/bin/fish',
+      '/bin/csh'
+    ];
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1418,19 +1444,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
             leading: const Icon(Icons.terminal),
             title: const Text('SSH Port'),
             subtitle: Text('$_defaultSSHPort'),
-            onTap: () => _pickPort('SSH', _defaultSSHPort, (v) => _defaultSSHPort = v),
+            onTap: () =>
+                _pickPort('SSH', _defaultSSHPort, (v) => _defaultSSHPort = v),
           ),
           ListTile(
             leading: const Icon(Icons.desktop_windows),
             title: const Text('VNC Port'),
             subtitle: Text('$_defaultVNCPort'),
-            onTap: () => _pickPort('VNC', _defaultVNCPort, (v) => _defaultVNCPort = v),
+            onTap: () =>
+                _pickPort('VNC', _defaultVNCPort, (v) => _defaultVNCPort = v),
           ),
           ListTile(
             leading: const Icon(Icons.computer),
             title: const Text('RDP Port'),
             subtitle: Text('$_defaultRDPPort'),
-            onTap: () => _pickPort('RDP', _defaultRDPPort, (v) => _defaultRDPPort = v),
+            onTap: () =>
+                _pickPort('RDP', _defaultRDPPort, (v) => _defaultRDPPort = v),
           ),
           SwitchListTile(
             secondary: const Icon(Icons.compress),

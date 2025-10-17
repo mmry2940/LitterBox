@@ -36,7 +36,8 @@ class _ESP32ScanTestDialogState extends State<ESP32ScanTestDialog> {
       final scanResults = await _esp32Service.scanLANDevices();
       setState(() {
         _scanResults = scanResults;
-        _networkInfo = 'Network scan completed. Found ${scanResults.length} potential ESP32 devices.';
+        _networkInfo =
+            'Network scan completed. Found ${scanResults.length} potential ESP32 devices.';
       });
     } catch (e) {
       setState(() {
@@ -77,34 +78,36 @@ class _ESP32ScanTestDialogState extends State<ESP32ScanTestDialog> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Network Info:', style: Theme.of(context).textTheme.titleMedium),
+            Text('Network Info:',
+                style: Theme.of(context).textTheme.titleMedium),
             Text(_networkInfo),
             const SizedBox(height: 16),
             Row(
               children: [
                 ElevatedButton(
                   onPressed: _isScanning ? null : _startScan,
-                  child: _isScanning 
-                    ? const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          SizedBox(width: 8),
-                          Text('Scanning...'),
-                        ],
-                      )
-                    : const Text('Start Scan'),
+                  child: _isScanning
+                      ? const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            SizedBox(width: 8),
+                            Text('Scanning...'),
+                          ],
+                        )
+                      : const Text('Start Scan'),
                 ),
                 const SizedBox(width: 8),
                 Text('Found: ${_scanResults.length}'),
               ],
             ),
             const SizedBox(height: 16),
-            Text('Scan Results:', style: Theme.of(context).textTheme.titleMedium),
+            Text('Scan Results:',
+                style: Theme.of(context).textTheme.titleMedium),
             Expanded(
               child: _scanResults.isEmpty
                   ? const Center(child: Text('No devices found'))
