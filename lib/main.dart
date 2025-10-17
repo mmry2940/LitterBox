@@ -1,36 +1,191 @@
+import 'dart:async';
+import 'dart:math';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
-import 'screens/home_screen.dart';
+import 'package:flutter_breakpoints/flutter_breakpoints.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:network_tools/network_tools.dart';
+import 'dart:isolate';
 import 'screens/settings_screen.dart';
+import 'screens/home_screen.dart';
+import 'screens/adb_screen_refactored.dart';
+import 'network_init.dart';
 
-final ValueNotifier<ThemeMode> themeModeNotifier = ValueNotifier(ThemeMode.dark);
+final ValueNotifier<ThemeMode> themeModeNotifier =
+    ValueNotifier(ThemeMode.dark);
+final ValueNotifier<Color> colorSeedNotifier =
+    ValueNotifier<Color>(Colors.deepPurple);
+final ValueNotifier<double> textScaleNotifier = ValueNotifier<double>(1.0);
 
-void main() {
-  runApp(const MyApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Load persisted appearance settings
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final themeIndex = prefs.getInt('app_theme_mode');
+    if (themeIndex != null &&
+        themeIndex >= 0 &&
+        themeIndex < ThemeMode.values.length) {
+      themeModeNotifier.value = ThemeMode.values[themeIndex];
+    }
+    final seedValue = prefs.getInt('app_color_seed');
+    if (seedValue != null) {
+      colorSeedNotifier.value = Color(seedValue);
+    }
+    final ts = prefs.getDouble('app_text_scale');
+    if (ts != null) {
+      textScaleNotifier.value = ts.clamp(.8, 1.6);
+    }
+  } catch (_) {}
+
+  // Defer network tools configuration to reduce first-frame jank
+  unawaited(_deferredInit());
+
+  // Determine the splash image to use
+  final splashImages = [
+    'assets/splash_1.jpg',
+    'assets/splash_2.jpg',
+    'assets/splash_3.jpg',
+  ];
+  final random = Random();
+  final splashImage = splashImages[random.nextInt(splashImages.length)];
+
+  runApp(MyApp(splashImage: splashImage));
+}
+
+Future<void> _deferredInit() async {
+  try {
+    // Ensure first frame rendered before heavy work
+    await Future.delayed(const Duration(milliseconds: 10));
+    final dir = await getApplicationDocumentsDirectory();
+    await _configureNetworkToolsIsolate(dir.path);
+    NetworkToolsInitializer.completeSuccess();
+  } catch (e) {
+    try {
+      await _configureNetworkToolsIsolate('');
+      NetworkToolsInitializer.completeSuccess();
+    } catch (_) {}
+    print('Deferred network tools init fallback: $e');
+    if (!NetworkToolsInitializer.isDone) {
+      NetworkToolsInitializer.completeFailure(e);
+    }
+  }
+}
+
+Future<void> _configureNetworkToolsIsolate(String path) async {
+  try {
+    await Isolate.run(() async {
+      await configureNetworkTools(path, enableDebugging: true);
+    });
+  } catch (_) {
+    // Fallback without isolate if not supported
+    await configureNetworkTools(path, enableDebugging: true);
+  }
+  print('Network tools configured (deferred) with path: $path');
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final String? splashImage;
+
+  const MyApp({super.key, this.splashImage});
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: themeModeNotifier,
       builder: (context, mode, _) {
-        return MaterialApp(
-          title: 'SSHuttle',
-          theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple, brightness: Brightness.light),
-          ),
-          darkTheme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple, brightness: Brightness.dark),
-          ),
-          themeMode: mode,
-          home: const HomeScreen(),
-          routes: {'/settings': (context) => const SettingsScreen()},
+        return ValueListenableBuilder<Color>(
+          valueListenable: colorSeedNotifier,
+          builder: (context, seed, _) {
+            return ValueListenableBuilder<double>(
+              valueListenable: textScaleNotifier,
+              builder: (context, scale, _) {
+                return FlutterBreakpointProvider.builder(
+                  context: context,
+                  child: MaterialApp(
+                    title: 'LitterBox',
+                    theme: ThemeData(
+                      colorScheme: ColorScheme.fromSeed(
+                          seedColor: seed, brightness: Brightness.light),
+                      useMaterial3: true,
+                    ),
+                    darkTheme: ThemeData(
+                      colorScheme: ColorScheme.fromSeed(
+                          seedColor: seed, brightness: Brightness.dark),
+                      useMaterial3: true,
+                    ),
+                    themeMode: mode,
+                    builder: (context, child) {
+                      return MediaQuery(
+                        data: MediaQuery.of(context)
+                            .copyWith(textScaler: TextScaler.linear(scale)),
+                        child: child ?? const SizedBox.shrink(),
+                      );
+                    },
+                    home: SplashScreen(
+                        splashImage: splashImage ?? 'assets/splash_1.jpg'),
+                    routes: {
+                      '/settings': (context) => const SettingsScreen(),
+                      '/home': (context) => const HomeScreen(),
+                    },
+                  ),
+                );
+              },
+            );
+          },
         );
       },
     );
   }
 }
 
-// ...existing code...
+class SplashScreen extends StatelessWidget {
+  final String? splashImage;
+
+  const SplashScreen({super.key, this.splashImage});
+
+  @override
+  Widget build(BuildContext context) {
+    // Navigate to the main screen after a delay
+    Timer(const Duration(seconds: 3), () async {
+      String route = '/home';
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final startup = prefs.getString('startup_page');
+        if (startup == 'android') {
+          route = '/android';
+        } else if (startup == 'settings') route = '/settings';
+      } catch (_) {}
+      if (!context.mounted) return;
+      // Use named routes when possible else direct widget
+      if (route == '/android') {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const AdbRefactoredScreen()),
+        );
+      } else if (route == '/settings') {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const SettingsScreen()),
+        );
+      } else {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+        );
+      }
+    });
+
+    return Scaffold(
+      body: Center(
+        child: Image.asset(splashImage ?? 'assets/splash_1.jpg'),
+      ),
+    );
+  }
+}
+
+class MainScreen extends StatelessWidget {
+  const MainScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const SettingsScreen();
+  }
+}

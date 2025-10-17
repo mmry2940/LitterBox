@@ -1,5 +1,5 @@
-name: sshuttle_flutter
-description: "A new Flutter project."
+name: litterbox
+description: "SSH client and tools, Android tools(adb), random tools littered inside this box!."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.8.1
+  sdk: ">=3.6.0 <4.0.0"
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -31,33 +31,47 @@ dependencies:
   flutter:
     sdk: flutter
   shared_preferences: ^2.2.2
+  xterm: ^4.0.0
+  syncfusion_flutter_gauges: ^31.1.19
+  system_info_plus: ^0.0.6
+  path_provider: ^2.1.4
+  adb: ^0.6.0
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   dartssh2: ^2.13.0
+  flutter_breakpoints: ^1.0.0
+  network_tools: ^6.0.2
+  network_info_plus: ^7.0.0
+  webview_flutter: ^4.4.2
+  crypto: ^3.0.3
+  pointycastle: ^3.7.3
+  file_picker: ^8.0.3
+  provider: ^6.0.5
+  multicast_dns: ^0.3.2
+  flutter_adb: ^0.1.1
+  flutter_foreground_task: ^9.1.0
+
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
-  # The "flutter_lints" package below contains a set of recommended lints to
-  # encourage good coding practices. The lint set provided by the package is
-  # activated in the `analysis_options.yaml` file located at the root of your
-  # package. See that file for information about deactivating specific lint
-  # rules and activating additional ones.
-  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.0
+  flutter_lints: ^6.0.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
 # The following section is specific to Flutter packages.
-flutter:
 
-  # The following line ensures that the Material Icons font is
-  # included with your application, so that you can use the icons in
-  # the material Icons class.
+flutter:
   uses-material-design: true
+  assets:
+    - assets/splash_1.jpg
+    - assets/splash_2.jpg
+    - assets/splash_3.jpg
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -89,3 +103,21 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+flutter_icons:
+  android: true
+  ios: true
+  web:
+    generate: true
+    image_path: "icon.png"
+  image_path: "icon.png"
+  adaptive_icon_background: "#2196F3"
+  adaptive_icon_foreground: "icon.png"
+  min_sdk_android: 21
+
+flutter_native_splash:
+  color: "#ffffff"
+  image: assets/splash_1.jpg
+  android: true
+  ios: true
+  web: true

@@ -6,11 +6,16 @@ import 'device_files_screen.dart';
 import 'device_packages_screen.dart';
 import 'device_processes_screen.dart';
 import 'device_misc_screen.dart';
+import '../models/device_status.dart';
+
+typedef AddDeviceCallback = void Function(String ip);
 
 class DeviceScreen extends StatefulWidget {
-  final Map<String, String> device;
+  final Map<String, dynamic> device;
   final int initialTab;
-  const DeviceScreen({super.key, required this.device, this.initialTab = 0});
+  final AddDeviceCallback? onAddDevice;
+  const DeviceScreen(
+      {super.key, required this.device, this.initialTab = 0, this.onAddDevice});
 
   @override
   State<DeviceScreen> createState() => _DeviceScreenState();
@@ -22,6 +27,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
   String? _sshError;
   bool _connecting = true;
   late String _password;
+  DateTime? _connectionTime;
 
   @override
   void initState() {
@@ -31,9 +37,32 @@ class _DeviceScreenState extends State<DeviceScreen> {
     _connectSSH();
   }
 
+  DeviceStatus _getCurrentDeviceStatus() {
+    // Determine status based on SSH connection state
+    final isOnline = _sshClient != null && !_connecting && _sshError == null;
+
+    // Calculate approximate latency based on connection time
+    int? pingMs;
+    if (isOnline && _connectionTime != null) {
+      // Use connection time as a rough latency estimate
+      final connectionDuration = DateTime.now().difference(_connectionTime!);
+      if (connectionDuration.inSeconds < 10) {
+        // If connected recently, assume good latency
+        pingMs = 50;
+      }
+    }
+
+    return DeviceStatus(
+      isOnline: isOnline,
+      pingMs: pingMs,
+      lastChecked: DateTime.now(),
+    );
+  }
+
   Future<void> _connectSSH() async {
-  if (!mounted) return;
-  setState(() {
+    if (!mounted) return;
+    final startTime = DateTime.now();
+    setState(() {
       _connecting = true;
       _sshError = null;
     });
@@ -47,16 +76,20 @@ class _DeviceScreenState extends State<DeviceScreen> {
         username: widget.device['username']!,
         onPasswordRequest: () => _password,
       );
-  if (!mounted) return;
-  setState(() {
+      if (!mounted) return;
+      setState(() {
         _sshClient = client;
         _connecting = false;
+        _connectionTime = startTime;
+        _miscScreenReloadKey++; // Refresh misc screen to show updated status
       });
     } catch (e) {
-  if (!mounted) return;
-  setState(() {
+      if (!mounted) return;
+      setState(() {
         _sshError = e.toString();
         _connecting = false;
+        _connectionTime = null;
+        _miscScreenReloadKey++; // Refresh misc screen to show updated status
       });
     }
   }
@@ -65,46 +98,51 @@ class _DeviceScreenState extends State<DeviceScreen> {
   final int _filesScreenReloadKey = 0;
   final int _processesScreenReloadKey = 0;
   final int _packagesScreenReloadKey = 0;
+  int _miscScreenReloadKey = 0;
 
   List<Widget> get _pages => [
-    DeviceInfoScreen(
-      key: ValueKey(_infoScreenReloadKey),
-      sshClient: _sshClient,
-      error: _sshError,
-      loading: _connecting,
-    ),
-    DeviceTerminalScreen(
-      sshClient: _sshClient,
-      error: _sshError,
-      loading: _connecting,
-    ),
-    DeviceFilesScreen(
-      key: ValueKey(_filesScreenReloadKey),
-      sshClient: _sshClient,
-      error: _sshError,
-      loading: _connecting,
-    ),
-    DeviceProcessesScreen(
-      key: ValueKey(_processesScreenReloadKey),
-      sshClient: _sshClient,
-      error: _sshError,
-      loading: _connecting,
-    ),
-    DevicePackagesScreen(
-      key: ValueKey(_packagesScreenReloadKey),
-      sshClient: _sshClient,
-      error: _sshError,
-      loading: _connecting,
-    ),
-    DeviceMiscScreen(
-      onCardTap: (tab) {
-        if (!mounted) return;
-        setState(() {
-          _selectedIndex = tab;
-        });
-      },
-    ),
-  ];
+        DeviceInfoScreen(
+          key: ValueKey(_infoScreenReloadKey),
+          sshClient: _sshClient,
+          error: _sshError,
+          loading: _connecting,
+        ),
+        DeviceTerminalScreen(
+          sshClient: _sshClient,
+          error: _sshError,
+          loading: _connecting,
+        ),
+        DeviceFilesScreen(
+          key: ValueKey(_filesScreenReloadKey),
+          sshClient: _sshClient,
+          error: _sshError,
+          loading: _connecting,
+        ),
+        DeviceProcessesScreen(
+          key: ValueKey(_processesScreenReloadKey),
+          sshClient: _sshClient,
+          error: _sshError,
+          loading: _connecting,
+        ),
+        DevicePackagesScreen(
+          key: ValueKey(_packagesScreenReloadKey),
+          sshClient: _sshClient,
+          error: _sshError,
+          loading: _connecting,
+        ),
+        DeviceMiscScreen(
+          key: ValueKey(_miscScreenReloadKey), // Add key for refresh capability
+          device: widget.device, // Pass the required device parameter
+          sshClient: _sshClient, // Pass SSH client for metadata fetching
+          deviceStatus: _getCurrentDeviceStatus(), // Pass actual device status
+          onCardTap: (tab) {
+            if (!mounted) return;
+            setState(() {
+              _selectedIndex = tab;
+            });
+          },
+        ),
+      ];
 
   void _onItemTapped(int index) {
     if (!mounted) return;
@@ -115,16 +153,21 @@ class _DeviceScreenState extends State<DeviceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        if (_selectedIndex != 5) {
-          if (!mounted) return false;
-          setState(() {
-            _selectedIndex = 5;
-          });
-          return false;
+    return PopScope(
+      canPop:
+          _selectedIndex == 5, // Only allow pop from Misc tab (overview cards)
+      onPopInvoked: (bool didPop) {
+        if (didPop) {
+          // Clean up SSH connection when popping
+          _sshClient?.close();
+        } else {
+          // If not popping, go back to Misc tab (overview cards)
+          if (_selectedIndex != 5) {
+            setState(() {
+              _selectedIndex = 5; // Navigate to Misc tab
+            });
+          }
         }
-        return true;
       },
       child: Scaffold(
         appBar: AppBar(
@@ -156,6 +199,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
           currentIndex: _selectedIndex,
           onTap: _onItemTapped,
         ),
+        // No floatingActionButton here; add device button is only on HomeScreen
       ),
     );
   }
