@@ -22,7 +22,8 @@ class AdbRefactoredScreen extends StatefulWidget {
   State<AdbRefactoredScreen> createState() => _AdbRefactoredScreenState();
 }
 
-class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerProviderStateMixin {
+class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
+    with TickerProviderStateMixin {
   // Favorites for connections
   Set<String> _favoriteConnections = {};
   String _connectionFilter = 'All';
@@ -48,7 +49,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
   final _cmd = TextEditingController();
   final _consoleScroll = ScrollController();
   final List<String> _localBuffer = [];
-  
+
   // Shell output buffer for flutter_adb
   final List<String> _shellOutputBuffer = [];
   StreamSubscription<String>? _shellOutputSub;
@@ -89,7 +90,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
   List<AppInfo> _systemApps = [];
   bool _loadingApps = false;
   String _appSearchQuery = '';
-  final String _selectedAppFilter = 'All'; // All, User, System, Enabled, Disabled
+  final String _selectedAppFilter =
+      'All'; // All, User, System, Enabled, Disabled
 
   // Sorting options
   String _deviceSortOption = 'Alphabetical';
@@ -101,23 +103,22 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
   @override
   void initState() {
     super.initState();
-    
+
     // Use the shared ADB manager to ensure connection reuse
     _adb = SharedADBManager.instance.getSharedClient();
-    
+
     _adb.output.listen((line) {
       if (_localBuffer.length > 1500) _localBuffer.removeRange(0, 800);
       _localBuffer.add(line);
       _autoScroll();
     });
-    
+
     // Listen for connection state changes to auto-start logcat and shell
     _adb.connectionState.listen((state) {
       if (state == ADBConnectionState.connected) {
         // Small delay to ensure connection is fully established
         Future.delayed(const Duration(milliseconds: 500), () async {
           if (_adb.currentState == ADBConnectionState.connected) {
-            
             // Auto-start logcat if enabled
             if (_autoStartLogcat && !_adb.logcatActive) {
               await _adb.startLogcat();
@@ -127,14 +128,15 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                 setState(() => _selectedIndex = 3); // Logcat tab index
               }
             }
-            
+
             // Auto-open shell for Flutter ADB backend
             if (_autoOpenShell && _adb.backend is FlutterAdbBackend) {
               await _openFlutterAdbShell();
               if (mounted) {
                 setState(() {});
                 // Auto-switch to terminal tab when shell opens
-                if (!_autoStartLogcat) { // Only switch if logcat isn't taking priority
+                if (!_autoStartLogcat) {
+                  // Only switch if logcat isn't taking priority
                   setState(() => _selectedIndex = 1); // Terminal tab index
                 }
               }
@@ -143,7 +145,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         });
       }
     });
-    
+
     _loadPrefs();
   }
 
@@ -207,7 +209,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('adb_devices',
         _savedDevices.map((d) => jsonEncode(d.toJson())).toList());
-  await prefs.setStringList('favorite_connections', _favoriteConnections.toList());
+    await prefs.setStringList(
+        'favorite_connections', _favoriteConnections.toList());
     if (mounted) setState(() {});
     if (mounted) {
       ScaffoldMessenger.of(context)
@@ -229,7 +232,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
   Future<void> _connectToDevice(SavedADBDevice d) async {
     setState(() => _loadingConnect = true);
     bool ok = false;
-    
+
     switch (d.connectionType) {
       case ADBConnectionType.wifi:
       case ADBConnectionType.custom:
@@ -243,7 +246,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         ok = await _adb.connectWifi(d.host, d.port);
         break;
     }
-    
+
     // Update last used timestamp
     if (ok) {
       final index = _savedDevices.indexWhere((device) => device.name == d.name);
@@ -258,15 +261,19 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
           lastUsed: DateTime.now(),
         );
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setStringList('adb_devices',
-            _savedDevices.map((device) => jsonEncode(device.toJson())).toList());
+        await prefs.setStringList(
+            'adb_devices',
+            _savedDevices
+                .map((device) => jsonEncode(device.toJson()))
+                .toList());
       }
     }
-    
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(ok ? 'Connected to ${d.name}' : 'Failed to connect to ${d.name}'),
+          content: Text(
+              ok ? 'Connected to ${d.name}' : 'Failed to connect to ${d.name}'),
           backgroundColor: ok ? Colors.green : Colors.red,
         ),
       );
@@ -297,7 +304,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         ],
       ),
     );
-    
+
     if (confirm == true) {
       setState(() {
         _savedDevices.removeWhere((device) => device.name == d.name);
@@ -306,8 +313,9 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList('adb_devices',
           _savedDevices.map((device) => jsonEncode(device.toJson())).toList());
-      await prefs.setStringList('favorite_connections', _favoriteConnections.toList());
-      
+      await prefs.setStringList(
+          'favorite_connections', _favoriteConnections.toList());
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Deleted ${d.name}')),
@@ -318,7 +326,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
 
   Future<void> _saveFavorites() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('favorite_connections', _favoriteConnections.toList());
+    await prefs.setStringList(
+        'favorite_connections', _favoriteConnections.toList());
   }
 
   void _showConnectionDialog() {
@@ -327,7 +336,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
       builder: (context) => AdbConnectionWizard(
         onConnect: (host, port, type, label) async {
           setState(() => _loadingConnect = true);
-          
+
           bool success = false;
           if (type == ADBConnectionType.usb) {
             success = await _adb.connectUSB();
@@ -335,17 +344,19 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
             // Handle pairing
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Pairing not yet fully implemented')),
+                const SnackBar(
+                    content: Text('Pairing not yet fully implemented')),
               );
             }
           } else {
             success = await _adb.connectWifi(host, port);
           }
-          
+
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(success ? 'Connected successfully' : 'Connection failed'),
+                content: Text(
+                    success ? 'Connected successfully' : 'Connection failed'),
                 backgroundColor: success ? Colors.green : Colors.red,
               ),
             );
@@ -361,8 +372,9 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
           final label = result['label'] as String?;
           final host = result['host'] as String? ?? '';
           final port = result['port'] as int? ?? 5555;
-          final type = result['type'] as ADBConnectionType? ?? ADBConnectionType.wifi;
-          
+          final type =
+              result['type'] as ADBConnectionType? ?? ADBConnectionType.wifi;
+
           final device = SavedADBDevice(
             name: label ?? '$host:$port',
             host: host,
@@ -484,12 +496,14 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                 );
 
                 setState(() {
-                  final index = _savedDevices.indexWhere((device) => device.name == d.name);
+                  final index = _savedDevices
+                      .indexWhere((device) => device.name == d.name);
                   if (index != -1) {
                     _savedDevices[index] = updatedDevice;
-                    
+
                     // Update favorites if name changed
-                    if (d.name != updatedDevice.name && _favoriteConnections.contains(d.name)) {
+                    if (d.name != updatedDevice.name &&
+                        _favoriteConnections.contains(d.name)) {
                       _favoriteConnections.remove(d.name);
                       _favoriteConnections.add(updatedDevice.name);
                     }
@@ -497,8 +511,11 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                 });
 
                 final prefs = await SharedPreferences.getInstance();
-                await prefs.setStringList('adb_devices',
-                    _savedDevices.map((device) => jsonEncode(device.toJson())).toList());
+                await prefs.setStringList(
+                    'adb_devices',
+                    _savedDevices
+                        .map((device) => jsonEncode(device.toJson()))
+                        .toList());
                 await prefs.setStringList(
                     'favorite_connections', _favoriteConnections.toList());
 
@@ -517,7 +534,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
     );
   }
 
-
   void _autoScroll() {
     if (!_consoleScroll.hasClients) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -534,7 +550,9 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
     if (_adb.backend is FlutterAdbBackend) {
       return _shellOutputBuffer.isNotEmpty
           ? List.unmodifiable(_shellOutputBuffer)
-          : ['Flutter ADB shell ready. Type commands to interact with the device.'];
+          : [
+              'Flutter ADB shell ready. Type commands to interact with the device.'
+            ];
     } else {
       // For non-flutter_adb backends, show regular output
       return _bufferSnapshot();
@@ -569,104 +587,101 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
       builder: (context, constraints) {
         final isWideScreen = constraints.maxWidth >= 800;
 
-          return Scaffold(
-            appBar: AppBar(
-              title: const Text('ADB Manager'),
-              actions: [
-                PopupMenuButton<String>(
-                  onSelected: (v) async {
-                    switch (v) {
-                      case 'output_mode':
-                        setState(() {
-                          _adb.setOutputMode(
-                              _adb.outputMode == ADBOutputMode.raw
-                                  ? ADBOutputMode.verbose
-                                  : ADBOutputMode.raw);
-                        });
-                        break;
-                      case 'clear_output':
-                        _adb.clearOutput();
-                        break;
-                      case 'clear_history':
-                        _adb.clearHistory();
-                        break;
-                    }
-                  },
-                  itemBuilder: (c) => [
-                    PopupMenuItem(
-                      value: 'output_mode',
-                      child: Text('Mode: ${_adb.outputMode.name}'),
-                    ),
-                    const PopupMenuItem(
-                      value: 'clear_output',
-                      child: Text('Clear Output'),
-                    ),
-                    const PopupMenuItem(
-                      value: 'clear_history',
-                      child: Text('Clear History'),
-                    ),
-                  ],
-                )
-              ],
-            ),
-            body: Row(
-              children: [
-                if (isWideScreen) ...[
-                  // Desktop/Tablet: NavigationRail + Device Panel
-                  NavigationRail(
-                    selectedIndex: _selectedIndex,
-                    onDestinationSelected: (index) =>
-                        setState(() => _selectedIndex = index),
-                    labelType: NavigationRailLabelType.selected,
-                    destinations: const [
-                      NavigationRailDestination(
-                          icon: Icon(Icons.dashboard),
-                          label: Text('Dashboard')),
-                      NavigationRailDestination(
-                          icon: Icon(Icons.terminal), label: Text('Terminal')),
-                      NavigationRailDestination(
-                          icon: Icon(Icons.list_alt), label: Text('Logcat')),
-                      NavigationRailDestination(
-                          icon: Icon(Icons.play_arrow),
-                          label: Text('Commands')),
-                      NavigationRailDestination(
-                          icon: Icon(Icons.apps), label: Text('Apps')),
-                      NavigationRailDestination(
-                          icon: Icon(Icons.folder), label: Text('Files')),
-                      NavigationRailDestination(
-                          icon: Icon(Icons.info), label: Text('Info')),
-                    ],
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('ADB Manager'),
+            actions: [
+              PopupMenuButton<String>(
+                onSelected: (v) async {
+                  switch (v) {
+                    case 'output_mode':
+                      setState(() {
+                        _adb.setOutputMode(_adb.outputMode == ADBOutputMode.raw
+                            ? ADBOutputMode.verbose
+                            : ADBOutputMode.raw);
+                      });
+                      break;
+                    case 'clear_output':
+                      _adb.clearOutput();
+                      break;
+                    case 'clear_history':
+                      _adb.clearHistory();
+                      break;
+                  }
+                },
+                itemBuilder: (c) => [
+                  PopupMenuItem(
+                    value: 'output_mode',
+                    child: Text('Mode: ${_adb.outputMode.name}'),
                   ),
-                  SizedBox(width: 250, child: _devicePanel()),
+                  const PopupMenuItem(
+                    value: 'clear_output',
+                    child: Text('Clear Output'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'clear_history',
+                    child: Text('Clear History'),
+                  ),
                 ],
-                // Main content area
-                Expanded(child: _buildSelectedContent()),
+              )
+            ],
+          ),
+          body: Row(
+            children: [
+              if (isWideScreen) ...[
+                // Desktop/Tablet: NavigationRail + Device Panel
+                NavigationRail(
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: (index) =>
+                      setState(() => _selectedIndex = index),
+                  labelType: NavigationRailLabelType.selected,
+                  destinations: const [
+                    NavigationRailDestination(
+                        icon: Icon(Icons.dashboard), label: Text('Dashboard')),
+                    NavigationRailDestination(
+                        icon: Icon(Icons.terminal), label: Text('Terminal')),
+                    NavigationRailDestination(
+                        icon: Icon(Icons.list_alt), label: Text('Logcat')),
+                    NavigationRailDestination(
+                        icon: Icon(Icons.play_arrow), label: Text('Commands')),
+                    NavigationRailDestination(
+                        icon: Icon(Icons.apps), label: Text('Apps')),
+                    NavigationRailDestination(
+                        icon: Icon(Icons.folder), label: Text('Files')),
+                    NavigationRailDestination(
+                        icon: Icon(Icons.info), label: Text('Info')),
+                  ],
+                ),
+                SizedBox(width: 250, child: _devicePanel()),
               ],
-            ),
-            bottomNavigationBar: isWideScreen
-                ? null
-                : BottomNavigationBar(
-                    currentIndex:
-                        _selectedIndex.clamp(0, 5), // Updated limit for mobile
-                    onTap: (index) => setState(() => _selectedIndex = index),
-                    type: BottomNavigationBarType.fixed,
-                    items: const [
-                      BottomNavigationBarItem(
-                          icon: Icon(Icons.dashboard), label: 'Dashboard'),
-                      BottomNavigationBarItem(
-                          icon: Icon(Icons.terminal), label: 'Terminal'),
-                      BottomNavigationBarItem(
-                          icon: Icon(Icons.list_alt), label: 'Logcat'),
-                      BottomNavigationBarItem(
-                          icon: Icon(Icons.play_arrow), label: 'Commands'),
-                      BottomNavigationBarItem(
-                          icon: Icon(Icons.apps), label: 'Apps'),
-                      BottomNavigationBarItem(
-                          icon: Icon(Icons.more_horiz), label: 'More'),
-                    ],
-                  ),
-          );
-        },
+              // Main content area
+              Expanded(child: _buildSelectedContent()),
+            ],
+          ),
+          bottomNavigationBar: isWideScreen
+              ? null
+              : BottomNavigationBar(
+                  currentIndex:
+                      _selectedIndex.clamp(0, 5), // Updated limit for mobile
+                  onTap: (index) => setState(() => _selectedIndex = index),
+                  type: BottomNavigationBarType.fixed,
+                  items: const [
+                    BottomNavigationBarItem(
+                        icon: Icon(Icons.dashboard), label: 'Dashboard'),
+                    BottomNavigationBarItem(
+                        icon: Icon(Icons.terminal), label: 'Terminal'),
+                    BottomNavigationBarItem(
+                        icon: Icon(Icons.list_alt), label: 'Logcat'),
+                    BottomNavigationBarItem(
+                        icon: Icon(Icons.play_arrow), label: 'Commands'),
+                    BottomNavigationBarItem(
+                        icon: Icon(Icons.apps), label: 'Apps'),
+                    BottomNavigationBarItem(
+                        icon: Icon(Icons.more_horiz), label: 'More'),
+                  ],
+                ),
+        );
+      },
     );
   }
 
@@ -788,13 +803,13 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
             color: Colors.black,
             padding: const EdgeInsets.all(8),
             child: StreamBuilder<String>(
-              stream: _adb.backend is FlutterAdbBackend 
+              stream: _adb.backend is FlutterAdbBackend
                   ? (_adb.backend as FlutterAdbBackend).client?.output
                   : _adb.output,
               builder: (context, snapshot) {
                 // Use shell-specific buffer for flutter_adb
                 final lines = _shellBufferSnapshot();
-                
+
                 // Auto-scroll to bottom when new content arrives
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   if (_consoleScroll.hasClients) {
@@ -805,7 +820,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                     );
                   }
                 });
-                
+
                 return ListView.builder(
                   controller: _consoleScroll,
                   itemCount: lines.length,
@@ -868,24 +883,27 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                   ElevatedButton.icon(
                     onPressed: _openFlutterAdbShell,
                     icon: const Icon(Icons.power_settings_new),
-                    label: Text(_isShellActive() ? 'Shell Active' : 'Open Shell'),
+                    label:
+                        Text(_isShellActive() ? 'Shell Active' : 'Open Shell'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: _isShellActive() ? Colors.orange : Colors.green
-                    ),
+                        backgroundColor:
+                            _isShellActive() ? Colors.orange : Colors.green),
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton.icon(
                     onPressed: _closeFlutterAdbShell,
                     icon: const Icon(Icons.power_off),
                     label: const Text('Close Shell'),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                    style:
+                        ElevatedButton.styleFrom(backgroundColor: Colors.red),
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton.icon(
                     onPressed: _clearTerminal,
                     icon: const Icon(Icons.clear_all),
                     label: const Text('Clear'),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange),
                   ),
                 ],
               ),
@@ -946,12 +964,12 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
   Future<void> _executeShellCommand() async {
     final command = _cmd.text.trim();
     if (command.isEmpty) return;
-    
+
     _cmd.clear();
-    
+
     // Add command to shell buffer to show what was executed
     _addToShellBuffer('❯ $command');
-    
+
     // Try flutter_adb shell first
     if (_adb.backend is FlutterAdbBackend) {
       final flutterAdbBackend = _adb.backend as FlutterAdbBackend;
@@ -975,7 +993,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
   Future<void> _executeAdbCommand() async {
     final command = _cmd.text.trim();
     if (command.isEmpty) return;
-    
+
     _cmd.clear();
     await _adb.executeCommand(command);
   }
@@ -987,7 +1005,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
       if (client != null) {
         // Start listening to shell output before opening shell
         _setupShellOutputListener(client);
-        
+
         final success = await client.openShell();
         if (success) {
           _adb.addOutput('✅ Interactive shell opened via flutter_adb');
@@ -1008,10 +1026,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
   void _setupShellOutputListener(FlutterAdbClient client) {
     // Cancel any existing subscription
     _shellOutputSub?.cancel();
-    
+
     // Clear the shell buffer
     _shellOutputBuffer.clear();
-    
+
     // Listen to dedicated shell output stream
     _shellOutputSub = client.shellOutput.listen((output) {
       _addToShellBuffer(output);
@@ -1031,7 +1049,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
           _shellOutputBuffer.add(l);
         }
       }
-      
+
       // Keep buffer size manageable (last 1000 lines)
       if (_shellOutputBuffer.length > 1000) {
         _shellOutputBuffer.removeRange(0, _shellOutputBuffer.length - 1000);
@@ -1049,7 +1067,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         _addToShellBuffer('🔚 Shell session ended');
       }
     }
-    
+
     // Clean up shell output listener
     _shellOutputSub?.cancel();
     _shellOutputSub = null;
@@ -1066,7 +1084,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
 
   void _clearTerminal() {
     _adb.clearOutput();
-    
+
     // Also clear shell buffer if using flutter_adb
     if (_adb.backend is FlutterAdbBackend) {
       setState(() {
@@ -1085,11 +1103,12 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
 
     try {
       _adb.addOutput('🔍 Executing: $command');
-      
+
       // Check if we have external backend available (like we see in executeCommand)
       if (_adb.backend != null && _adb.connectedDeviceId.isNotEmpty) {
         _adb.addOutput('📱 Device: ${_adb.connectedDeviceId}');
-        final result = await _adb.backend!.shell(_adb.connectedDeviceId, command);
+        final result =
+            await _adb.backend!.shell(_adb.connectedDeviceId, command);
         _adb.addOutput('✅ Command result: ${result.length} characters');
         if (result.length > 100) {
           _adb.addOutput('📋 Preview: ${result.substring(0, 100)}...');
@@ -1098,7 +1117,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         }
         return result;
       } else {
-        _adb.addOutput('❌ No backend (${_adb.backend != null ? "available" : "null"}) or device ID (${_adb.connectedDeviceId})');
+        _adb.addOutput(
+            '❌ No backend (${_adb.backend != null ? "available" : "null"}) or device ID (${_adb.connectedDeviceId})');
         return null;
       }
     } catch (e) {
@@ -1118,12 +1138,14 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
 
     try {
       final allApps = <AppInfo>[];
-      
+
       _adb.addOutput('📦 Getting user packages...');
       // Get list of user packages (3rd party)
-      final userPackagesOutput = await _executeShellCommandForOutput('pm list packages -3');
+      final userPackagesOutput =
+          await _executeShellCommandForOutput('pm list packages -3');
       if (userPackagesOutput != null) {
-        _adb.addOutput('📝 User packages output: ${userPackagesOutput.length} chars');
+        _adb.addOutput(
+            '📝 User packages output: ${userPackagesOutput.length} chars');
         for (final line in userPackagesOutput.split('\n')) {
           if (line.startsWith('package:')) {
             final packageName = line.substring(8).trim();
@@ -1136,20 +1158,26 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
       } else {
         _adb.addOutput('❌ No user packages output received');
       }
-      
+
       _adb.addOutput('⚙️ Getting system packages...');
       // Get list of system packages (limited to first 30 for performance)
-      final systemPackagesOutput = await _executeShellCommandForOutput('pm list packages -s');
+      final systemPackagesOutput =
+          await _executeShellCommandForOutput('pm list packages -s');
       if (systemPackagesOutput != null) {
-        _adb.addOutput('📝 System packages output: ${systemPackagesOutput.length} chars');
-        final systemLines = systemPackagesOutput.split('\n').where((line) => line.startsWith('package:')).take(30);
+        _adb.addOutput(
+            '📝 System packages output: ${systemPackagesOutput.length} chars');
+        final systemLines = systemPackagesOutput
+            .split('\n')
+            .where((line) => line.startsWith('package:'))
+            .take(30);
         for (final line in systemLines) {
           final packageName = line.substring(8).trim();
           if (packageName.isNotEmpty) {
             allApps.add(_createAppInfoFromPackageName(packageName, true));
           }
         }
-        _adb.addOutput('✅ Found ${allApps.where((app) => app.isSystemApp).length} system packages');
+        _adb.addOutput(
+            '✅ Found ${allApps.where((app) => app.isSystemApp).length} system packages');
       } else {
         _adb.addOutput('❌ No system packages output received');
       }
@@ -1159,8 +1187,9 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         _systemApps = allApps.where((app) => app.isSystemApp).toList();
         _loadingApps = false;
       });
-      
-      _adb.addOutput('✅ Loaded ${allApps.length} apps (${_installedApps.length} user, ${_systemApps.length} system)');
+
+      _adb.addOutput(
+          '✅ Loaded ${allApps.length} apps (${_installedApps.length} user, ${_systemApps.length} system)');
     } catch (e) {
       setState(() => _loadingApps = false);
       _adb.addOutput('❌ Error loading apps: $e');
@@ -1183,9 +1212,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
 
   Future<AppInfo?> _getDetailedPackageInfo(String packageName) async {
     try {
-      final output = await _executeShellCommandForOutput('dumpsys package $packageName');
+      final output =
+          await _executeShellCommandForOutput('dumpsys package $packageName');
       if (output == null) return null;
-      
+
       final info = _parsePackageInfo(packageName, output);
       return info;
     } catch (e) {
@@ -1205,7 +1235,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
 
     for (final line in lines) {
       final trimmed = line.trim();
-      
+
       if (trimmed.startsWith('versionName=')) {
         version = trimmed.substring(12);
       } else if (trimmed.startsWith('versionCode=')) {
@@ -1251,7 +1281,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
       _adb.addOutput('✅ ${enable ? 'Enabled' : 'Disabled'} $packageName');
       _loadInstalledApps(); // Refresh list
     } catch (e) {
-      _adb.addOutput('❌ Failed to ${enable ? 'enable' : 'disable'} $packageName: $e');
+      _adb.addOutput(
+          '❌ Failed to ${enable ? 'enable' : 'disable'} $packageName: $e');
     }
   }
 
@@ -1271,7 +1302,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         // Current device status banner
         if (_adb.currentState == ADBConnectionState.connected)
           _currentDeviceCard(),
-        
+
         // Enhanced dashboard
         Expanded(
           child: EnhancedAdbDashboard(
@@ -1301,7 +1332,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(ok ? 'Connected successfully' : 'Connection failed'),
+                    content: Text(
+                        ok ? 'Connected successfully' : 'Connection failed'),
                     backgroundColor: ok ? Colors.green : Colors.red,
                   ),
                 );
@@ -1314,7 +1346,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(ok ? 'Connected successfully' : 'Connection failed'),
+                    content: Text(
+                        ok ? 'Connected successfully' : 'Connection failed'),
                     backgroundColor: ok ? Colors.green : Colors.red,
                   ),
                 );
@@ -1768,7 +1801,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                   () => setState(() => _selectedIndex = 6)),
               _qa('Key Status', Icons.vpn_key, () async {
                 await _adb.showCredentialStatus();
-                setState(() => _selectedIndex = 1); // Switch to terminal to see output
+                setState(() =>
+                    _selectedIndex = 1); // Switch to terminal to see output
               }),
               _qa('Clear Keys', Icons.delete_forever, () async {
                 // Show confirmation dialog
@@ -1777,10 +1811,9 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                   builder: (context) => AlertDialog(
                     title: const Text('Clear RSA Keys'),
                     content: const Text(
-                      'This will clear all saved RSA keys and device authorization history. '
-                      'You will need to re-authorize this app on all devices.\n\n'
-                      'Continue?'
-                    ),
+                        'This will clear all saved RSA keys and device authorization history. '
+                        'You will need to re-authorize this app on all devices.\n\n'
+                        'Continue?'),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.of(context).pop(false),
@@ -1793,10 +1826,11 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                     ],
                   ),
                 );
-                
+
                 if (confirmed == true) {
                   await _adb.clearSavedCredentials();
-                  setState(() => _selectedIndex = 1); // Switch to terminal to see output
+                  setState(() =>
+                      _selectedIndex = 1); // Switch to terminal to see output
                 }
               }),
             ])
@@ -1845,10 +1879,12 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                   'Alphabetical',
                   'Last Used',
                   'Pinned First',
-                ].map((option) => DropdownMenuItem(
-                  value: option,
-                  child: Text(option),
-                )).toList(),
+                ]
+                    .map((option) => DropdownMenuItem(
+                          value: option,
+                          child: Text(option),
+                        ))
+                    .toList(),
                 onChanged: (v) => setState(() {
                   _deviceSortOption = v ?? 'Alphabetical';
                 }),
@@ -1868,26 +1904,32 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                 ElevatedButton.icon(
                   icon: const Icon(Icons.delete),
                   label: const Text('Delete Selected'),
-                  onPressed: _selectedDeviceNames.isEmpty ? null : () async {
-                    setState(() {
-                      _savedDevices.removeWhere((d) => _selectedDeviceNames.contains(d.name));
-                      _selectedDeviceNames.clear();
-                    });
-                  },
+                  onPressed: _selectedDeviceNames.isEmpty
+                      ? null
+                      : () async {
+                          setState(() {
+                            _savedDevices.removeWhere(
+                                (d) => _selectedDeviceNames.contains(d.name));
+                            _selectedDeviceNames.clear();
+                          });
+                        },
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton.icon(
                   icon: const Icon(Icons.link),
                   label: const Text('Connect Selected'),
-                  onPressed: _selectedDeviceNames.isEmpty ? null : () async {
-                    // In batch connect, call _loadDevice synchronously (no await)
-                    for (final d in _savedDevices.where((d) => _selectedDeviceNames.contains(d.name))) {
-                      _loadDevice(d);
-                    }
-                    setState(() {
-                      _selectedDeviceNames.clear();
-                    });
-                  },
+                  onPressed: _selectedDeviceNames.isEmpty
+                      ? null
+                      : () async {
+                          // In batch connect, call _loadDevice synchronously (no await)
+                          for (final d in _savedDevices.where(
+                              (d) => _selectedDeviceNames.contains(d.name))) {
+                            _loadDevice(d);
+                          }
+                          setState(() {
+                            _selectedDeviceNames.clear();
+                          });
+                        },
                 ),
               ],
             ],
@@ -1909,28 +1951,40 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
     final filteredDevices = _savedDevices.where((d) {
       final q = _appSearchQuery.toLowerCase();
       return d.name.toLowerCase().contains(q) ||
-             d.connectionType.displayName.toLowerCase().contains(q) ||
-             _adb.currentState.name.toLowerCase().contains(q);
+          d.connectionType.displayName.toLowerCase().contains(q) ||
+          _adb.currentState.name.toLowerCase().contains(q);
     }).toList();
-    final favoriteDevices = filteredDevices.where((d) => _favoriteConnections.contains(d.name)).toList();
-    final nonFavoriteDevices = filteredDevices.where((d) => !_favoriteConnections.contains(d.name)).toList();
+    final favoriteDevices = filteredDevices
+        .where((d) => _favoriteConnections.contains(d.name))
+        .toList();
+    final nonFavoriteDevices = filteredDevices
+        .where((d) => !_favoriteConnections.contains(d.name))
+        .toList();
     final groupedDevices = [...favoriteDevices, ...nonFavoriteDevices];
 
     // Sort groupedDevices based on selected option
     List<SavedADBDevice> sortedDevices = List.from(groupedDevices);
     switch (_deviceSortOption) {
       case 'Alphabetical':
-        sortedDevices.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        sortedDevices.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         break;
       case 'Last Used':
-        sortedDevices.sort((a, b) => (b.lastUsed ?? DateTime(1970)).compareTo(a.lastUsed ?? DateTime(1970)));
+        sortedDevices.sort((a, b) => (b.lastUsed ?? DateTime(1970))
+            .compareTo(a.lastUsed ?? DateTime(1970)));
         break;
       case 'Pinned First':
         // Already grouped, but sort favorites alphabetically
-        final favs = sortedDevices.where((d) => _favoriteConnections.contains(d.name)).toList();
-        final nonFavs = sortedDevices.where((d) => !_favoriteConnections.contains(d.name)).toList();
-        favs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-        nonFavs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        final favs = sortedDevices
+            .where((d) => _favoriteConnections.contains(d.name))
+            .toList();
+        final nonFavs = sortedDevices
+            .where((d) => !_favoriteConnections.contains(d.name))
+            .toList();
+        favs.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        nonFavs.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         sortedDevices = [...favs, ...nonFavs];
         break;
     }
@@ -1948,73 +2002,77 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         return ListTile(
           selected: _selectedSaved?.name == d.name,
           leading: _batchMode
-            ? Checkbox(
-                value: _selectedDeviceNames.contains(d.name),
-                onChanged: (checked) {
-                  setState(() {
-                    if (checked ?? false) {
-                      _selectedDeviceNames.add(d.name);
-                    } else {
-                      _selectedDeviceNames.remove(d.name);
-                    }
-                  });
-                },
-              )
-            : Stack(
-                alignment: Alignment.topRight,
-                children: [
-                  Icon(
-                    isFavorite ? Icons.star : Icons.memory,
-                    color: isFavorite ? Colors.amber : null,
-                  ),
-                  if (d.isConnected != null)
-                    Positioned(
-                      right: 0,
-                      top: 0,
-                      child: Icon(
-                        d.isConnected! ? Icons.circle : Icons.circle_outlined,
-                        color: d.isConnected! ? Colors.green : Colors.red,
-                        size: 12,
-                      ),
+              ? Checkbox(
+                  value: _selectedDeviceNames.contains(d.name),
+                  onChanged: (checked) {
+                    setState(() {
+                      if (checked ?? false) {
+                        _selectedDeviceNames.add(d.name);
+                      } else {
+                        _selectedDeviceNames.remove(d.name);
+                      }
+                    });
+                  },
+                )
+              : Stack(
+                  alignment: Alignment.topRight,
+                  children: [
+                    Icon(
+                      isFavorite ? Icons.star : Icons.memory,
+                      color: isFavorite ? Colors.amber : null,
                     ),
-                ],
-              ),
+                    if (d.isConnected != null)
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        child: Icon(
+                          d.isConnected! ? Icons.circle : Icons.circle_outlined,
+                          color: d.isConnected! ? Colors.green : Colors.red,
+                          size: 12,
+                        ),
+                      ),
+                  ],
+                ),
           title: Text(d.name, overflow: TextOverflow.ellipsis),
           subtitle: Text(
-            [d.connectionType.displayName, if (d.label != null && d.label!.isNotEmpty) d.label, if (d.note != null && d.note!.isNotEmpty) d.note].join(' • '),
+            [
+              d.connectionType.displayName,
+              if (d.label != null && d.label!.isNotEmpty) d.label,
+              if (d.note != null && d.note!.isNotEmpty) d.note
+            ].join(' • '),
             maxLines: 2,
           ),
           onTap: () => _loadDevice(d),
           trailing: isFavorite
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.link),
-                    tooltip: 'Connect',
-                    onPressed: () => _loadDevice(d),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.edit),
-                    tooltip: 'Edit',
-                    onPressed: () {
-                      // Show edit dialog (reuse existing logic)
-                      _showEditDeviceDialog(d);
-                    },
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete),
-                    tooltip: 'Remove',
-                    onPressed: () {
-                      setState(() {
-                        _savedDevices.remove(d);
-                        _favoriteConnections.remove(d.name);
-                      });
-                    },
-                  ),
-                ],
-              )
-            : null,
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.link),
+                      tooltip: 'Connect',
+                      onPressed: () => _loadDevice(d),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.edit),
+                      tooltip: 'Edit',
+                      onPressed: () {
+                        // Show edit dialog (reuse existing logic)
+                        _showEditDeviceDialog(d);
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete),
+                      tooltip: 'Remove',
+                      onPressed: () {
+                        setState(() {
+                          _savedDevices.remove(d);
+                          _favoriteConnections.remove(d.name);
+                        });
+                      },
+                    ),
+                  ],
+                )
+              : null,
         );
       },
     );
@@ -2058,22 +2116,28 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
-                        _adb.logcatActive ? Icons.hourglass_empty : Icons.play_circle_outline,
+                        _adb.logcatActive
+                            ? Icons.hourglass_empty
+                            : Icons.play_circle_outline,
                         size: 48,
                         color: Colors.grey,
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        _adb.logcatActive 
-                          ? 'Logcat is running but no output yet...\nCheck if device is generating logs'
-                          : 'No logcat data\nTap "Start Logcat" to begin',
+                        _adb.logcatActive
+                            ? 'Logcat is running but no output yet...\nCheck if device is generating logs'
+                            : 'No logcat data\nTap "Start Logcat" to begin',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.grey, fontSize: 14),
+                        style:
+                            const TextStyle(color: Colors.grey, fontSize: 14),
                       ),
                       const SizedBox(height: 16),
                       Text(
                         'Debug Info:',
-                        style: TextStyle(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -2081,20 +2145,23 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                         'Device: ${_adb.connectedDeviceId.isEmpty ? "None" : _adb.connectedDeviceId}\n'
                         'Logcat Active: ${_adb.logcatActive ? "Yes" : "No"}',
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey[600], fontSize: 11, fontFamily: 'monospace'),
+                        style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 11,
+                            fontFamily: 'monospace'),
                       ),
                     ],
                   ),
                 );
               }
-              
+
               return ListView.builder(
                 controller: _logcatScrollController,
                 padding: const EdgeInsets.all(4),
                 itemCount: buffer.length,
                 itemBuilder: (ctx, i) {
                   final line = buffer[i];
-                  
+
                   // Apply text filter
                   if (_activeLogcatFilter.isNotEmpty &&
                       !line
@@ -2102,7 +2169,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                           .contains(_activeLogcatFilter.toLowerCase())) {
                     return const SizedBox.shrink();
                   }
-                  
+
                   // Apply level filter
                   if (_logcatLevel != 'All') {
                     final levelChar = _logcatLevel[0]; // E, W, I, D, V
@@ -2110,21 +2177,25 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                       return const SizedBox.shrink();
                     }
                   }
-                  
+
                   Color color = Colors.white;
                   if (line.contains(' E ')) {
                     color = Colors.redAccent;
                   } else if (line.contains(' W '))
                     color = Colors.orangeAccent;
-                  else if (line.contains(' I ')) color = Colors.lightBlueAccent;
-                  else if (line.contains(' D ')) color = Colors.grey[300]!;
+                  else if (line.contains(' I '))
+                    color = Colors.lightBlueAccent;
+                  else if (line.contains(' D '))
+                    color = Colors.grey[300]!;
                   else if (line.contains(' V ')) color = Colors.grey[500]!;
-                  
+
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 1),
                     child: SelectableText(line,
                         style: TextStyle(
-                            color: color, fontSize: 11, fontFamily: 'monospace')),
+                            color: color,
+                            fontSize: 11,
+                            fontFamily: 'monospace')),
                   );
                 },
               );
@@ -2173,13 +2244,16 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
               icon: const Icon(Icons.bug_report),
               label: const Text('Test ADB')),
           const SizedBox(width: 12),
-          Text('Level:', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+          Text('Level:',
+              style: TextStyle(fontSize: 12, color: Colors.grey[700])),
           const SizedBox(width: 4),
           DropdownButton<String>(
             value: _logcatLevel,
             isDense: true,
             items: ['All', 'Error', 'Warning', 'Info', 'Debug', 'Verbose']
-                .map((level) => DropdownMenuItem(value: level, child: Text(level, style: const TextStyle(fontSize: 12))))
+                .map((level) => DropdownMenuItem(
+                    value: level,
+                    child: Text(level, style: const TextStyle(fontSize: 12))))
                 .toList(),
             onChanged: (value) {
               setState(() => _logcatLevel = value!);
@@ -2219,7 +2293,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         child: Row(children: [
           Icon(Icons.settings, size: 16, color: Colors.grey[600]),
           const SizedBox(width: 8),
-          Text('Auto-start on connect:', 
+          Text('Auto-start on connect:',
               style: TextStyle(fontSize: 12, color: Colors.grey[700])),
           const SizedBox(width: 8),
           Switch(
@@ -2229,8 +2303,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
               await _saveAutoLogcatPreference();
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text(_autoStartLogcat 
-                      ? 'Logcat will auto-start on connection' 
+                  content: Text(_autoStartLogcat
+                      ? 'Logcat will auto-start on connection'
                       : 'Logcat auto-start disabled'),
                   duration: const Duration(seconds: 2),
                 ),
@@ -2245,7 +2319,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                 color: Colors.green,
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: const Text('ACTIVE', 
+              child: const Text('ACTIVE',
                   style: TextStyle(color: Colors.white, fontSize: 10)),
             ),
         ]),
@@ -2255,7 +2329,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         color: Colors.grey[50],
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: Row(children: [
-          Text('Quick filters:', 
+          Text('Quick filters:',
               style: TextStyle(fontSize: 11, color: Colors.grey[600])),
           const SizedBox(width: 8),
           _quickFilterButton('Errors', 'Error', Colors.red[100]!),
@@ -2273,7 +2347,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                   _logcatFilter.clear();
                 });
               },
-              child: const Text('Clear Filters', style: TextStyle(fontSize: 11)),
+              child:
+                  const Text('Clear Filters', style: TextStyle(fontSize: 11)),
             ),
         ]),
       )
@@ -2310,7 +2385,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         children: [
           // Connection Status Card
           Card(
-            color: _adb.currentState == ADBConnectionState.connected 
+            color: _adb.currentState == ADBConnectionState.connected
                 ? Colors.green.withOpacity(0.1)
                 : Colors.red.withOpacity(0.1),
             child: Padding(
@@ -2318,11 +2393,11 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
               child: Row(
                 children: [
                   Icon(
-                    _adb.currentState == ADBConnectionState.connected 
-                        ? Icons.check_circle 
+                    _adb.currentState == ADBConnectionState.connected
+                        ? Icons.check_circle
                         : Icons.error,
-                    color: _adb.currentState == ADBConnectionState.connected 
-                        ? Colors.green 
+                    color: _adb.currentState == ADBConnectionState.connected
+                        ? Colors.green
                         : Colors.red,
                   ),
                   const SizedBox(width: 8),
@@ -2331,17 +2406,17 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _adb.currentState == ADBConnectionState.connected 
-                              ? 'Device Connected' 
+                          _adb.currentState == ADBConnectionState.connected
+                              ? 'Device Connected'
                               : 'No Device Connected',
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                         if (_adb.currentState == ADBConnectionState.connected)
-                          Text('Device: ${_adb.connectedDeviceId}', 
-                               style: const TextStyle(fontSize: 12))
+                          Text('Device: ${_adb.connectedDeviceId}',
+                              style: const TextStyle(fontSize: 12))
                         else
-                          const Text('Connect a device to run commands', 
-                                   style: TextStyle(fontSize: 12)),
+                          const Text('Connect a device to run commands',
+                              style: TextStyle(fontSize: 12)),
                       ],
                     ),
                   ),
@@ -2370,32 +2445,41 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                                 onPressed: _adb.currentState ==
                                         ADBConnectionState.connected
                                     ? () async {
-                                        print('🔄 Executing quick command: $cmd');
-                                        _adb.addOutput('🚀 Quick command: $cmd');
+                                        print(
+                                            '🔄 Executing quick command: $cmd');
+                                        _adb.addOutput(
+                                            '🚀 Quick command: $cmd');
                                         try {
                                           await _adb.executeCommand(cmd);
-                                          _adb.addOutput('✅ Command completed: $cmd');
+                                          _adb.addOutput(
+                                              '✅ Command completed: $cmd');
                                         } catch (e) {
-                                          _adb.addOutput('❌ Command failed: $cmd - Error: $e');
+                                          _adb.addOutput(
+                                              '❌ Command failed: $cmd - Error: $e');
                                         }
                                       }
                                     : null,
-                                icon: Icon(_adb.currentState == ADBConnectionState.connected 
-                                    ? Icons.play_arrow 
+                                icon: Icon(_adb.currentState ==
+                                        ADBConnectionState.connected
+                                    ? Icons.play_arrow
                                     : Icons.error),
-                                label: Text(_adb.currentState == ADBConnectionState.connected 
-                                    ? 'Run' 
+                                label: Text(_adb.currentState ==
+                                        ADBConnectionState.connected
+                                    ? 'Run'
                                     : 'No Device'),
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: _adb.currentState == ADBConnectionState.connected 
-                                      ? Colors.green 
+                                  backgroundColor: _adb.currentState ==
+                                          ADBConnectionState.connected
+                                      ? Colors.green
                                       : Colors.grey,
                                 ),
                               ),
-                              if (_adb.currentState != ADBConnectionState.connected)
+                              if (_adb.currentState !=
+                                  ADBConnectionState.connected)
                                 const Text(
                                   'Connect device first',
-                                  style: TextStyle(fontSize: 10, color: Colors.grey),
+                                  style: TextStyle(
+                                      fontSize: 10, color: Colors.grey),
                                 ),
                             ],
                           ),
@@ -2584,7 +2668,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
 
   Widget _recentChips(List<String> items, ValueChanged<String> onTap,
       {String? label}) {
-       if (items.isEmpty) return const SizedBox();
+    if (items.isEmpty) return const SizedBox();
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -2630,10 +2714,11 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('ADB Backend', 
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const Text('ADB Backend',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-                    const Text('Choose the ADB backend for your platform:', 
+                    const Text('Choose the ADB backend for your platform:',
                         style: TextStyle(fontSize: 12, color: Colors.grey)),
                     const SizedBox(height: 8),
                     Wrap(
@@ -2644,24 +2729,30 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                             await _adb.enableFlutterAdbBackend();
                           },
                           icon: const Icon(Icons.android, size: 16),
-                          label: const Text('Flutter ADB', style: TextStyle(fontSize: 12)),
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                          label: const Text('Flutter ADB',
+                              style: TextStyle(fontSize: 12)),
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green),
                         ),
                         ElevatedButton.icon(
                           onPressed: () async {
                             await _adb.enableExternalAdbBackend();
                           },
                           icon: const Icon(Icons.computer, size: 16),
-                          label: const Text('System ADB', style: TextStyle(fontSize: 12)),
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                          label: const Text('System ADB',
+                              style: TextStyle(fontSize: 12)),
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue),
                         ),
                         ElevatedButton.icon(
                           onPressed: () async {
                             await _adb.enableInternalAdbBackend();
                           },
                           icon: const Icon(Icons.bug_report, size: 16),
-                          label: const Text('Mock ADB', style: TextStyle(fontSize: 12)),
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                          label: const Text('Mock ADB',
+                              style: TextStyle(fontSize: 12)),
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange),
                         ),
                       ],
                     ),
@@ -2684,13 +2775,16 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Auto-Connect Settings', 
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const Text('Auto-Connect Settings',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
                     ListTile(
-                      leading: const Icon(Icons.auto_awesome, color: Colors.orange),
+                      leading:
+                          const Icon(Icons.auto_awesome, color: Colors.orange),
                       title: const Text('Auto-start Logcat on connect'),
-                      subtitle: const Text('Automatically start logcat when device connects'),
+                      subtitle: const Text(
+                          'Automatically start logcat when device connects'),
                       trailing: Switch(
                         value: _autoStartLogcat,
                         onChanged: (value) async {
@@ -2698,8 +2792,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                           await _saveAutoLogcatPreference();
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text(_autoStartLogcat 
-                                  ? 'Logcat will auto-start on connection' 
+                              content: Text(_autoStartLogcat
+                                  ? 'Logcat will auto-start on connection'
                                   : 'Logcat auto-start disabled'),
                               duration: const Duration(seconds: 2),
                             ),
@@ -2710,7 +2804,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                     ListTile(
                       leading: const Icon(Icons.terminal, color: Colors.blue),
                       title: const Text('Auto-open Shell on connect'),
-                      subtitle: const Text('Automatically open shell for Flutter ADB backend'),
+                      subtitle: const Text(
+                          'Automatically open shell for Flutter ADB backend'),
                       trailing: Switch(
                         value: _autoOpenShell,
                         onChanged: (value) async {
@@ -2718,8 +2813,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                           await _saveAutoShellPreference();
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text(_autoOpenShell 
-                                  ? 'Shell will auto-open on Flutter ADB connection' 
+                              content: Text(_autoOpenShell
+                                  ? 'Shell will auto-open on Flutter ADB connection'
                                   : 'Shell auto-open disabled'),
                               duration: const Duration(seconds: 2),
                             ),
@@ -2733,7 +2828,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
             ),
             const SizedBox(height: 16),
             // Help sections - define sections here
-            ..._getHelpSections().map((section) => _helpSection(section.$1, section.$2, section.$3)),
+            ..._getHelpSections().map(
+                (section) => _helpSection(section.$1, section.$2, section.$3)),
           ],
         ),
       ),
@@ -2792,18 +2888,22 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
             padding: const EdgeInsets.all(12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: steps.map((step) => 
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('• ', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      Expanded(child: Text(step, style: const TextStyle(fontSize: 14))),
-                    ],
-                  ),
-                )
-              ).toList(),
+              children: steps
+                  .map((step) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('• ',
+                                style: TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.bold)),
+                            Expanded(
+                                child: Text(step,
+                                    style: const TextStyle(fontSize: 14))),
+                          ],
+                        ),
+                      ))
+                  .toList(),
             ),
           ),
         ],
@@ -2837,74 +2937,88 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-              ElevatedButton.icon(
-                onPressed: _adb.currentState == ADBConnectionState.connected && !_loadingApps
-                    ? _loadInstalledApps
-                    : null,
-                icon: _loadingApps 
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.refresh),
-                label: Text(_loadingApps ? 'Loading...' : 'Load Apps'),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
-              ),
-              const SizedBox(width: 8),
-              // Apps Manager button
-              ElevatedButton.icon(
-                onPressed: _adb.currentState == ADBConnectionState.connected
-                    ? () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const AppsScreen(),
-                          ),
-                        );
-                      }
-                    : null,
-                icon: const Icon(Icons.apps_outlined),
-                label: const Text('Apps Manager'),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-              ),
-              const SizedBox(width: 8),
-              // Debug button to test shell execution
-              ElevatedButton.icon(
-                onPressed: _adb.currentState == ADBConnectionState.connected
-                    ? () async {
-                        _adb.addOutput('🧪 Testing shell command execution...');
-                        final testResult = await _executeShellCommandForOutput('echo "Hello from device"');
-                        _adb.addOutput('🧪 Test result: ${testResult ?? "null"}');
-                      }
-                    : null,
-                icon: const Icon(Icons.bug_report, size: 16),
-                label: const Text('Debug'),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 250,
-                child: TextField(
-                  decoration: const InputDecoration(
-                    hintText: 'Search apps...',
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  ),
-                  onChanged: (value) => setState(() => _appSearchQuery = value),
+                ElevatedButton.icon(
+                  onPressed:
+                      _adb.currentState == ADBConnectionState.connected &&
+                              !_loadingApps
+                          ? _loadInstalledApps
+                          : null,
+                  icon: _loadingApps
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.refresh),
+                  label: Text(_loadingApps ? 'Loading...' : 'Load Apps'),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
                 ),
-              ),
-              const SizedBox(width: 12),
-              ElevatedButton.icon(
-                onPressed: _adb.currentState == ADBConnectionState.connected
-                    ? _loadSystemInfo
-                    : null,
-                icon: const Icon(Icons.info, size: 16),
-                label: const Text('System Info'),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-              ),
-            ],
+                const SizedBox(width: 8),
+                // Apps Manager button
+                ElevatedButton.icon(
+                  onPressed: _adb.currentState == ADBConnectionState.connected
+                      ? () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const AppsScreen(),
+                            ),
+                          );
+                        }
+                      : null,
+                  icon: const Icon(Icons.apps_outlined),
+                  label: const Text('Apps Manager'),
+                  style:
+                      ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                ),
+                const SizedBox(width: 8),
+                // Debug button to test shell execution
+                ElevatedButton.icon(
+                  onPressed: _adb.currentState == ADBConnectionState.connected
+                      ? () async {
+                          _adb.addOutput(
+                              '🧪 Testing shell command execution...');
+                          final testResult =
+                              await _executeShellCommandForOutput(
+                                  'echo "Hello from device"');
+                          _adb.addOutput(
+                              '🧪 Test result: ${testResult ?? "null"}');
+                        }
+                      : null,
+                  icon: const Icon(Icons.bug_report, size: 16),
+                  label: const Text('Debug'),
+                  style:
+                      ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 250,
+                  child: TextField(
+                    decoration: const InputDecoration(
+                      hintText: 'Search apps...',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    onChanged: (value) =>
+                        setState(() => _appSearchQuery = value),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton.icon(
+                  onPressed: _adb.currentState == ADBConnectionState.connected
+                      ? _loadSystemInfo
+                      : null,
+                  icon: const Icon(Icons.info, size: 16),
+                  label: const Text('System Info'),
+                  style:
+                      ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
-          
+
           // Connection status and stats
           if (_adb.currentState != ADBConnectionState.connected)
             Container(
@@ -2918,7 +3032,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                 children: [
                   Icon(Icons.warning, color: Colors.orange),
                   SizedBox(width: 12),
-                  Text('Connect to a device to manage apps', 
+                  Text('Connect to a device to manage apps',
                       style: TextStyle(color: Colors.orange)),
                 ],
               ),
@@ -2927,15 +3041,18 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
             // App statistics
             Row(
               children: [
-                _buildAppStatCard('User Apps', _installedApps.length, Colors.blue),
+                _buildAppStatCard(
+                    'User Apps', _installedApps.length, Colors.blue),
                 const SizedBox(width: 12),
-                _buildAppStatCard('System Apps', _systemApps.length, Colors.green),
+                _buildAppStatCard(
+                    'System Apps', _systemApps.length, Colors.green),
                 const SizedBox(width: 12),
-                _buildAppStatCard('Total', _installedApps.length + _systemApps.length, Colors.purple),
+                _buildAppStatCard('Total',
+                    _installedApps.length + _systemApps.length, Colors.purple),
               ],
             ),
             const SizedBox(height: 16),
-            
+
             // App list
             Expanded(
               child: _buildAppList(),
@@ -2957,8 +3074,9 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         ),
         child: Column(
           children: [
-            Text(count.toString(), 
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color)),
+            Text(count.toString(),
+                style: TextStyle(
+                    fontSize: 24, fontWeight: FontWeight.bold, color: color)),
             Text(title, style: TextStyle(fontSize: 12, color: color)),
           ],
         ),
@@ -2977,7 +3095,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
           return false;
         }
       }
-      
+
       // Apply type filter
       switch (_selectedAppFilter) {
         case 'User':
@@ -3001,7 +3119,7 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
             Icon(Icons.apps, size: 48, color: Colors.grey),
             SizedBox(height: 16),
             Text('No apps found', style: TextStyle(color: Colors.grey)),
-            Text('Try loading apps or adjusting filters', 
+            Text('Try loading apps or adjusting filters',
                 style: TextStyle(color: Colors.grey, fontSize: 12)),
           ],
         ),
@@ -3032,29 +3150,46 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(app.packageName, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            Text(
+              app.packageName,
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: app.isSystemApp ? Colors.green.shade100 : Colors.blue.shade100,
+                    color: app.isSystemApp
+                        ? Colors.green.shade100
+                        : Colors.blue.shade100,
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: Text(app.typeLabel, 
-                      style: TextStyle(fontSize: 10, 
-                          color: app.isSystemApp ? Colors.green.shade700 : Colors.blue.shade700)),
+                  child: Text(app.typeLabel,
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: app.isSystemApp
+                              ? Colors.green.shade700
+                              : Colors.blue.shade700)),
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: app.isEnabled ? Colors.green.shade100 : Colors.red.shade100,
+                    color: app.isEnabled
+                        ? Colors.green.shade100
+                        : Colors.red.shade100,
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: Text(app.statusLabel, 
-                      style: TextStyle(fontSize: 10, 
-                          color: app.isEnabled ? Colors.green.shade700 : Colors.red.shade700)),
+                  child: Text(app.statusLabel,
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: app.isEnabled
+                              ? Colors.green.shade700
+                              : Colors.red.shade700)),
                 ),
               ],
             ),
@@ -3071,9 +3206,9 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                 _buildAppDetailRow('Version Code', app.versionCode),
                 _buildAppDetailRow('APK Path', app.apkPath),
                 if (app.size > 0) _buildAppDetailRow('Size', app.sizeFormatted),
-                
+
                 const SizedBox(height: 16),
-                
+
                 // Action buttons
                 Wrap(
                   spacing: 8,
@@ -3083,28 +3218,34 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
                       onPressed: () => _showAppDetails(app),
                       icon: const Icon(Icons.info, size: 16),
                       label: const Text('Details'),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue),
                     ),
                     if (!app.isSystemApp) ...[
                       ElevatedButton.icon(
                         onPressed: () => _uninstallApp(app.packageName),
                         icon: const Icon(Icons.delete, size: 16),
                         label: const Text('Uninstall'),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red),
                       ),
                     ],
                     ElevatedButton.icon(
-                      onPressed: () => _enableDisableApp(app.packageName, !app.isEnabled),
-                      icon: Icon(app.isEnabled ? Icons.block : Icons.check, size: 16),
+                      onPressed: () =>
+                          _enableDisableApp(app.packageName, !app.isEnabled),
+                      icon: Icon(app.isEnabled ? Icons.block : Icons.check,
+                          size: 16),
                       label: Text(app.isEnabled ? 'Disable' : 'Enable'),
                       style: ElevatedButton.styleFrom(
-                          backgroundColor: app.isEnabled ? Colors.orange : Colors.green),
+                          backgroundColor:
+                              app.isEnabled ? Colors.orange : Colors.green),
                     ),
                     ElevatedButton.icon(
                       onPressed: () => _clearAppData(app.packageName),
                       icon: const Icon(Icons.cleaning_services, size: 16),
                       label: const Text('Clear Data'),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.purple),
                     ),
                   ],
                 ),
@@ -3124,7 +3265,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
         children: [
           SizedBox(
             width: 100,
-            child: Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
+            child: Text(label,
+                style: const TextStyle(fontWeight: FontWeight.w500)),
           ),
           Expanded(
             child: SelectableText(value, style: const TextStyle(fontSize: 12)),
@@ -3145,11 +3287,13 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
     }
 
     if (!mounted) return;
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(detailedApp.label.isNotEmpty ? detailedApp.label : detailedApp.packageName),
+        title: Text(detailedApp.label.isNotEmpty
+            ? detailedApp.label
+            : detailedApp.packageName),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3161,11 +3305,14 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
               _buildAppDetailRow('Type', detailedApp.typeLabel),
               _buildAppDetailRow('Status', detailedApp.statusLabel),
               _buildAppDetailRow('APK Path', detailedApp.apkPath),
-              if (detailedApp.size > 0) _buildAppDetailRow('Size', detailedApp.sizeFormatted),
-              if (detailedApp.installDate != null) 
-                _buildAppDetailRow('Installed', detailedApp.installDate.toString()),
-              if (detailedApp.lastUpdateDate != null) 
-                _buildAppDetailRow('Last Updated', detailedApp.lastUpdateDate.toString()),
+              if (detailedApp.size > 0)
+                _buildAppDetailRow('Size', detailedApp.sizeFormatted),
+              if (detailedApp.installDate != null)
+                _buildAppDetailRow(
+                    'Installed', detailedApp.installDate.toString()),
+              if (detailedApp.lastUpdateDate != null)
+                _buildAppDetailRow(
+                    'Last Updated', detailedApp.lastUpdateDate.toString()),
             ],
           ),
         ),
@@ -3185,18 +3332,29 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
     }
 
     try {
-      final deviceModel = await _executeShellCommandForOutput('getprop ro.product.model') ?? 'Unknown';
-      final androidVersion = await _executeShellCommandForOutput('getprop ro.build.version.release') ?? 'Unknown';
-      final apiLevel = await _executeShellCommandForOutput('getprop ro.build.version.sdk') ?? 'Unknown';
-      final buildId = await _executeShellCommandForOutput('getprop ro.build.id') ?? 'Unknown';
-      final manufacturer = await _executeShellCommandForOutput('getprop ro.product.manufacturer') ?? 'Unknown';
-      
+      final deviceModel =
+          await _executeShellCommandForOutput('getprop ro.product.model') ??
+              'Unknown';
+      final androidVersion = await _executeShellCommandForOutput(
+              'getprop ro.build.version.release') ??
+          'Unknown';
+      final apiLevel =
+          await _executeShellCommandForOutput('getprop ro.build.version.sdk') ??
+              'Unknown';
+      final buildId =
+          await _executeShellCommandForOutput('getprop ro.build.id') ??
+              'Unknown';
+      final manufacturer = await _executeShellCommandForOutput(
+              'getprop ro.product.manufacturer') ??
+          'Unknown';
+
       _adb.addOutput('📱 Device Info:');
       _adb.addOutput('  Model: ${deviceModel.trim()}');
       _adb.addOutput('  Manufacturer: ${manufacturer.trim()}');
-      _adb.addOutput('  Android: ${androidVersion.trim()} (API ${apiLevel.trim()})');
+      _adb.addOutput(
+          '  Android: ${androidVersion.trim()} (API ${apiLevel.trim()})');
       _adb.addOutput('  Build ID: ${buildId.trim()}');
-      
+
       // Show in dialog too
       if (mounted) {
         showDialog(
@@ -3227,5 +3385,4 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen> with TickerPr
       _adb.addOutput('❌ Error loading system info: $e');
     }
   }
-
 }

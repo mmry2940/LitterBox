@@ -6,7 +6,6 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'package:network_info_plus/network_info_plus.dart';
-import 'package:network_tools/network_tools.dart';
 import 'device_screen.dart';
 import 'adb_screen_refactored.dart';
 import 'vnc_screen.dart';
@@ -41,9 +40,13 @@ class DeviceListScreen extends StatelessWidget {
                 final device = devices[index];
                 final isFavorite = favoriteDeviceHosts.contains(device['host']);
                 return ListTile(
-                  title: Text((device['name']?.isNotEmpty ?? false)
-                      ? device['name']!
-                      : '${device['username']}@${device['host']}:${device['port']}'),
+                  title: Text(
+                    (device['name']?.isNotEmpty ?? false)
+                        ? device['name']!
+                        : '${device['username']}@${device['host']}:${device['port']}',
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
                   leading: Icon(
                     isFavorite ? Icons.star : Icons.devices,
                     color: isFavorite ? Colors.amber : null,

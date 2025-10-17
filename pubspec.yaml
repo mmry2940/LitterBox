@@ -47,7 +47,7 @@ dependencies:
   webview_flutter: ^4.4.2
   crypto: ^3.0.3
   pointycastle: ^3.7.3
-  file_picker: ^8.0.3
+  file_picker: ^10.3.3
   provider: ^6.0.5
   multicast_dns: ^0.3.2
   flutter_adb: ^0.1.1
