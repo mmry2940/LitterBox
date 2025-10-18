@@ -12,6 +12,16 @@ LitterBox is a comprehensive Android application that brings together essential 
 
 ![LitterBox Screenshots](https://via.placeholder.com/800x400/2196F3/FFFFFF?text=LitterBox+Screenshots)
 
+## 🚀 Quick Start
+
+1. **Download** the latest release APK from [Releases](https://github.com/mmry2940/LitterBox/releases/latest)
+2. **Install** on your Android device (Android 5.0+)
+3. **Connect** to your servers/devices:
+   - **SSH:** Enter host, port, username, and password
+   - **ADB:** Enable wireless debugging and scan network
+   - **VNC/RDP:** Configure remote desktop settings
+4. **Manage** your devices from anywhere!
+
 ## ✨ Features Overview
 
 ### 🔧 **Core Functionality**
@@ -251,11 +261,18 @@ The RDP implementation focuses on connection management and testing. For full RD
 <details>
 <summary>Click to expand File features</summary>
 
-**File Operations:**
+**SSH File Operations:**
 - ✅ **Remote file browser** - Navigate remote filesystem via SSH
-- ✅ **File transfer** - Upload/download files between devices
-- ✅ **Directory navigation** - Intuitive folder browsing
-- ✅ **File selection** - Multi-select for batch operations
+- ✅ **Copy/Cut/Paste** - Full clipboard support for files and folders
+- ✅ **Delete files/folders** - Remove items with confirmation
+- ✅ **Rename files/folders** - In-place renaming
+- ✅ **Create folders** - New directory creation
+- ✅ **Archive operations** - Create and extract tar.gz archives
+- ✅ **Multi-select** - Batch operations on multiple items
+- ✅ **Search and filter** - Find files quickly
+- ✅ **Hidden files toggle** - Show/hide hidden files
+- ✅ **File type icons** - Visual file type identification
+- ✅ **Permissions display** - View file permissions and metadata
 
 **ADB File Operations:**
 - ✅ **Push files** - Transfer files to Android devices
@@ -264,7 +281,7 @@ The RDP implementation focuses on connection management and testing. For full RD
 - ✅ **Path management** - Recent paths and quick access
 
 **File Picker Integration:**
-- Uses `file_picker` package (downgraded to 8.0.3 for compatibility)
+- Uses `file_picker` package (version 8.0.3 for compatibility)
 - Local file system access
 - Integration with ADB file operations
 
@@ -350,37 +367,150 @@ lib/
 
 ## 🚧 **Development Status**
 
+### 📊 **Feature Status Summary**
+
+| Feature Category | Status | Notes |
+|-----------------|--------|-------|
+| **SSH Terminal** | ✅ Fully Working | Persistent connections, hotkeys, session management |
+| **File Management** | ✅ Fully Working | Copy/paste/delete/rename/archive all functional |
+| **ADB Manager** | ✅ Fully Working | Wi-Fi, USB, pairing, file ops, package management |
+| **VNC Client** | ✅ Fully Working | Multiple auth types, scaling modes, clipboard sync |
+| **RDP Client** | ⚠️ Partial | Connection testing works, use Guacamole for full features |
+| **Network Scanner** | ✅ Fully Working | Subnet scanning, mDNS discovery, port detection |
+| **Device Info** | ✅ Fully Working | System monitoring, hardware details, performance metrics |
+| **Process Manager** | ✅ Fully Working | Process listing, monitoring, resource usage |
+| **Package Manager** | ✅ Fully Working | Package listing, install/uninstall operations |
+| **WebADB Server** | ✅ Fully Working | HTTP API for ADB operations |
+
 ### ✅ **Completed Features**
-- [x] SSH terminal with persistent connections
+- [x] SSH terminal with persistent connections across screen changes
 - [x] Android ADB management (Wi-Fi, USB, pairing)
-- [x] VNC remote desktop client
-- [x] Network device discovery
-- [x] Device information and monitoring
-- [x] File transfer and management
-- [x] Material 3 UI implementation
-- [x] Background service integration
-- [x] Connection state management
-- [x] Settings and preferences
+- [x] VNC remote desktop client with native protocol
+- [x] Network device discovery and scanning
+- [x] Device information and real-time monitoring
+- [x] File transfer and management (SSH and ADB)
+- [x] Complete file operations (copy, cut, paste, delete, rename, archive)
+- [x] Material 3 UI implementation with dark/light themes
+- [x] Background service for persistent connections
+- [x] Connection state management with auto-reconnect
+- [x] Settings and preferences with data persistence
+- [x] Multi-session terminal support
+- [x] Terminal font size controls with persistence
+- [x] Quick commands menu for common operations
 
 ### ⚠️ **Partially Implemented**
-- [x] RDP client (basic functionality, requires Guacamole for full features)
-- [x] WebADB server (functional but could use more features)
+- [x] RDP client (connection testing works, requires Guacamole for full desktop functionality)
+- [x] WebADB server (functional HTTP API, can be extended with more endpoints)
 
 ### 🔮 **Future Enhancements**
-- [ ] Native RDP protocol implementation
-- [ ] SFTP file transfer integration
-- [ ] Custom SSH key management
-- [ ] Connection encryption improvements
-- [ ] Advanced network monitoring
+- [ ] Native RDP protocol implementation (currently requires Guacamole)
+- [ ] SFTP file transfer integration (currently uses SSH commands)
+- [ ] SSH key-based authentication (currently password-based)
+- [ ] Custom SSH key management interface
+- [ ] Enhanced connection encryption options
+- [ ] Advanced network monitoring dashboard
 - [ ] Plugin system for additional protocols
-- [ ] Tablet-optimized layouts
-- [ ] Desktop companion app
+- [ ] Tablet-optimized split-screen layouts
+- [ ] Desktop companion app (Windows/Mac/Linux)
+- [ ] File editor integration for remote file editing
+- [ ] Scripting/automation features
 
 ### 🐛 **Known Issues**
-- Kotlin compilation warnings during build (cosmetic only)
-- VNC security lockout requires server restart after multiple failures
-- RDP native mode limited to connection testing
-- Large file transfers may timeout on slow connections
+
+**Build & Compilation:**
+- Kotlin compilation warnings during build (cosmetic only, does not affect functionality)
+- Some deprecation warnings in dependencies (scheduled for future updates)
+
+**SSH & Terminal:**
+- Terminal session persistence works across screen changes and app backgrounding
+- Font size adjustments persist across sessions
+- Cursor tracking automatically ensures visibility
+
+**File Management:**
+- SSH file operations (copy, cut, paste, delete) fully functional
+- File operations execute commands via SSH shell
+- Large file transfers may timeout on slow connections (consider using compression)
+
+**VNC & RDP:**
+- VNC security lockout requires server restart after multiple failed authentication attempts
+- RDP native mode limited to connection testing (use Guacamole mode for full functionality)
+- WebView-based implementations require stable network connection
+
+**Network & Discovery:**
+- Network scanning speed depends on subnet size and network conditions
+- Some firewalls may block discovery protocols (mDNS)
+
+**General:**
+- First-time connection may take longer as SSH keys are exchanged
+- Background service notification required for persistent terminal sessions
+
+---
+
+## 🔧 **Troubleshooting**
+
+### **SSH Connection Issues**
+- **Problem:** Cannot connect to SSH server
+  - Verify host, port, username, and password are correct
+  - Ensure SSH server is running on target device
+  - Check firewall rules allow SSH connections (port 22 by default)
+  - Try connecting from another SSH client to verify server availability
+
+- **Problem:** Terminal session disconnects
+  - Check network stability
+  - Increase SSH timeout settings on server
+  - Ensure foreground service notification is active
+
+### **File Management Issues**
+- **Problem:** File operations fail
+  - Verify SSH connection is active
+  - Check file permissions on target system
+  - Ensure sufficient storage space
+  - Use absolute paths when possible
+
+- **Problem:** Copy/Paste not working
+  - Verify files are selected before copying
+  - Check that clipboard contains valid items
+  - Ensure target directory has write permissions
+  - Try with smaller files first to verify functionality
+
+### **ADB Connection Issues**
+- **Problem:** Cannot discover ADB devices
+  - Enable Developer Options on Android device
+  - Enable Wireless Debugging in Developer Options
+  - Ensure both devices are on same network
+  - Check if device IP/port are correct
+
+- **Problem:** ADB connection refused
+  - Pair device first (Android 11+)
+  - Verify wireless debugging is enabled
+  - Restart ADB server on device
+  - Check if another ADB client is connected
+
+### **VNC/RDP Issues**
+- **Problem:** Cannot connect to VNC server
+  - Verify VNC server is running on target
+  - Check firewall allows VNC port (usually 5900+)
+  - Verify VNC password is correct
+  - Try with authentication disabled first (if safe to do so)
+
+- **Problem:** RDP connection fails
+  - For full RDP, set up Guacamole server
+  - Native RDP mode is for connection testing only
+  - Verify RDP is enabled on Windows target
+  - Check network policies allow RDP connections
+
+### **Performance Issues**
+- **Problem:** Slow terminal response
+  - Reduce terminal font size
+  - Disable terminal decorations
+  - Check network latency
+  - Close unused sessions
+
+- **Problem:** File browsing slow
+  - Reduce number of files in directory
+  - Use search to find specific files
+  - Disable hidden files view if not needed
+  - Consider using terminal commands for bulk operations
 
 ---
 
@@ -451,7 +581,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **GitHub Issues:** [Report bugs and request features](https://github.com/mmry2940/LitterBox/issues)
 - **Discussions:** [Community discussions and Q&A](https://github.com/mmry2940/LitterBox/discussions)
-- **Email:** [Contact maintainer](mailto:your-email@domain.com)
+- **Repository:** [View source code](https://github.com/mmry2940/LitterBox)
 
 ### **Support the Project**
 If you find LitterBox helpful, consider:
