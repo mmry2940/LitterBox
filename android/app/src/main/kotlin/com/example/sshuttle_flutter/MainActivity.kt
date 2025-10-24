@@ -36,6 +36,9 @@ class MainActivity : FlutterActivity() {
 	override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
 		super.configureFlutterEngine(flutterEngine)
 		
+		// Register background sync plugin
+		flutterEngine.plugins.add(BackgroundSyncPlugin())
+		
 		try {
 			usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
 			registerReceiver(usbReceiver, IntentFilter(ACTION_USB_PERMISSION))

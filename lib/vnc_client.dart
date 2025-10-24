@@ -70,7 +70,7 @@ class VNCClient {
   VNCConnectionState _state = VNCConnectionState.disconnected;
   VNCFrameBuffer? _frameBuffer;
   Timer? _frameRequestTimer;
-  final bool _firstFullFrameReceived = false;
+
   Duration frameRequestIntervalFast = const Duration(milliseconds: 120);
   Duration frameRequestIntervalSlow = const Duration(milliseconds: 750);
 
@@ -405,23 +405,6 @@ class VNCClient {
         .setUint16(8, _frameBuffer?.height ?? 480, Endian.big);
 
     _socket!.add(message);
-  }
-
-  void _startFrameRequestLoop() {
-    _frameRequestTimer?.cancel();
-    _frameRequestTimer = Timer.periodic(frameRequestIntervalFast, (t) {
-      if (_state != VNCConnectionState.connected) return;
-      // After first full frame, slow down to avoid excess bandwidth
-      if (_firstFullFrameReceived && t.tick == 1) {
-        _frameRequestTimer?.cancel();
-        _frameRequestTimer = Timer.periodic(frameRequestIntervalSlow, (_) {
-          if (_state == VNCConnectionState.connected) {
-            requestFrameUpdate(incremental: true);
-          }
-        });
-      }
-      requestFrameUpdate(incremental: !_firstFullFrameReceived);
-    });
   }
 
   Future<bool> _performHandshake() async {
@@ -1361,61 +1344,6 @@ class VNCClient {
     }
 
     return decrypted;
-  }
-
-  /// Encrypt a single AES block
-  Uint8List _aesEncryptBlock(AESEngine cipher, Uint8List block, Uint8List iv) {
-    final input = Uint8List(16);
-    final output = Uint8List(16);
-
-    // XOR with IV for CBC mode
-    for (int i = 0; i < 16; i++) {
-      input[i] = block[i] ^ iv[i];
-    }
-
-    cipher.processBlock(input, 0, output, 0);
-    return output;
-  }
-
-  /// Decrypt a single AES block
-  Uint8List _aesDecryptBlock(AESEngine cipher, Uint8List block, Uint8List iv) {
-    final output = Uint8List(16);
-
-    // Create decryption cipher with the same key
-    final decryptCipher = AESEngine();
-    final keyParam =
-        KeyParameter(Uint8List(16)); // Placeholder - use proper key management
-    decryptCipher.init(false, keyParam); // false for decryption
-
-    decryptCipher.processBlock(block, 0, output, 0);
-
-    // XOR with IV for CBC mode
-    for (int i = 0; i < 16; i++) {
-      output[i] ^= iv[i];
-    }
-
-    return output;
-  }
-
-  /// Encrypt data with AES (handles multiple blocks)
-  Uint8List _aesEncryptDataLegacy(
-      AESEngine cipher, Uint8List data, Uint8List iv) {
-    // Pad data to 16-byte boundary
-    final paddedLength = ((data.length + 15) ~/ 16) * 16;
-    final paddedData = Uint8List(paddedLength);
-    paddedData.setRange(0, data.length, data);
-
-    final encrypted = Uint8List(paddedLength);
-    Uint8List currentIv = Uint8List.fromList(iv);
-
-    for (int i = 0; i < paddedLength; i += 16) {
-      final block = paddedData.sublist(i, i + 16);
-      final encryptedBlock = _aesEncryptBlock(cipher, block, currentIv);
-      encrypted.setRange(i, i + 16, encryptedBlock);
-      currentIv = encryptedBlock; // Chain for CBC mode
-    }
-
-    return encrypted;
   }
 
   int _reverseBits(int value) {
@@ -2395,8 +2323,7 @@ class VNCClient {
       int x, int y, int width, int height, Uint8List pixels) {
     if (_frameBuffer == null) return;
 
-    _log(
-        'Updated rectangle: $x,$y ${width}x$height (${pixels.length} bytes)');
+    _log('Updated rectangle: $x,$y ${width}x$height (${pixels.length} bytes)');
 
     // Create frame buffer if not exists
     if (_frameBuffer!.pixels == null) {

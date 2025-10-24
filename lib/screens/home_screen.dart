@@ -16,6 +16,7 @@ import '../network_init.dart';
 import '../isolate_scanner.dart';
 import '../widgets/enhanced_device_card.dart';
 import '../models/device_status.dart';
+import '../widgets/connection_management_panel.dart';
 
 // Device List Screen for Drawer navigation
 class DeviceListScreen extends StatelessWidget {
@@ -1083,6 +1084,46 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.of(context).push(MaterialPageRoute(
                   builder: (context) => const RDPScreen(),
                 ));
+              },
+            ),
+            ListTile(
+              title: const Text('Connection Manager'),
+              leading: const Icon(Icons.hub),
+              onTap: () {
+                Navigator.of(context).pop();
+                showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (context) => Container(
+                    height: MediaQuery.of(context).size.height * 0.8,
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.hub, color: Colors.blue),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Connection Management',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () => Navigator.of(context).pop(),
+                            ),
+                          ],
+                        ),
+                        const Divider(),
+                        const Expanded(
+                          child: SingleChildScrollView(
+                            child: ConnectionManagementPanel(),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
               },
             ),
             ListTile(

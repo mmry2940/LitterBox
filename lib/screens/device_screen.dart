@@ -7,6 +7,9 @@ import 'device_packages_screen.dart';
 import 'device_processes_screen.dart';
 import 'device_misc_screen.dart';
 import '../models/device_status.dart';
+import '../services/connection_pool_manager.dart';
+import '../services/background_sync_service.dart';
+import '../widgets/connection_quality_indicator.dart';
 
 typedef AddDeviceCallback = void Function(String ip);
 
@@ -28,6 +31,12 @@ class _DeviceScreenState extends State<DeviceScreen> {
   bool _connecting = true;
   late String _password;
   DateTime? _connectionTime;
+
+  // Enhanced connection management
+  final ConnectionPoolManager _connectionPool = ConnectionPoolManager();
+  final BackgroundSyncService _backgroundSync = BackgroundSyncService();
+  String? _connectionId;
+  bool _autoReconnectEnabled = true;
 
   @override
   void initState() {
@@ -61,28 +70,57 @@ class _DeviceScreenState extends State<DeviceScreen> {
 
   Future<void> _connectSSH() async {
     if (!mounted) return;
-    final startTime = DateTime.now();
+
+    final host = widget.device['host']!;
+    final port = int.tryParse(widget.device['port'] ?? '22') ?? 22;
+    final username = widget.device['username']!;
+
+    _connectionId = 'ssh:$username@$host:$port';
+
     setState(() {
       _connecting = true;
       _sshError = null;
     });
+
     try {
-      final socket = await SSHSocket.connect(
-        widget.device['host']!,
-        int.tryParse(widget.device['port'] ?? '22') ?? 22,
+      // Use connection pool for enhanced connection management
+      final client = await _connectionPool.getSSHConnection(
+        host,
+        port,
+        username,
+        _password,
+        enableAutoReconnect: _autoReconnectEnabled,
+        timeout: const Duration(seconds: 15),
       );
-      final client = SSHClient(
-        socket,
-        username: widget.device['username']!,
-        onPasswordRequest: () => _password,
-      );
+
       if (!mounted) return;
-      setState(() {
-        _sshClient = client;
-        _connecting = false;
-        _connectionTime = startTime;
-        _miscScreenReloadKey++; // Refresh misc screen to show updated status
-      });
+
+      if (client != null) {
+        setState(() {
+          _sshClient = client;
+          _connecting = false;
+          _connectionTime = DateTime.now();
+          _miscScreenReloadKey++; // Refresh misc screen to show updated status
+        });
+
+        // Enable background sync for this device if configured
+        await _backgroundSync.enableDeviceSync(
+            widget.device['name'] ?? host, true);
+
+        // Listen to reconnection events
+        _connectionPool.reconnectionEvents.listen((event) {
+          if (mounted && event.contains(_connectionId!)) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(event),
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+        });
+      } else {
+        throw Exception('Failed to establish connection through pool');
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -99,6 +137,66 @@ class _DeviceScreenState extends State<DeviceScreen> {
   final int _processesScreenReloadKey = 0;
   final int _packagesScreenReloadKey = 0;
   int _miscScreenReloadKey = 0;
+
+  @override
+  void dispose() {
+    // Clean up connections when screen is disposed
+    if (_connectionId != null) {
+      _connectionPool.closeConnection(_connectionId!);
+    }
+    super.dispose();
+  }
+
+  /// Show detailed connection statistics dialog
+  void _showConnectionDetails() {
+    if (_connectionId == null) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        child: Container(
+          width: 400,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.network_check, color: Colors.blue),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Connection Statistics',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const Divider(),
+              const SizedBox(height: 8),
+              ConnectionStatsWidget(connectionId: _connectionId!),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Close'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   List<Widget> get _pages => [
         DeviceInfoScreen(
@@ -171,11 +269,55 @@ class _DeviceScreenState extends State<DeviceScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(
-            widget.device['name']?.isNotEmpty == true
-                ? widget.device['name']!
-                : '${widget.device['username']}@${widget.device['host']}:${widget.device['port']}',
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.device['name']?.isNotEmpty == true
+                      ? widget.device['name']!
+                      : '${widget.device['username']}@${widget.device['host']}:${widget.device['port']}',
+                ),
+              ),
+              if (_connectionId != null) ...[
+                const SizedBox(width: 8),
+                ConnectionQualityIndicator(
+                  connectionId: _connectionId!,
+                  showDetails: false,
+                  onTap: () => _showConnectionDetails(),
+                ),
+                const SizedBox(width: 8),
+              ],
+            ],
           ),
+          actions: [
+            if (_sshClient != null)
+              IconButton(
+                icon: Icon(
+                    _autoReconnectEnabled ? Icons.sync : Icons.sync_disabled),
+                tooltip: _autoReconnectEnabled
+                    ? 'Auto-reconnect enabled'
+                    : 'Auto-reconnect disabled',
+                onPressed: () {
+                  setState(() {
+                    _autoReconnectEnabled = !_autoReconnectEnabled;
+                  });
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Auto-reconnect ${_autoReconnectEnabled ? 'enabled' : 'disabled'}',
+                      ),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                },
+              ),
+            IconButton(
+              icon: const Icon(Icons.network_check),
+              tooltip: 'Connection Statistics',
+              onPressed: _showConnectionDetails,
+            ),
+          ],
         ),
         body: _pages[_selectedIndex],
         bottomNavigationBar: BottomNavigationBar(

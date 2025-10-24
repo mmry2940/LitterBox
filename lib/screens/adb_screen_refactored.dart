@@ -7,10 +7,12 @@ import '../adb_client.dart';
 import '../adb_backend.dart';
 import '../adb/flutter_adb_client.dart';
 import '../models/saved_adb_device.dart';
+import '../models/secure_adb_device.dart';
 import '../models/app_info.dart';
 import '../adb/adb_mdns_discovery.dart';
 import '../adb/usb_bridge.dart';
 import '../services/shared_adb_manager.dart';
+
 import 'apps_screen.dart';
 import '../widgets/enhanced_adb_dashboard.dart';
 import '../widgets/adb_connection_wizard.dart';
@@ -76,10 +78,9 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
 
   // Saved devices
   List<SavedADBDevice> _savedDevices = [];
-  SavedADBDevice? _selectedSaved;
+
   // (Optional future) bool _showWebToken = false; // reserved for show/hide token toggle
 
-  bool _loadingConnect = false;
   int _logcatLinesShown = 0;
   bool _autoStartLogcat = true; // Preference for auto-starting logcat
   bool _autoOpenShell = true; // Preference for auto-opening shell on connection
@@ -97,8 +98,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   String _deviceSortOption = 'Alphabetical';
 
   // Multi-select batch operations state
-  final Set<String> _selectedDeviceNames = {};
-  bool _batchMode = false;
 
   @override
   void initState() {
@@ -218,19 +217,152 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     }
   }
 
+  void _showSecurityStatus(BuildContext context) async {
+    try {
+      final stats = await SecureADBDeviceManager.getSecurityStats();
+      final prefs = await SharedPreferences.getInstance();
+      final legacyDevices = prefs.getStringList('adb_devices') ?? [];
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.security),
+              SizedBox(width: 8),
+              Text('Security Status'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('🔒 Secure Devices: ${stats['totalDevices']}'),
+              Text('✅ Verified: ${stats['verifiedDevices']}'),
+              Text('📱 Recently Used: ${stats['recentlyUsedDevices']}'),
+              Text('🔑 Authorized Keys: ${stats['authorizedKeys']}'),
+              if (legacyDevices.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const Text('⚠️ Legacy Devices Found:',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, color: Colors.orange)),
+                Text('${legacyDevices.length} devices using old storage'),
+                const Text('Consider migrating to secure storage',
+                    style: TextStyle(fontSize: 12)),
+              ],
+            ],
+          ),
+          actions: [
+            if (legacyDevices.isNotEmpty)
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _showMigrationDialog(context, legacyDevices.length);
+                },
+                child: const Text('Migrate Now'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to load security status: $e')),
+      );
+    }
+  }
+
+  void _showMigrationDialog(BuildContext context, int deviceCount) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Migrate to Secure Storage'),
+        content: Text(
+          'This will migrate $deviceCount devices to use encrypted storage for better security.\n\n'
+          'Your device credentials will be encrypted and stored more securely.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _performMigration();
+            },
+            child: const Text('Migrate'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _performMigration() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final legacyDevicesJson = prefs.getStringList('adb_devices') ?? [];
+      int migrated = 0;
+
+      for (final deviceJson in legacyDevicesJson) {
+        try {
+          final legacyDevice = SavedADBDevice.fromJson(jsonDecode(deviceJson));
+          final secureDevice = SecureADBDevice(
+            id: SecureADBDevice.generateId(legacyDevice.host, legacyDevice.port,
+                legacyDevice.connectionType),
+            name: legacyDevice.name,
+            host: legacyDevice.host,
+            port: legacyDevice.port,
+            connectionType: legacyDevice.connectionType,
+            createdAt: DateTime.now(),
+            lastUsed: legacyDevice.lastUsed ?? DateTime.now(),
+            label: legacyDevice.label,
+            note: legacyDevice.note,
+          );
+
+          await SecureADBDeviceManager.saveDevice(secureDevice);
+          migrated++;
+        } catch (e) {
+          print('Failed to migrate device: $e');
+        }
+      }
+
+      if (migrated > 0) {
+        // Clear legacy devices after successful migration
+        await prefs.remove('adb_devices');
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'Successfully migrated $migrated devices to secure storage'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Migration failed: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   void _loadDevice(SavedADBDevice d) {
     setState(() {
       _host.text = d.host;
       _port.text = d.port.toString();
       _connectionType = d.connectionType;
-      _selectedSaved = d;
     });
     // Auto-connect when loading a device
     _connectToDevice(d);
   }
 
   Future<void> _connectToDevice(SavedADBDevice d) async {
-    setState(() => _loadingConnect = true);
     bool ok = false;
 
     switch (d.connectionType) {
@@ -278,7 +410,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
         ),
       );
     }
-    setState(() => _loadingConnect = false);
   }
 
   void _editDevice(SavedADBDevice d) {
@@ -335,8 +466,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       context: context,
       builder: (context) => AdbConnectionWizard(
         onConnect: (host, port, type, label) async {
-          setState(() => _loadingConnect = true);
-
           bool success = false;
           if (type == ADBConnectionType.usb) {
             success = await _adb.connectUSB();
@@ -361,7 +490,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
               ),
             );
           }
-          setState(() => _loadingConnect = false);
         },
         onCancel: () => Navigator.of(context).pop(),
       ),
@@ -591,6 +719,29 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
           appBar: AppBar(
             title: const Text('ADB Manager'),
             actions: [
+              // Security status indicator
+              FutureBuilder<Map<String, dynamic>>(
+                future: SecureADBDeviceManager.getSecurityStats(),
+                builder: (context, snapshot) {
+                  if (snapshot.hasData) {
+                    final stats = snapshot.data!;
+                    final hasSecureDevices = stats['totalDevices'] > 0;
+                    return IconButton(
+                      icon: Icon(
+                        hasSecureDevices
+                            ? Icons.verified_user
+                            : Icons.security_outlined,
+                        color: hasSecureDevices ? Colors.green : Colors.orange,
+                      ),
+                      tooltip: hasSecureDevices
+                          ? '${stats['verifiedDevices']}/${stats['totalDevices']} devices verified'
+                          : 'Security: Click to check status',
+                      onPressed: () => _showSecurityStatus(context),
+                    );
+                  }
+                  return const SizedBox.shrink();
+                },
+              ),
               PopupMenuButton<String>(
                 onSelected: (v) async {
                   switch (v) {
@@ -1327,7 +1478,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
               });
             },
             onConnectWifi: (host, port) async {
-              setState(() => _loadingConnect = true);
               final ok = await _adb.connectWifi(host, port);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1338,10 +1488,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                   ),
                 );
               }
-              setState(() => _loadingConnect = false);
             },
             onConnectUsb: () async {
-              setState(() => _loadingConnect = true);
               final ok = await _adb.connectUSB();
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1352,7 +1500,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                   ),
                 );
               }
-              setState(() => _loadingConnect = false);
             },
             onRunMdnsScan: _runMdnsScan,
             onRefreshUsb: _refreshUsb,
@@ -1371,215 +1518,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
           ),
         ),
       ],
-    );
-  }
-
-  Card _connectionCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              const Icon(Icons.cable, size: 18),
-              const SizedBox(width: 6),
-              const Text('Connection',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              const Spacer(),
-              Text(_adb.currentState.name,
-                  style: TextStyle(
-                      color: _stateColor(_adb.currentState), fontSize: 12)),
-            ]),
-            const SizedBox(height: 12),
-            // Discovery rows
-            Row(children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  icon: _mdnsScanning
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.wifi_tethering),
-                  label: Text(
-                      _mdnsScanning ? 'Scanning mDNS...' : 'Discover Wi‑Fi'),
-                  onPressed: _mdnsScanning ? null : _runMdnsScan,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.usb),
-                  label: const Text('Refresh USB'),
-                  onPressed: _refreshUsb,
-                ),
-              )
-            ]),
-            if (_mdnsServices.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              _mdnsListWidget(),
-            ],
-            if (_usbDevices.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              _usbListWidget(),
-            ],
-            const SizedBox(height: 12),
-            DropdownButtonFormField<ADBConnectionType>(
-              initialValue: _connectionType,
-              items: ADBConnectionType.values
-                  .map((t) =>
-                      DropdownMenuItem(value: t, child: Text(t.displayName)))
-                  .toList(),
-              onChanged: (v) =>
-                  setState(() => _connectionType = v ?? ADBConnectionType.wifi),
-              decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                  labelText: 'Type'),
-            ),
-            const SizedBox(height: 12),
-            if (_connectionType != ADBConnectionType.usb)
-              Row(children: [
-                Expanded(
-                  flex: 3,
-                  child: TextField(
-                    controller: _host,
-                    decoration: const InputDecoration(
-                        labelText: 'Host / IP',
-                        border: OutlineInputBorder(),
-                        isDense: true),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                if (_connectionType != ADBConnectionType.pairing)
-                  SizedBox(
-                    width: 100,
-                    child: TextField(
-                      controller: _port,
-                      decoration: const InputDecoration(
-                          labelText: 'Port',
-                          border: OutlineInputBorder(),
-                          isDense: true),
-                      keyboardType: TextInputType.number,
-                    ),
-                  ),
-              ]),
-            if (_connectionType == ADBConnectionType.pairing) ...[
-              const SizedBox(height: 8),
-              Row(children: [
-                SizedBox(
-                  width: 110,
-                  child: TextField(
-                    controller: _pairingPort,
-                    decoration: const InputDecoration(
-                        labelText: 'Pair Port',
-                        border: OutlineInputBorder(),
-                        isDense: true),
-                    keyboardType: TextInputType.number,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: _pairingCode,
-                    decoration: const InputDecoration(
-                        labelText: 'Pair Code',
-                        border: OutlineInputBorder(),
-                        isDense: true),
-                    keyboardType: TextInputType.number,
-                  ),
-                ),
-              ]),
-              const SizedBox(height: 8),
-              const Text('Enable Wireless debugging > Pair device with code',
-                  style: TextStyle(fontSize: 11)),
-            ],
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  icon: _loadingConnect
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : Icon(_connectionType == ADBConnectionType.pairing
-                          ? Icons.link
-                          : Icons.wifi),
-                  label: Text(_loadingConnect
-                      ? (_connectionType == ADBConnectionType.pairing
-                          ? 'Pairing...'
-                          : 'Connecting...')
-                      : (_connectionType == ADBConnectionType.pairing
-                          ? 'Pair'
-                          : 'Connect')),
-                  onPressed: _loadingConnect
-                      ? null
-                      : () async {
-                          setState(() => _loadingConnect = true);
-                          bool ok = false;
-                          switch (_connectionType) {
-                            case ADBConnectionType.wifi:
-                            case ADBConnectionType.custom:
-                              ok = await _adb.connectWifi(_host.text.trim(),
-                                  int.tryParse(_port.text) ?? 5555);
-                              break;
-                            case ADBConnectionType.usb:
-                              ok = await _adb.connectUSB();
-                              break;
-                            case ADBConnectionType.pairing:
-                              await _adb.pairDevice(
-                                  _host.text.trim(),
-                                  int.tryParse(_pairingPort.text) ?? 37205,
-                                  _pairingCode.text.trim(),
-                                  int.tryParse(_port.text) ?? 5555);
-                              ok = true;
-                              break;
-                          }
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                                content: Text(ok ? 'Success' : 'Failed'),
-                                backgroundColor:
-                                    ok ? Colors.green : Colors.red));
-                          }
-                          setState(() => _loadingConnect = false);
-                        },
-                ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                icon: const Icon(Icons.link_off),
-                label: const Text('Disconnect'),
-                onPressed: _adb.currentState == ADBConnectionState.connected
-                    ? () async {
-                        await _adb.disconnect();
-                        setState(() {});
-                      }
-                    : null,
-              )
-            ]),
-            const SizedBox(height: 8),
-            Row(children: [
-              Expanded(
-                  child: OutlinedButton.icon(
-                      icon: const Icon(Icons.save),
-                      label: const Text('Save Device'),
-                      onPressed: _saveDevice)),
-              const SizedBox(width: 8),
-              Expanded(
-                  child: OutlinedButton.icon(
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Refresh Devices'),
-                      onPressed: () async {
-                        await _adb.refreshBackendDevices();
-                        setState(() {});
-                      })),
-            ])
-          ],
-        ),
-      ),
     );
   }
 
@@ -1609,62 +1547,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
         });
       }
     }
-  }
-
-  Widget _mdnsListWidget() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        const Icon(Icons.wifi, size: 16),
-        const SizedBox(width: 4),
-        const Text('Discovered Wi‑Fi Devices',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        const Spacer(),
-        if (_lastMdnsScan != null)
-          Text(_timeAgo(_lastMdnsScan!), style: const TextStyle(fontSize: 10))
-      ]),
-      const SizedBox(height: 4),
-      SizedBox(
-        height: 120,
-        child: ListView.builder(
-          itemCount: _mdnsServices.length,
-          itemBuilder: (c, i) {
-            final s = _mdnsServices[i];
-            final host = s.ip ?? s.ipv6 ?? s.host;
-            final statusIcon = s.reachable == null
-                ? const Icon(Icons.help_outline, size: 14, color: Colors.grey)
-                : s.reachable == true
-                    ? const Icon(Icons.check_circle,
-                        size: 14, color: Colors.green)
-                    : const Icon(Icons.error,
-                        size: 14, color: Colors.redAccent);
-            return ListTile(
-              dense: true,
-              leading: statusIcon,
-              title: Text('$host:${s.port}',
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13)),
-              subtitle: Text(
-                [
-                  if (s.txt['device'] != null) s.txt['device']!,
-                  if (s.ip != null) 'v4:${s.ip}',
-                  if (s.ipv6 != null) 'v6:${s.ipv6}'
-                ].join(' • '),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 10),
-              ),
-              trailing: IconButton(
-                  icon: const Icon(Icons.play_arrow, size: 18),
-                  onPressed: () {
-                    _host.text = host;
-                    _port.text = s.port.toString();
-                    setState(() => _connectionType = ADBConnectionType.wifi);
-                  }),
-            );
-          },
-        ),
-      ),
-    ]);
   }
 
   Future<void> _refreshUsb() async {
@@ -1703,62 +1585,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     await _refreshUsb();
   }
 
-  Widget _usbListWidget() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        const Icon(Icons.usb, size: 16),
-        const SizedBox(width: 4),
-        const Text('USB Devices', style: TextStyle(fontWeight: FontWeight.bold))
-      ]),
-      const SizedBox(height: 4),
-      SizedBox(
-        height: 110,
-        child: ListView.builder(
-          itemCount: _usbDevices.length,
-          itemBuilder: (c, i) {
-            final d = _usbDevices[i];
-            return ListTile(
-              dense: true,
-              leading: Icon(d.hasPermission ? Icons.usb : Icons.usb_off,
-                  size: 16,
-                  color: d.hasPermission ? Colors.green : Colors.orange),
-              title: Text(d.name,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13)),
-              subtitle: Text(d.serial ?? 'VID:${d.vendorId} PID:${d.productId}',
-                  style: const TextStyle(fontSize: 11)),
-              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                if (!d.hasPermission)
-                  IconButton(
-                      icon: const Icon(Icons.lock_open, size: 18),
-                      onPressed: () async {
-                        final ok =
-                            await UsbBridge.requestPermission(d.deviceId);
-                        if (ok) _refreshUsb();
-                      }),
-                IconButton(
-                    icon: const Icon(Icons.play_arrow, size: 18),
-                    onPressed: () {
-                      setState(() => _connectionType = ADBConnectionType.usb);
-                    })
-              ]),
-              onTap: () {
-                setState(() => _connectionType = ADBConnectionType.usb);
-              },
-            );
-          },
-        ),
-      ),
-    ]);
-  }
-
-  String _timeAgo(DateTime dt) {
-    final diff = DateTime.now().difference(dt);
-    if (diff.inSeconds < 60) return '${diff.inSeconds}s ago';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    return '${diff.inHours}h ago';
-  }
-
   Card _currentDeviceCard() => Card(
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -1772,320 +1598,6 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
             ),
           ]),
         ),
-      );
-
-  Card _quickActionsCard() => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Quick Actions',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              _qa('Console', Icons.terminal,
-                  () => setState(() => _selectedIndex = 1)),
-              _qa('Start Logcat', Icons.play_arrow, () async {
-                if (!_adb.logcatActive) {
-                  await _adb.startLogcat();
-                  setState(() => _selectedIndex = 3);
-                }
-              }, enabled: !_adb.logcatActive),
-              _qa('Stop Logcat', Icons.stop, () async {
-                await _adb.stopLogcat();
-                setState(() {});
-              }, enabled: _adb.logcatActive),
-              _qa('Files', Icons.folder_copy,
-                  () => setState(() => _selectedIndex = 5)),
-              _qa('Info', Icons.info_outline,
-                  () => setState(() => _selectedIndex = 6)),
-              _qa('Key Status', Icons.vpn_key, () async {
-                await _adb.showCredentialStatus();
-                setState(() =>
-                    _selectedIndex = 1); // Switch to terminal to see output
-              }),
-              _qa('Clear Keys', Icons.delete_forever, () async {
-                // Show confirmation dialog
-                final confirmed = await showDialog<bool>(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Clear RSA Keys'),
-                    content: const Text(
-                        'This will clear all saved RSA keys and device authorization history. '
-                        'You will need to re-authorize this app on all devices.\n\n'
-                        'Continue?'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(false),
-                        child: const Text('Cancel'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(true),
-                        child: const Text('Clear'),
-                      ),
-                    ],
-                  ),
-                );
-
-                if (confirmed == true) {
-                  await _adb.clearSavedCredentials();
-                  setState(() =>
-                      _selectedIndex = 1); // Switch to terminal to see output
-                }
-              }),
-            ])
-          ]),
-        ),
-      );
-
-  Widget _savedDevicesWidget({required bool scrollableParent}) {
-    if (_savedDevices.isEmpty) {
-      return const Card(
-          child: Padding(
-              padding: EdgeInsets.all(12), child: Text('No saved devices')));
-    }
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Saved Devices',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          // Search/filter bar for connections
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: TextField(
-              decoration: InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Search connections by name, type, status...',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              onChanged: (query) {
-                setState(() {
-                  _appSearchQuery = query;
-                });
-              },
-            ),
-          ),
-          // Add sorting options dropdown above the device list
-          Row(
-            children: [
-              const Text('Sort by:'),
-              const SizedBox(width: 8),
-              DropdownButton<String>(
-                value: _deviceSortOption,
-                items: [
-                  'Alphabetical',
-                  'Last Used',
-                  'Pinned First',
-                ]
-                    .map((option) => DropdownMenuItem(
-                          value: option,
-                          child: Text(option),
-                        ))
-                    .toList(),
-                onChanged: (v) => setState(() {
-                  _deviceSortOption = v ?? 'Alphabetical';
-                }),
-              ),
-            ],
-          ),
-          // Multi-select batch operations controls
-          Row(
-            children: [
-              ElevatedButton.icon(
-                icon: Icon(_batchMode ? Icons.cancel : Icons.select_all),
-                label: Text(_batchMode ? 'Exit Batch Mode' : 'Batch Select'),
-                onPressed: () => setState(() => _batchMode = !_batchMode),
-              ),
-              if (_batchMode) ...[
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.delete),
-                  label: const Text('Delete Selected'),
-                  onPressed: _selectedDeviceNames.isEmpty
-                      ? null
-                      : () async {
-                          setState(() {
-                            _savedDevices.removeWhere(
-                                (d) => _selectedDeviceNames.contains(d.name));
-                            _selectedDeviceNames.clear();
-                          });
-                        },
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.link),
-                  label: const Text('Connect Selected'),
-                  onPressed: _selectedDeviceNames.isEmpty
-                      ? null
-                      : () async {
-                          // In batch connect, call _loadDevice synchronously (no await)
-                          for (final d in _savedDevices.where(
-                              (d) => _selectedDeviceNames.contains(d.name))) {
-                            _loadDevice(d);
-                          }
-                          setState(() {
-                            _selectedDeviceNames.clear();
-                          });
-                        },
-                ),
-              ],
-            ],
-          ),
-          if (scrollableParent)
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 260),
-              child: _savedDevicesList(shrinkWrap: true),
-            )
-          else
-            Expanded(child: _savedDevicesList()),
-        ]),
-      ),
-    );
-  }
-
-  Widget _savedDevicesList({bool shrinkWrap = false}) {
-    // Group favorites at the top of the device list
-    final filteredDevices = _savedDevices.where((d) {
-      final q = _appSearchQuery.toLowerCase();
-      return d.name.toLowerCase().contains(q) ||
-          d.connectionType.displayName.toLowerCase().contains(q) ||
-          _adb.currentState.name.toLowerCase().contains(q);
-    }).toList();
-    final favoriteDevices = filteredDevices
-        .where((d) => _favoriteConnections.contains(d.name))
-        .toList();
-    final nonFavoriteDevices = filteredDevices
-        .where((d) => !_favoriteConnections.contains(d.name))
-        .toList();
-    final groupedDevices = [...favoriteDevices, ...nonFavoriteDevices];
-
-    // Sort groupedDevices based on selected option
-    List<SavedADBDevice> sortedDevices = List.from(groupedDevices);
-    switch (_deviceSortOption) {
-      case 'Alphabetical':
-        sortedDevices.sort(
-            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-        break;
-      case 'Last Used':
-        sortedDevices.sort((a, b) => (b.lastUsed ?? DateTime(1970))
-            .compareTo(a.lastUsed ?? DateTime(1970)));
-        break;
-      case 'Pinned First':
-        // Already grouped, but sort favorites alphabetically
-        final favs = sortedDevices
-            .where((d) => _favoriteConnections.contains(d.name))
-            .toList();
-        final nonFavs = sortedDevices
-            .where((d) => !_favoriteConnections.contains(d.name))
-            .toList();
-        favs.sort(
-            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-        nonFavs.sort(
-            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-        sortedDevices = [...favs, ...nonFavs];
-        break;
-    }
-
-    return ListView.builder(
-      shrinkWrap: shrinkWrap,
-      physics: shrinkWrap ? const ClampingScrollPhysics() : null,
-      itemCount: sortedDevices.length,
-      itemBuilder: (c, i) {
-        final d = sortedDevices[i];
-        final isFavorite = _favoriteConnections.contains(d.name);
-        if (_connectionFilter == 'Favorites' && !isFavorite) {
-          return const SizedBox.shrink();
-        }
-        return ListTile(
-          selected: _selectedSaved?.name == d.name,
-          leading: _batchMode
-              ? Checkbox(
-                  value: _selectedDeviceNames.contains(d.name),
-                  onChanged: (checked) {
-                    setState(() {
-                      if (checked ?? false) {
-                        _selectedDeviceNames.add(d.name);
-                      } else {
-                        _selectedDeviceNames.remove(d.name);
-                      }
-                    });
-                  },
-                )
-              : Stack(
-                  alignment: Alignment.topRight,
-                  children: [
-                    Icon(
-                      isFavorite ? Icons.star : Icons.memory,
-                      color: isFavorite ? Colors.amber : null,
-                    ),
-                    if (d.isConnected != null)
-                      Positioned(
-                        right: 0,
-                        top: 0,
-                        child: Icon(
-                          d.isConnected! ? Icons.circle : Icons.circle_outlined,
-                          color: d.isConnected! ? Colors.green : Colors.red,
-                          size: 12,
-                        ),
-                      ),
-                  ],
-                ),
-          title: Text(d.name, overflow: TextOverflow.ellipsis),
-          subtitle: Text(
-            [
-              d.connectionType.displayName,
-              if (d.label != null && d.label!.isNotEmpty) d.label,
-              if (d.note != null && d.note!.isNotEmpty) d.note
-            ].join(' • '),
-            maxLines: 2,
-          ),
-          onTap: () => _loadDevice(d),
-          trailing: isFavorite
-              ? Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.link),
-                      tooltip: 'Connect',
-                      onPressed: () => _loadDevice(d),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.edit),
-                      tooltip: 'Edit',
-                      onPressed: () {
-                        // Show edit dialog (reuse existing logic)
-                        _showEditDeviceDialog(d);
-                      },
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete),
-                      tooltip: 'Remove',
-                      onPressed: () {
-                        setState(() {
-                          _savedDevices.remove(d);
-                          _favoriteConnections.remove(d.name);
-                        });
-                      },
-                    ),
-                  ],
-                )
-              : null,
-        );
-      },
-    );
-  }
-
-  Widget _qa(String label, IconData icon, VoidCallback onTap,
-          {bool enabled = true}) =>
-      SizedBox(
-        height: 36,
-        child: ElevatedButton.icon(
-            onPressed: enabled ? onTap : null,
-            icon: Icon(icon, size: 16),
-            label: Text(label)),
       );
 
   Widget _logcatTab() {
