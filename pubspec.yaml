@@ -54,6 +54,7 @@ dependencies:
   flutter_foreground_task: ^9.1.0
   http: ^1.2.0
   web_socket_channel: ^3.0.1
+  connectivity_plus: ^7.0.0
 
 
 dev_dependencies:

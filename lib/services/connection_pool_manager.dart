@@ -63,9 +63,9 @@ enum ConnectionHealthStatus {
 }
 
 enum CircuitBreakerState {
-  closed,    // Normal operation
-  open,      // Blocking requests
-  halfOpen,  // Testing if service is back
+  closed, // Normal operation
+  open, // Blocking requests
+  halfOpen, // Testing if service is back
 }
 
 enum NetworkState {
@@ -81,22 +81,22 @@ class ConnectionCircuitBreaker {
   final int failureThreshold;
   final Duration timeout;
   final Duration retryAfter;
-  
+
   CircuitBreakerState _state = CircuitBreakerState.closed;
   int _failureCount = 0;
   DateTime? _lastFailureTime;
   DateTime? _nextRetryTime;
-  
+
   ConnectionCircuitBreaker({
     required this.connectionId,
     this.failureThreshold = 5,
     this.timeout = const Duration(seconds: 30),
     this.retryAfter = const Duration(minutes: 2),
   });
-  
+
   CircuitBreakerState get state => _state;
   int get failureCount => _failureCount;
-  
+
   bool canAttemptConnection() {
     switch (_state) {
       case CircuitBreakerState.closed:
@@ -111,24 +111,24 @@ class ConnectionCircuitBreaker {
         return true;
     }
   }
-  
+
   void recordSuccess() {
     _failureCount = 0;
     _state = CircuitBreakerState.closed;
     _lastFailureTime = null;
     _nextRetryTime = null;
   }
-  
+
   void recordFailure() {
     _failureCount++;
     _lastFailureTime = DateTime.now();
-    
+
     if (_failureCount >= failureThreshold) {
       _state = CircuitBreakerState.open;
       _nextRetryTime = DateTime.now().add(retryAfter);
     }
   }
-  
+
   void reset() {
     _failureCount = 0;
     _state = CircuitBreakerState.closed;
@@ -150,14 +150,14 @@ class ManagedConnection<T> {
   Timer? _heartbeatTimer;
   Timer? _qualityTimer;
   Timer? _keepAliveTimer;
-  
+
   // Enhanced stability features
   final ConnectionCircuitBreaker circuitBreaker;
   Duration adaptiveTimeout;
   int consecutiveFailures = 0;
   DateTime? lastValidationTime;
   bool isValidated = false;
-  
+
   // Network state monitoring
   NetworkState lastKnownNetworkState = NetworkState.unknown;
 
@@ -187,18 +187,18 @@ class ManagedConnection<T> {
   void updateQuality(ConnectionQuality quality) {
     this.quality = quality;
     _qualityController.add(quality);
-    
+
     // Update adaptive timeout based on quality
     _updateAdaptiveTimeout(quality);
   }
-  
+
   /// Validate connection before use
   Future<bool> validateConnection() async {
     if (!circuitBreaker.canAttemptConnection()) {
       _statusController.add('Connection blocked by circuit breaker');
       return false;
     }
-    
+
     // Skip validation if recently validated and healthy
     if (lastValidationTime != null &&
         DateTime.now().difference(lastValidationTime!).inSeconds < 30 &&
@@ -206,17 +206,18 @@ class ManagedConnection<T> {
         isHealthy) {
       return true;
     }
-    
+
     try {
       if (client is SSHClient) {
         final ssh = client as SSHClient;
-        final result = await ssh.run('echo "validation"').timeout(adaptiveTimeout);
+        final result =
+                    final result = await ssh.run('echo \"validation\"').timeout(adaptiveTimeout);
         final isValid = result.exitCode == 0;
-        
+
         lastValidationTime = DateTime.now();
         isValidated = isValid;
         isHealthy = isValid;
-        
+
         if (isValid) {
           circuitBreaker.recordSuccess();
           consecutiveFailures = 0;
@@ -224,16 +225,16 @@ class ManagedConnection<T> {
           circuitBreaker.recordFailure();
           consecutiveFailures++;
         }
-        
+
         return isValid;
       } else if (client is ADBClientManager) {
         final adb = client as ADBClientManager;
         final isValid = adb.currentState == ADBConnectionState.connected;
-        
+
         lastValidationTime = DateTime.now();
         isValidated = isValid;
         isHealthy = isValid;
-        
+
         if (isValid) {
           circuitBreaker.recordSuccess();
           consecutiveFailures = 0;
@@ -241,7 +242,7 @@ class ManagedConnection<T> {
           circuitBreaker.recordFailure();
           consecutiveFailures++;
         }
-        
+
         return isValid;
       }
     } catch (e) {
@@ -252,10 +253,10 @@ class ManagedConnection<T> {
       isValidated = false;
       return false;
     }
-    
+
     return false;
   }
-  
+
   /// Update adaptive timeout based on connection quality
   void _updateAdaptiveTimeout(ConnectionQuality quality) {
     switch (quality.status) {
@@ -286,14 +287,14 @@ class ManagedConnection<T> {
       const Duration(seconds: 10),
       (_) => _measureQuality(),
     );
-    
+
     // Start keep-alive timer for idle connections
     _keepAliveTimer?.cancel();
     _keepAliveTimer = Timer.periodic(
       const Duration(minutes: 2),
       (_) => _performKeepAlive(),
     );
-    
+
     _statusController.add('Health monitoring started');
   }
 
@@ -304,7 +305,7 @@ class ManagedConnection<T> {
     _heartbeatTimer = null;
     _qualityTimer = null;
     _keepAliveTimer = null;
-    
+
     _statusController.add('Health monitoring stopped');
   }
 
@@ -318,7 +319,7 @@ class ManagedConnection<T> {
         _statusController.add('Network disconnected');
         return;
       }
-      
+
       if (client is SSHClient) {
         final ssh = client as SSHClient;
         await ssh.run('echo "health_check"').timeout(adaptiveTimeout);
@@ -336,18 +337,19 @@ class ManagedConnection<T> {
           _statusController.add('ADB connection unhealthy');
         }
       }
-      
+
       lastKnownNetworkState = networkState;
     } catch (e) {
       isHealthy = false;
       circuitBreaker.recordFailure();
       consecutiveFailures++;
       _statusController.add('Health check failed: $e');
-      
+
       // Adaptive backoff for failed health checks
       if (consecutiveFailures > 3) {
         _heartbeatTimer?.cancel();
-        final backoffDelay = Duration(seconds: (consecutiveFailures * 30).clamp(30, 300));
+        final backoffDelay =
+            Duration(seconds: (consecutiveFailures * 30).clamp(30, 300));
         _heartbeatTimer = Timer(backoffDelay, () {
           startHealthCheck(const Duration(seconds: 30));
         });
@@ -410,7 +412,7 @@ class ManagedConnection<T> {
     }
     return ConnectionHealthStatus.critical;
   }
-  
+
   /// Perform keep-alive to prevent idle timeouts
   Future<void> _performKeepAlive() async {
     // Only send keep-alive if connection hasn't been used recently
@@ -418,11 +420,13 @@ class ManagedConnection<T> {
     if (timeSinceLastUse.inMinutes < 5) {
       return; // Connection is actively used, no need for keep-alive
     }
-    
+
     try {
       if (client is SSHClient) {
         final ssh = client as SSHClient;
-        await ssh.run('true').timeout(const Duration(seconds: 10)); // Minimal command
+        await ssh
+            .run('true')
+            .timeout(const Duration(seconds: 10)); // Minimal command
         _statusController.add('Keep-alive sent');
       }
     } catch (e) {
@@ -430,14 +434,14 @@ class ManagedConnection<T> {
       isHealthy = false;
     }
   }
-  
+
   /// Get current network state
   Future<NetworkState> _getNetworkState() async {
     try {
       if (kIsWeb) return NetworkState.connected; // Assume connected on web
-      
-      final connectivityResult = await Connectivity().checkConnectivity();
-      switch (connectivityResult.first) {
+
+      final connectivityResults = await Connectivity().checkConnectivity();
+      switch (connectivityResults.first) {
         case ConnectivityResult.wifi:
         case ConnectivityResult.ethernet:
         case ConnectivityResult.mobile:
@@ -476,12 +480,99 @@ class ConnectionPoolManager {
 
   final Map<String, ManagedConnection> _connections = {};
   final Map<String, Timer> _reconnectionTimers = {};
+  final Map<String, ConnectionCircuitBreaker> _circuitBreakers = {};
   final StreamController<String> _reconnectionEvents =
       StreamController.broadcast();
+  final StreamController<String> _networkEvents = StreamController.broadcast();
+
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  NetworkState _currentNetworkState = NetworkState.unknown;
+  Timer? _networkMonitorTimer;
 
   Stream<String> get reconnectionEvents => _reconnectionEvents.stream;
+  Stream<String> get networkEvents => _networkEvents.stream;
 
-  /// Get or create SSH connection
+  ConnectionPoolManager._internal() {
+    _initializeNetworkMonitoring();
+  }
+
+  void _initializeNetworkMonitoring() {
+    if (kIsWeb) return;
+
+    _connectivitySubscription =
+        Connectivity().onConnectivityChanged.listen((results) {
+      _handleNetworkChange(results.first);
+    });
+
+    // Periodic network quality check
+    _networkMonitorTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      _checkNetworkQuality();
+    });
+  }
+
+  void _handleNetworkChange(ConnectivityResult result) {
+    final newState = _mapConnectivityToNetworkState(result);
+    if (newState != _currentNetworkState) {
+      _networkEvents.add(
+          'Network state changed: ${_currentNetworkState.name} -> ${newState.name}');
+      _currentNetworkState = newState;
+
+      if (newState == NetworkState.disconnected) {
+        _handleNetworkDisconnection();
+      } else if (_currentNetworkState == NetworkState.disconnected &&
+          newState == NetworkState.connected) {
+        _handleNetworkReconnection();
+      }
+    }
+  }
+
+  NetworkState _mapConnectivityToNetworkState(ConnectivityResult result) {
+    switch (result) {
+      case ConnectivityResult.wifi:
+      case ConnectivityResult.ethernet:
+      case ConnectivityResult.mobile:
+        return NetworkState.connected;
+      case ConnectivityResult.none:
+        return NetworkState.disconnected;
+      default:
+        return NetworkState.unknown;
+    }
+  }
+
+  void _handleNetworkDisconnection() {
+    _networkEvents.add('Network disconnected - pausing connection attempts');
+    for (final connection in _connections.values) {
+      connection.isHealthy = false;
+    }
+  }
+
+  void _handleNetworkReconnection() {
+    _networkEvents.add('Network reconnected - validating connections');
+    for (final connection in _connections.values) {
+      connection.validateConnection();
+    }
+  }
+
+  Future<void> _checkNetworkQuality() async {
+    if (_currentNetworkState == NetworkState.disconnected) return;
+
+    try {
+      // Simple network latency test
+      final stopwatch = Stopwatch()..start();
+      await InternetAddress.lookup('google.com')
+          .timeout(const Duration(seconds: 5));
+      stopwatch.stop();
+
+      final latency = stopwatch.elapsedMilliseconds;
+      if (latency > 5000) {
+        _networkEvents.add('High network latency detected: ${latency}ms');
+      }
+    } catch (e) {
+      _networkEvents.add('Network quality check failed: $e');
+    }
+  }
+
+  /// Get or create SSH connection with enhanced stability
   Future<SSHClient?> getSSHConnection(
     String host,
     int port,
@@ -489,70 +580,127 @@ class ConnectionPoolManager {
     String password, {
     bool enableAutoReconnect = true,
     Duration? timeout,
+    int maxRetries = 3,
   }) async {
     final connectionId = 'ssh:$username@$host:$port';
 
-    // Return existing healthy connection if available
-    final existing = _connections[connectionId];
-    if (existing != null &&
-        existing.isHealthy &&
-        existing.client is SSHClient) {
-      existing.updateLastUsed();
-      return existing.client as SSHClient;
-    }
-
-    try {
-      // Create new SSH connection
-      final socket = await SSHSocket.connect(
-        host,
-        port,
-        timeout: timeout ?? const Duration(seconds: 10),
-      );
-
-      final client = SSHClient(
-        socket,
-        username: username,
-        onPasswordRequest: () => password,
-      );
-
-      // Create managed connection
-      final managedConnection = ManagedConnection<SSHClient>(
-        connectionId: connectionId,
-        client: client,
-        metadata: {
-          'host': host,
-          'port': port,
-          'username': username,
-          'type': 'ssh',
-        },
-      );
-
-      // Start health monitoring
-      managedConnection.startHealthCheck(const Duration(seconds: 30));
-
-      // Setup auto-reconnection if enabled
-      if (enableAutoReconnect) {
-        _setupAutoReconnection(connectionId, () async {
-          return getSSHConnection(host, port, username, password,
-              enableAutoReconnect: enableAutoReconnect, timeout: timeout);
-        });
-      }
-
-      _connections[connectionId] = managedConnection;
-      return client;
-    } catch (e) {
-      debugPrint('Failed to create SSH connection: $e');
-
-      // Schedule retry if auto-reconnect is enabled
-      if (enableAutoReconnect) {
-        _scheduleReconnection(connectionId, () async {
-          return getSSHConnection(host, port, username, password,
-              enableAutoReconnect: enableAutoReconnect, timeout: timeout);
-        });
-      }
-
+    // Check network state first
+    if (_currentNetworkState == NetworkState.disconnected) {
+      _reconnectionEvents.add('Cannot connect - network is disconnected');
       return null;
     }
+
+    // Check circuit breaker
+    final circuitBreaker = _circuitBreakers[connectionId] ??=
+        ConnectionCircuitBreaker(connectionId: connectionId);
+
+    if (!circuitBreaker.canAttemptConnection()) {
+      _reconnectionEvents
+          .add('Connection blocked by circuit breaker: $connectionId');
+      return null;
+    }
+
+    // Return existing connection if valid
+    final existing = _connections[connectionId];
+    if (existing != null && existing.client is SSHClient) {
+      final isValid = await existing.validateConnection();
+      if (isValid) {
+        existing.updateLastUsed();
+        return existing.client as SSHClient;
+      } else {
+        // Remove invalid connection
+        _connections.remove(connectionId);
+        existing.dispose();
+      }
+    }
+
+    // Retry logic with exponential backoff
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        _reconnectionEvents
+            .add('Connecting to $connectionId (attempt $attempt/$maxRetries)');
+
+        // Adaptive timeout based on attempt
+        final adaptiveTimeout =
+            timeout ?? Duration(seconds: 10 + (attempt * 5));
+
+        final socket = await SSHSocket.connect(
+          host,
+          port,
+          timeout: adaptiveTimeout,
+        );
+
+        final client = SSHClient(
+          socket,
+          username: username,
+          onPasswordRequest: () => password,
+        );
+
+        // Test the connection immediately
+        await client
+            .run('echo "connection_test"')
+            .timeout(const Duration(seconds: 5));
+
+        // Create managed connection
+        final managedConnection = ManagedConnection<SSHClient>(
+          connectionId: connectionId,
+          client: client,
+          metadata: {
+            'host': host,
+            'port': port,
+            'username': username,
+            'type': 'ssh',
+            'created': DateTime.now().toIso8601String(),
+            'maxRetries': maxRetries,
+          },
+          initialTimeout: adaptiveTimeout,
+        );
+
+        // Start health monitoring
+        managedConnection.startHealthCheck(const Duration(seconds: 30));
+
+        // Setup auto-reconnection if enabled
+        if (enableAutoReconnect) {
+          _setupAutoReconnection(connectionId, () async {
+            return getSSHConnection(host, port, username, password,
+                enableAutoReconnect: enableAutoReconnect,
+                timeout: timeout,
+                maxRetries: maxRetries);
+          });
+        }
+
+        _connections[connectionId] = managedConnection;
+        circuitBreaker.recordSuccess();
+        _reconnectionEvents.add('Successfully connected to $connectionId');
+
+        return client;
+      } catch (e) {
+        _reconnectionEvents
+            .add('Connection attempt $attempt failed for $connectionId: $e');
+        circuitBreaker.recordFailure();
+
+        if (attempt < maxRetries) {
+          // Wait before retry with exponential backoff
+          final delayMs = (100 * (1 << (attempt - 1))).clamp(100, 2000);
+          await Future.delayed(Duration(milliseconds: delayMs));
+        }
+      }
+    }
+
+    // All attempts failed
+    _reconnectionEvents.add('All connection attempts failed for $connectionId');
+
+    // Schedule retry if auto-reconnect is enabled
+    if (enableAutoReconnect) {
+      _scheduleReconnection(connectionId, () async {
+        return getSSHConnection(host, port, username, password,
+            enableAutoReconnect: enableAutoReconnect,
+            timeout: timeout,
+            maxRetries: maxRetries);
+      });
+    }
+
+    return null;
   }
 
   /// Get or create ADB connection
@@ -721,28 +869,103 @@ class ConnectionPoolManager {
     _reconnectionTimers.clear();
   }
 
-  /// Get connection statistics
+  /// Get connection statistics with enhanced information
   Map<String, dynamic> getConnectionStats() {
+    final now = DateTime.now();
+    final connections = _connections.entries.map((e) {
+      final connection = e.value;
+      final timeSinceLastUse = now.difference(connection.lastUsed);
+      final circuitBreaker = _circuitBreakers[e.key];
+
+      return {
+        'id': e.key,
+        'healthy': connection.isHealthy,
+        'validated': connection.isValidated,
+        'lastUsed': connection.lastUsed.toIso8601String(),
+        'timeSinceLastUse':
+            '${timeSinceLastUse.inMinutes}m ${timeSinceLastUse.inSeconds % 60}s',
+        'quality': connection.quality?.qualityText ?? 'Unknown',
+        'latency': connection.quality?.latencyMs,
+        'adaptiveTimeout': connection.adaptiveTimeout.inSeconds,
+        'consecutiveFailures': connection.consecutiveFailures,
+        'circuitBreakerState': circuitBreaker?.state.name ?? 'unknown',
+        'circuitBreakerFailures': circuitBreaker?.failureCount ?? 0,
+        'metadata': connection.metadata,
+      };
+    }).toList();
+
+    // Sort connections by priority (healthy, recently used, good quality)
+    connections.sort((a, b) {
+      // Prioritize healthy connections
+      if (a['healthy'] != b['healthy']) {
+        return (b['healthy'] as bool) ? 1 : -1;
+      }
+
+      // Then by recent usage
+      final aLastUsed = DateTime.parse(a['lastUsed']);
+      final bLastUsed = DateTime.parse(b['lastUsed']);
+      return bLastUsed.compareTo(aLastUsed);
+    });
+
     return {
       'totalConnections': _connections.length,
       'healthyConnections':
           _connections.values.where((c) => c.isHealthy).length,
+      'validatedConnections':
+          _connections.values.where((c) => c.isValidated).length,
       'activeReconnections': _reconnectionTimers.length,
-      'connections': _connections.entries
-          .map((e) => {
-                'id': e.key,
-                'healthy': e.value.isHealthy,
-                'lastUsed': e.value.lastUsed.toIso8601String(),
-                'quality': e.value.quality?.qualityText ?? 'Unknown',
-                'metadata': e.value.metadata,
-              })
-          .toList(),
+      'networkState': _currentNetworkState.name,
+      'circuitBreakersOpen': _circuitBreakers.values
+          .where((cb) => cb.state == CircuitBreakerState.open)
+          .length,
+      'connections': connections,
     };
+  }
+
+  /// Force connection validation for all connections
+  Future<void> validateAllConnections() async {
+    _networkEvents.add('Validating all connections');
+
+    final validationTasks = _connections.values.map((connection) async {
+      try {
+        await connection.validateConnection();
+      } catch (e) {
+        _reconnectionEvents
+            .add('Validation failed for ${connection.connectionId}: $e');
+      }
+    });
+
+    await Future.wait(validationTasks);
+    _networkEvents.add('Connection validation completed');
+  }
+
+  /// Clean up stale connections
+  void cleanupStaleConnections(
+      {Duration maxIdleTime = const Duration(hours: 1)}) {
+    final now = DateTime.now();
+    final staleConnections = <String>[];
+
+    for (final entry in _connections.entries) {
+      final connection = entry.value;
+      final timeSinceLastUse = now.difference(connection.lastUsed);
+
+      if (timeSinceLastUse > maxIdleTime && !connection.isHealthy) {
+        staleConnections.add(entry.key);
+      }
+    }
+
+    for (final connectionId in staleConnections) {
+      _reconnectionEvents.add('Cleaning up stale connection: $connectionId');
+      closeConnection(connectionId);
+    }
   }
 
   /// Dispose manager
   void dispose() {
     closeAllConnections();
+    _connectivitySubscription?.cancel();
+    _networkMonitorTimer?.cancel();
     _reconnectionEvents.close();
+    _networkEvents.close();
   }
 }

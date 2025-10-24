@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'device_info_screen.dart';
@@ -32,11 +33,18 @@ class _DeviceScreenState extends State<DeviceScreen> {
   late String _password;
   DateTime? _connectionTime;
 
-  // Enhanced connection management
+  // Enhanced connection management with stability improvements
   final ConnectionPoolManager _connectionPool = ConnectionPoolManager();
   final BackgroundSyncService _backgroundSync = BackgroundSyncService();
   String? _connectionId;
   bool _autoReconnectEnabled = true;
+
+  // Connection monitoring
+  StreamSubscription<String>? _reconnectionSubscription;
+  StreamSubscription<String>? _networkSubscription;
+  Timer? _connectionValidationTimer;
+  int _connectionAttempts = 0;
+  DateTime? _lastConnectionAttempt;
 
   @override
   void initState() {
@@ -76,26 +84,41 @@ class _DeviceScreenState extends State<DeviceScreen> {
     final username = widget.device['username']!;
 
     _connectionId = 'ssh:$username@$host:$port';
+    _connectionAttempts++;
+    _lastConnectionAttempt = DateTime.now();
 
     setState(() {
       _connecting = true;
       _sshError = null;
     });
 
+    // Setup connection monitoring
+    _setupConnectionMonitoring();
+
     try {
-      // Use connection pool for enhanced connection management
+      // Use enhanced connection pool with retry logic
       final client = await _connectionPool.getSSHConnection(
         host,
         port,
         username,
         _password,
         enableAutoReconnect: _autoReconnectEnabled,
-        timeout: const Duration(seconds: 15),
+        timeout: const Duration(seconds: 20),
+        maxRetries: 3,
       );
 
       if (!mounted) return;
 
       if (client != null) {
+        // Validate connection before using
+        // Check connection quality before proceeding
+        final connectionQuality =
+            _connectionPool.getConnectionQuality(_connectionId!);
+        if (connectionQuality != null &&
+            connectionQuality.status == ConnectionHealthStatus.critical) {
+          throw Exception('Connection quality is critical');
+        }
+
         setState(() {
           _sshClient = client;
           _connecting = false;
@@ -341,7 +364,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
           currentIndex: _selectedIndex,
           onTap: _onItemTapped,
         ),
-        // No floatingActionButton here; add device button is only on HomeScreen
+        // No floatingActionButton here; add device button is only on HomeScreen\n      ),\n    );\n  }\n  \n  void _setupConnectionMonitoring() {\n    _reconnectionSubscription?.cancel();\n    _reconnectionSubscription = _connectionPool.reconnectionEvents.listen((event) {\n      if (_connectionId != null && event.contains(_connectionId!)) {\n        if (mounted) {\n          ScaffoldMessenger.of(context).showSnackBar(\n            SnackBar(\n              content: Text(event),\n              duration: const Duration(seconds: 2),\n            ),\n          );\n        }\n      }\n    });\n  }\n  \n  void _startConnectionValidation() {\n    _connectionValidationTimer?.cancel();\n    _connectionValidationTimer = Timer.periodic(const Duration(minutes: 2), (_) {\n      _validateConnection();\n    });\n  }\n  \n  Future<void> _validateConnection() async {\n    if (_connectionId == null || _sshClient == null || !mounted) return;\n    \n    final quality = _connectionPool.getConnectionQuality(_connectionId!);\n    if (quality != null && quality.status == ConnectionHealthStatus.critical) {\n      setState(() {\n        _sshError = 'Connection quality degraded';\n        _sshClient = null;\n      });\n      \n      if (_autoReconnectEnabled) {\n        Future.delayed(const Duration(seconds: 3), () {\n          if (mounted) _connectSSH();\n        });\n      }\n    }\n  }\n  \n  void _handleConnectionError(dynamic error) {\n    if (!mounted) return;\n    \n    setState(() {\n      _sshError = error.toString();\n      _connecting = false;\n      _sshClient = null;\n    });\n    \n    if (_autoReconnectEnabled && _connectionAttempts < 5) {\n      final delay = Duration(seconds: (2 * _connectionAttempts).clamp(2, 30));\n      \n      ScaffoldMessenger.of(context).showSnackBar(\n        SnackBar(\n          content: Text('Reconnecting in ${delay.inSeconds}s...'),\n          duration: delay,\n        ),\n      );\n      \n      Future.delayed(delay, () {\n        if (mounted && _autoReconnectEnabled) _connectSSH();\n      });\n    }\n  }\n  \n  @override\n  void dispose() {\n    _sshClient?.close();\n    _reconnectionSubscription?.cancel();\n    _networkSubscription?.cancel();\n    _connectionValidationTimer?.cancel();\n    super.dispose();\n  }\n}
       ),
     );
   }
