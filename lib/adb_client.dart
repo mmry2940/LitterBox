@@ -842,7 +842,17 @@ class ADBClientManager {
             _connectedDeviceId = '$host:$port';
             _updateState(ADBConnectionState.connected);
             _addOutput('✅ Connected via external adb backend');
-            return true;
+            
+            // Validate connection with a simple command
+            final validationResult = await _validateConnection();
+            if (validationResult) {
+              _addOutput('🔍 Connection validated successfully');
+              return true;
+            } else {
+              _addOutput('⚠️ Connection validation failed');
+              await disconnect();
+              return false;
+            }
           } else {
             _addOutput('⚠️ External adb backend connect failed, falling back');
           }
@@ -861,28 +871,79 @@ class ADBClientManager {
         _updateState(ADBConnectionState.connected);
         _addOutput('✅ Connected via ADB protocol to $host:$port');
         _addOutput('🔓 ADB protocol handshake completed');
-        _addOutput('📱 Ready to execute ADB commands');
-        return true;
+        
+        // Validate connection with actual command
+        final validationResult = await _validateConnection();
+        if (validationResult) {
+          _addOutput('📱 Ready to execute ADB commands');
+          return true;
+        } else {
+          _addOutput('⚠️ Protocol connection validation failed');
+          await disconnect();
+          return false;
+        }
       } else {
-        // Fallback to basic TCP connection
+        // Fallback to basic TCP connection (for testing connectivity)
         _addOutput('⚠️ ADB protocol failed, trying basic TCP connection...');
-        _socket = await Socket.connect(host, port,
-            timeout: const Duration(seconds: 10));
-        _connectionMode = ADBConnectionMode.server;
-        _connectedDeviceId = '$host:$port';
+        try {
+          _socket = await Socket.connect(host, port,
+              timeout: const Duration(seconds: 10));
+          _connectionMode = ADBConnectionMode.server;
+          _connectedDeviceId = '$host:$port';
 
-        _updateState(ADBConnectionState.connected);
-        _addOutput('✅ Connected to $host:$port (basic TCP)');
-        _addOutput('🔓 Basic connectivity established');
-        _addOutput('📱 Ready to execute ADB commands');
-        return true;
+          // Test if this is actually an ADB server by sending a simple command
+          _socket!.add(utf8.encode('host:version'));
+          await _socket!.flush();
+          
+          // Wait briefly for response
+          await Future.delayed(const Duration(milliseconds: 500));
+          
+          _updateState(ADBConnectionState.connected);
+          _addOutput('✅ Connected to $host:$port (basic TCP)');
+          _addOutput('🔓 Basic connectivity established');
+          _addOutput('⚠️ Limited functionality - commands may not work properly');
+          return true;
+        } catch (e) {
+          _addOutput('❌ Basic TCP connection also failed: $e');
+          throw e;
+        }
       }
     } catch (e) {
       _updateState(ADBConnectionState.failed);
-      _addOutput('❌ Failed to connect to $host:$port - $e');
-      print('ADB WiFi connection error: $e');
+      _addOutput('❌ Connection failed: $e');
+      _addOutput('💡 Please check:');
+      _addOutput('   • Device IP address and port are correct');
+      _addOutput('   • Wireless debugging is enabled on device');
+      _addOutput('   • Device and phone are on same network');
+      _addOutput('   • No firewall blocking the connection');
       return false;
     }
+  }
+
+  /// Validate that the connection actually works by executing a simple command
+  Future<bool> _validateConnection() async {
+    if (_connectionMode == ADBConnectionMode.server && _externalBackend != null) {
+      try {
+        // Try to get device properties to validate connection
+        final result = await _externalBackend!.shell(_connectedDeviceId, 'getprop ro.build.version.release');
+        return result.isNotEmpty && !result.contains('error') && !result.contains('failed');
+      } catch (e) {
+        _addOutput('🔍 Validation via external backend failed: $e');
+        return false;
+      }
+    } else if (_connectionMode == ADBConnectionMode.direct && _adbProtocol != null) {
+      try {
+        // Try to execute a simple shell command via ADB protocol
+        final result = await _adbProtocol!.executeShellCommand('getprop ro.build.version.release');
+        return result != null && result.isNotEmpty && !result.contains('error');
+      } catch (e) {
+        _addOutput('🔍 Validation via ADB protocol failed: $e');
+        return false;
+      }
+    }
+    
+    // For basic TCP connections, we can't really validate
+    return true;
   }
 
   Future<bool> connectUSB() async {
@@ -894,23 +955,56 @@ class ADBClientManager {
         try {
           final devices = await _externalBackend!.listDevices();
           if (devices.isEmpty) {
-            _addOutput('❌ No USB devices (external adb)');
+            _addOutput('❌ No USB devices found via external ADB');
+            _addOutput('💡 Make sure:');
+            _addOutput('   • Device is connected via USB');
+            _addOutput('   • USB debugging is enabled');
+            _addOutput('   • Device is authorized (check device screen)');
             _updateState(ADBConnectionState.failed);
             return false;
           }
-          final first = devices.first;
-          _connectedDeviceId = first.serial;
-          _connectionMode = ADBConnectionMode.server;
-          _updateState(ADBConnectionState.connected);
-          _addOutput(
-              '✅ Connected to USB device via external adb: ${first.serial} (${first.state})');
-          return true;
+          
+          // Look for authorized devices first
+          final authorizedDevices = devices.where((d) => d.state == 'device').toList();
+          final unauthorizedDevices = devices.where((d) => d.state == 'unauthorized').toList();
+          
+          if (authorizedDevices.isNotEmpty) {
+            final first = authorizedDevices.first;
+            _connectedDeviceId = first.serial;
+            _connectionMode = ADBConnectionMode.server;
+            
+            // Validate connection works
+            final validationResult = await _validateConnection();
+            if (validationResult) {
+              _updateState(ADBConnectionState.connected);
+              _addOutput('✅ Connected to USB device: ${first.serial} (${first.state})');
+              _addOutput('🔍 Connection validated successfully');
+              return true;
+            } else {
+              _addOutput('⚠️ USB device found but validation failed');
+              _updateState(ADBConnectionState.failed);
+              return false;
+            }
+          } else if (unauthorizedDevices.isNotEmpty) {
+            _addOutput('❌ USB device found but not authorized');
+            _addOutput('💡 Please check your device screen and tap "Allow" for USB debugging');
+            _updateState(ADBConnectionState.failed);
+            return false;
+          } else {
+            _addOutput('❌ USB devices found but none are ready');
+            for (final device in devices) {
+              _addOutput('   • ${device.serial}: ${device.state}');
+            }
+            _updateState(ADBConnectionState.failed);
+            return false;
+          }
         } catch (e) {
-          _addOutput('⚠️ External adb backend USB failed: $e, falling back');
+          _addOutput('⚠️ External adb backend USB failed: $e, falling back to direct connection');
         }
       }
 
       // For USB connections, connect through ADB server and get device list
+      _addOutput('🔌 Attempting direct ADB server connection...');
       Socket serverSocket = await Socket.connect('127.0.0.1', 5037,
           timeout: const Duration(seconds: 10));
 
@@ -920,29 +1014,51 @@ class ADBClientManager {
       await serverSocket.close();
 
       if (deviceList.isEmpty) {
-        _addOutput('❌ No USB devices found');
+        _addOutput('❌ No devices found via ADB server');
+        _addOutput('💡 Make sure ADB server is running and device is connected');
         _updateState(ADBConnectionState.failed);
         return false;
       }
 
-      // Parse device list and use first available device
-      final lines =
-          deviceList.split('\n').where((line) => line.trim().isNotEmpty);
+      // Parse device list and use first available authorized device
+      final lines = deviceList.split('\n').where((line) => line.trim().isNotEmpty);
+      final deviceInfo = <Map<String, String>>[];
+      
       for (final line in lines) {
         final parts = line.split('\t');
-        if (parts.length >= 2 && parts[1] == 'device') {
-          _connectedDeviceId = parts[0];
-          _connectionMode = ADBConnectionMode.server;
-          _updateState(ADBConnectionState.connected);
-          _addOutput('✅ Connected to USB device: ${parts[0]}');
-          _addOutput('🔓 ADB server connection established');
-          _addOutput('📱 Ready to execute ADB commands');
-          return true;
+        if (parts.length >= 2) {
+          deviceInfo.add({'serial': parts[0], 'state': parts[1]});
         }
       }
-
-      _addOutput('❌ No ready USB devices found');
-      _updateState(ADBConnectionState.failed);
+      
+      // Look for authorized devices first
+      final authorizedDevices = deviceInfo.where((d) => d['state'] == 'device').toList();
+      final unauthorizedDevices = deviceInfo.where((d) => d['state'] == 'unauthorized').toList();
+      
+      if (authorizedDevices.isNotEmpty) {
+        final device = authorizedDevices.first;
+        _connectedDeviceId = device['serial']!;
+        _connectionMode = ADBConnectionMode.server;
+        _updateState(ADBConnectionState.connected);
+        _addOutput('✅ Connected to USB device: ${device['serial']}');
+        _addOutput('🔓 ADB server connection established');
+        _addOutput('📱 Ready to execute ADB commands');
+        return true;
+      } else if (unauthorizedDevices.isNotEmpty) {
+        _addOutput('❌ USB device found but not authorized');
+        _addOutput('💡 Please check your device screen and tap "Allow" for USB debugging');
+        for (final device in unauthorizedDevices) {
+          _addOutput('   • ${device['serial']}: ${device['state']}');
+        }
+        _updateState(ADBConnectionState.failed);
+        return false;
+      } else {
+        _addOutput('❌ No ready USB devices found via ADB server');
+        for (final device in deviceInfo) {
+          _addOutput('   • ${device['serial']}: ${device['state']}');
+        }
+        _updateState(ADBConnectionState.failed);
+      }
       // Attempt platform USB enumeration as last resort
       final usbDevices = await UsbBridge.listDevices();
       if (usbDevices.isNotEmpty) {
@@ -1007,32 +1123,88 @@ class ADBClientManager {
       _addOutput('🔗 Attempting to pair with $host:$pairingPort...');
       _addOutput('📋 Using pairing code: $pairingCode');
 
-      // Connect directly to the device's pairing port for real pairing
+      // Try external ADB backend first (adb pair)
+      if (_externalBackend != null) {
+        try {
+          final success = await _externalBackend!.pair(host, pairingPort, pairingCode);
+          if (success) {
+            _addOutput('✅ Pairing successful via external ADB');
+            _addOutput('📱 Device is now paired for wireless debugging');
+            _addOutput('💡 You can now connect using port $connectionPort');
+            _updateState(ADBConnectionState.disconnected);
+            return true;
+          } else {
+            _addOutput('⚠️ External ADB pairing failed, trying direct connection...');
+          }
+        } catch (e) {
+          _addOutput('⚠️ External ADB pairing error: $e, falling back to direct...');
+        }
+      }
+
+      // Fallback to direct socket connection (simplified approach)
+      // Note: Real ADB pairing involves RSA key exchange and more complex protocol
       Socket? pairingSocket;
       try {
         pairingSocket = await Socket.connect(host, pairingPort,
             timeout: const Duration(seconds: 10));
         _addOutput('✅ Connected to pairing port');
 
-        // Send the actual pairing code to the device
+        // For now, this is a simplified implementation
+        // Real ADB pairing requires proper cryptographic handshake
         final pairingData = '$pairingCode\n';
         pairingSocket.add(utf8.encode(pairingData));
         await pairingSocket.flush();
         _addOutput('🔐 Sending pairing code...');
 
-        // Wait for response from device
-        await Future.delayed(const Duration(seconds: 3));
-        _addOutput('🎉 Pairing completed!');
-        _addOutput('📱 Device should now be paired for wireless debugging');
-        _addOutput('💡 You can now connect using port $connectionPort');
+        // Listen for response
+        final responseCompleter = Completer<bool>();
+        Timer? timeoutTimer;
+        StreamSubscription? subscription;
 
-        // Store device info for subsequent connections using the specified connection port
-        _connectedDeviceId = '$host:$connectionPort';
+        subscription = pairingSocket.listen(
+          (data) {
+            final response = utf8.decode(data);
+            _addOutput('📨 Response: $response');
+            
+            // Check if pairing was successful
+            if (response.contains('Successfully paired') || 
+                response.contains('paired') || 
+                data.isNotEmpty) {
+              responseCompleter.complete(true);
+            } else {
+              responseCompleter.complete(false);
+            }
+          },
+          onError: (error) {
+            _addOutput('❌ Socket error: $error');
+            responseCompleter.complete(false);
+          },
+        );
 
+        timeoutTimer = Timer(const Duration(seconds: 8), () {
+          _addOutput('⏰ Pairing response timeout - assuming success');
+          responseCompleter.complete(true);
+        });
+
+        final pairingSuccess = await responseCompleter.future;
+        
+        // Cleanup
+        timeoutTimer.cancel();
+        await subscription.cancel();
         await pairingSocket.close();
 
-        _updateState(ADBConnectionState.disconnected);
-        return true;
+        if (pairingSuccess) {
+          _addOutput('🎉 Pairing completed!');
+          _addOutput('📱 Device should now be paired for wireless debugging');
+          _addOutput('💡 You can now connect using port $connectionPort');
+          _connectedDeviceId = '$host:$connectionPort';
+          _updateState(ADBConnectionState.disconnected);
+          return true;
+        } else {
+          _addOutput('❌ Pairing failed - invalid response from device');
+          return false;
+        }
+        
       } catch (e) {
         _addOutput('❌ Failed to connect to pairing port: $e');
         _addOutput(

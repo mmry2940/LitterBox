@@ -167,6 +167,10 @@ class _DeviceScreenState extends State<DeviceScreen> {
     if (_connectionId != null) {
       _connectionPool.closeConnection(_connectionId!);
     }
+    _sshClient?.close();
+    _reconnectionSubscription?.cancel();
+    _networkSubscription?.cancel();
+    _connectionValidationTimer?.cancel();
     super.dispose();
   }
 
@@ -364,8 +368,73 @@ class _DeviceScreenState extends State<DeviceScreen> {
           currentIndex: _selectedIndex,
           onTap: _onItemTapped,
         ),
-        // No floatingActionButton here; add device button is only on HomeScreen\n      ),\n    );\n  }\n  \n  void _setupConnectionMonitoring() {\n    _reconnectionSubscription?.cancel();\n    _reconnectionSubscription = _connectionPool.reconnectionEvents.listen((event) {\n      if (_connectionId != null && event.contains(_connectionId!)) {\n        if (mounted) {\n          ScaffoldMessenger.of(context).showSnackBar(\n            SnackBar(\n              content: Text(event),\n              duration: const Duration(seconds: 2),\n            ),\n          );\n        }\n      }\n    });\n  }\n  \n  void _startConnectionValidation() {\n    _connectionValidationTimer?.cancel();\n    _connectionValidationTimer = Timer.periodic(const Duration(minutes: 2), (_) {\n      _validateConnection();\n    });\n  }\n  \n  Future<void> _validateConnection() async {\n    if (_connectionId == null || _sshClient == null || !mounted) return;\n    \n    final quality = _connectionPool.getConnectionQuality(_connectionId!);\n    if (quality != null && quality.status == ConnectionHealthStatus.critical) {\n      setState(() {\n        _sshError = 'Connection quality degraded';\n        _sshClient = null;\n      });\n      \n      if (_autoReconnectEnabled) {\n        Future.delayed(const Duration(seconds: 3), () {\n          if (mounted) _connectSSH();\n        });\n      }\n    }\n  }\n  \n  void _handleConnectionError(dynamic error) {\n    if (!mounted) return;\n    \n    setState(() {\n      _sshError = error.toString();\n      _connecting = false;\n      _sshClient = null;\n    });\n    \n    if (_autoReconnectEnabled && _connectionAttempts < 5) {\n      final delay = Duration(seconds: (2 * _connectionAttempts).clamp(2, 30));\n      \n      ScaffoldMessenger.of(context).showSnackBar(\n        SnackBar(\n          content: Text('Reconnecting in ${delay.inSeconds}s...'),\n          duration: delay,\n        ),\n      );\n      \n      Future.delayed(delay, () {\n        if (mounted && _autoReconnectEnabled) _connectSSH();\n      });\n    }\n  }\n  \n  @override\n  void dispose() {\n    _sshClient?.close();\n    _reconnectionSubscription?.cancel();\n    _networkSubscription?.cancel();\n    _connectionValidationTimer?.cancel();\n    super.dispose();\n  }\n}
       ),
     );
+  }
+  
+  void _setupConnectionMonitoring() {
+    _reconnectionSubscription?.cancel();
+    _reconnectionSubscription = _connectionPool.reconnectionEvents.listen((event) {
+      if (_connectionId != null && event.contains(_connectionId!)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(event),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    });
+  }
+
+  void _startConnectionValidation() {
+    _connectionValidationTimer?.cancel();
+    _connectionValidationTimer = Timer.periodic(const Duration(minutes: 2), (_) {
+      _validateConnection();
+    });
+  }
+
+  Future<void> _validateConnection() async {
+    if (_connectionId == null || _sshClient == null || !mounted) return;
+
+    final quality = _connectionPool.getConnectionQuality(_connectionId!);
+    if (quality != null && quality.status == ConnectionHealthStatus.critical) {
+      setState(() {
+        _sshError = 'Connection quality degraded';
+        _sshClient = null;
+      });
+
+      if (_autoReconnectEnabled) {
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) _connectSSH();
+        });
+      }
+    }
+  }
+
+  void _handleConnectionError(dynamic error) {
+    if (!mounted) return;
+
+    setState(() {
+      _sshError = error.toString();
+      _connecting = false;
+      _sshClient = null;
+    });
+
+    if (_autoReconnectEnabled && _connectionAttempts < 5) {
+      final delay = Duration(seconds: (2 * _connectionAttempts).clamp(2, 30));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Reconnecting in ${delay.inSeconds}s...'),
+          duration: delay,
+        ),
+      );
+
+      Future.delayed(delay, () {
+        if (mounted && _autoReconnectEnabled) _connectSSH();
+      });
+    }
   }
 }

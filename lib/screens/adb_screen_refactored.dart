@@ -417,6 +417,79 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     _showEditDeviceDialog(d);
   }
 
+  /// Show dialog to get pairing information for wireless debugging
+  Future<Map<String, dynamic>?> _showPairingDialog(String host, int connectionPort) async {
+    final pairingPortController = TextEditingController(text: '37205');
+    final pairingCodeController = TextEditingController();
+    
+    return showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Wireless Pairing'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Pairing with device at $host'),
+            const SizedBox(height: 16),
+            const Text('To enable wireless debugging:'),
+            const Text('1. Go to Settings > Developer Options'),
+            const Text('2. Enable "Wireless debugging"'),
+            const Text('3. Tap "Pair device with pairing code"'),
+            const Text('4. Enter the details below:'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: pairingPortController,
+              decoration: const InputDecoration(
+                labelText: 'Pairing Port',
+                hintText: '37205',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: pairingCodeController,
+              decoration: const InputDecoration(
+                labelText: 'Pairing Code',
+                hintText: 'Enter 6-digit code from device',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final pairingPort = int.tryParse(pairingPortController.text.trim()) ?? 37205;
+              final pairingCode = pairingCodeController.text.trim();
+              
+              if (pairingCode.length == 6) {
+                Navigator.of(context).pop({
+                  'pairingPort': pairingPort,
+                  'pairingCode': pairingCode,
+                });
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter a valid 6-digit pairing code')),
+                );
+              }
+            },
+            child: const Text('Pair'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _deleteDevice(SavedADBDevice d) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -470,12 +543,20 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
           if (type == ADBConnectionType.usb) {
             success = await _adb.connectUSB();
           } else if (type == ADBConnectionType.pairing) {
-            // Handle pairing
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content: Text('Pairing not yet fully implemented')),
+            // Handle pairing - show pairing dialog to get pairing code
+            final pairingResult = await _showPairingDialog(host, port);
+            if (pairingResult != null) {
+              success = await _adb.pairDevice(
+                host, 
+                pairingResult['pairingPort'] as int, 
+                pairingResult['pairingCode'] as String,
+                port  // connection port for future connections
               );
+              if (success) {
+                // After successful pairing, try to connect
+                await Future.delayed(const Duration(seconds: 2));
+                success = await _adb.connectWifi(host, port);
+              }
             }
           } else {
             success = await _adb.connectWifi(host, port);

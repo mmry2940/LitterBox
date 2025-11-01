@@ -189,10 +189,10 @@ packages:
     dependency: transitive
     description:
       name: drift
-      sha256: "540cf382a3bfa99b76e51514db5b0ebcd81ce3679b7c1c9cb9478ff3735e47a1"
+      sha256: "83290a32ae006a7535c5ecf300722cb77177250d9df4ee2becc5fa8a36095114"
       url: "https://pub.dev"
     source: hosted
-    version: "2.28.2"
+    version: "2.29.0"
   equatable:
     dependency: transitive
     description:
@@ -250,10 +250,10 @@ packages:
     dependency: "direct main"
     description:
       name: flutter_breakpoints
-      sha256: fc7556933f03560667ccd36ccc2b865d118f886fe56ca1c918899763464e9dce
+      sha256: "5e9db5b30925b1a4bdd616e930d1018adc951e78731c1a4bb648002d28f4bbca"
       url: "https://pub.dev"
     source: hosted
-    version: "1.0.0"
+    version: "1.0.1"
   flutter_foreground_task:
     dependency: "direct main"
     description:
@@ -516,10 +516,10 @@ packages:
     dependency: transitive
     description:
       name: path_provider_foundation
-      sha256: "16eef174aacb07e09c351502740fa6254c165757638eba1e9116b0a781201bbd"
+      sha256: efaec349ddfc181528345c56f8eda9d6cccd71c177511b132c6a0ddaefaa2738
       url: "https://pub.dev"
     source: hosted
-    version: "2.4.2"
+    version: "2.4.3"
   path_provider_linux:
     dependency: transitive
     description:
@@ -644,10 +644,10 @@ packages:
     dependency: transitive
     description:
       name: shared_preferences_foundation
-      sha256: "6a52cfcdaeac77cad8c97b539ff688ccfc458c007b4db12be584fbe5c0e49e03"
+      sha256: "1c33a907142607c40a7542768ec9badfd16293bac51da3a4482623d15845f88b"
       url: "https://pub.dev"
     source: hosted
-    version: "2.5.4"
+    version: "2.5.5"
   shared_preferences_linux:
     dependency: transitive
     description:
@@ -729,18 +729,18 @@ packages:
     dependency: transitive
     description:
       name: syncfusion_flutter_core
-      sha256: adcd41bc5c4de1e7aa831fe3f2ca2d22465de29f166a9de685133b70d21e4541
+      sha256: d03c43f577cdbe020d1632bece00cbf8bec4a7d0ab123923b69141b5fec35420
       url: "https://pub.dev"
     source: hosted
-    version: "31.2.2"
+    version: "31.2.3"
   syncfusion_flutter_gauges:
     dependency: "direct main"
     description:
       name: syncfusion_flutter_gauges
-      sha256: cbdb2eafc1778f35a53f379915c5130c7643ef8aaf4de27adfdd67aac3608f3e
+      sha256: "9f4ffc5ff176eb0d5821891b6f7b9e7df94965b4630d62ec63062400ad3256f8"
       url: "https://pub.dev"
     source: hosted
-    version: "31.2.2"
+    version: "31.2.3"
   synchronized:
     dependency: transitive
     description:

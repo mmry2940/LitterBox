@@ -210,9 +210,8 @@ class ManagedConnection<T> {
     try {
       if (client is SSHClient) {
         final ssh = client as SSHClient;
-        final result =
-                    final result = await ssh.run('echo \"validation\"').timeout(adaptiveTimeout);
-        final isValid = result.exitCode == 0;
+        final result = await ssh.run('echo \"validation\"').timeout(adaptiveTimeout);
+        final isValid = result != null && result.isNotEmpty;
 
         lastValidationTime = DateTime.now();
         isValidated = isValid;
@@ -476,7 +475,6 @@ class ConnectionPoolManager {
   static final ConnectionPoolManager _instance =
       ConnectionPoolManager._internal();
   factory ConnectionPoolManager() => _instance;
-  ConnectionPoolManager._internal();
 
   final Map<String, ManagedConnection> _connections = {};
   final Map<String, Timer> _reconnectionTimers = {};
@@ -902,8 +900,8 @@ class ConnectionPoolManager {
       }
 
       // Then by recent usage
-      final aLastUsed = DateTime.parse(a['lastUsed']);
-      final bLastUsed = DateTime.parse(b['lastUsed']);
+      final aLastUsed = DateTime.parse(a['lastUsed'] as String);
+      final bLastUsed = DateTime.parse(b['lastUsed'] as String);
       return bLastUsed.compareTo(aLastUsed);
     });
 
