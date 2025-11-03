@@ -290,6 +290,14 @@ class _RDPScreenState extends State<RDPScreen> {
         SnackBar(
           content: Text('Native RDP connected to $host:$port'),
           backgroundColor: Colors.green,
+          action: SnackBarAction(
+            label: 'Enable Demo',
+            textColor: Colors.white,
+            onPressed: () {
+              // Enable demo mode for testing if no real server data
+              _rdpClient?.enableDemoMode();
+            },
+          ),
         ),
       );
     } else if (mounted) {
@@ -513,6 +521,31 @@ class _RDPScreenState extends State<RDPScreen> {
     }
   }
 
+  Widget _buildInfoRow(String label, String description) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              description,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Show WebView if Guacamole is connected
@@ -598,7 +631,7 @@ class _RDPScreenState extends State<RDPScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Connection Mode Selector
+            // Connection Settings
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -606,13 +639,17 @@ class _RDPScreenState extends State<RDPScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Connection Method',
+                      'Connection Settings',
                       style:
                           TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
+                    const SizedBox(height: 16),
+                    
+                    // Connection Mode
+                    const Text('Connection Method', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<RDPConnectionMode>(
-                      initialValue: _connectionMode,
+                      value: _connectionMode,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         contentPadding:
@@ -635,12 +672,78 @@ class _RDPScreenState extends State<RDPScreen> {
                     const SizedBox(height: 8),
                     Text(
                       _connectionMode == RDPConnectionMode.guacamole
-                          ? 'Uses web-based Guacamole client for full RDP functionality'
-                          : 'Native connectivity test - checks if RDP port is accessible',
+                          ? '🌐 Web-based viewer (demonstration mode)'
+                          : '🔌 Native RDP protocol with real-time interaction',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.grey[600],
                       ),
+                    ),
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Display Settings
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Resolution', style: TextStyle(fontSize: 12)),
+                              DropdownButtonFormField<String>(
+                                value: '1024x768',
+                                decoration: const InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  isDense: true,
+                                ),
+                                items: const [
+                                  DropdownMenuItem(value: '1024x768', child: Text('1024x768')),
+                                  DropdownMenuItem(value: '1280x720', child: Text('1280x720')),
+                                  DropdownMenuItem(value: '1920x1080', child: Text('1920x1080')),
+                                ],
+                                onChanged: (value) {
+                                  if (value != null) {
+                                    final parts = value.split('x');
+                                    _rdpClient?.setDesktopSize(
+                                      int.parse(parts[0]),
+                                      int.parse(parts[1]),
+                                    );
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Color Depth', style: TextStyle(fontSize: 12)),
+                              DropdownButtonFormField<int>(
+                                value: 16,
+                                decoration: const InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  isDense: true,
+                                ),
+                                items: const [
+                                  DropdownMenuItem(value: 8, child: Text('8-bit')),
+                                  DropdownMenuItem(value: 16, child: Text('16-bit')),
+                                  DropdownMenuItem(value: 24, child: Text('24-bit')),
+                                  DropdownMenuItem(value: 32, child: Text('32-bit')),
+                                ],
+                                onChanged: (value) {
+                                  if (value != null) {
+                                    _rdpClient?.setColorDepth(value);
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -878,15 +981,37 @@ class _RDPScreenState extends State<RDPScreen> {
                                 ),
                               ],
                             ),
+                            const SizedBox(height: 12),
+                            _buildInfoRow('🔌 Port', 'Default RDP port is 3389'),
+                            _buildInfoRow('🖥️ Requirements', 'Target must have Remote Desktop enabled'),
+                            _buildInfoRow('🌐 Network', 'Requires connectivity to target machine'),
+                            _buildInfoRow('🔐 Authentication', 'Valid Windows credentials required'),
+                            const Divider(height: 16),
+                            _buildInfoRow('🎨 Native Mode', 'Real-time RDP protocol with mouse/keyboard input'),
+                            _buildInfoRow('🌐 Guacamole', 'Web-based demonstration mode'),
                             const SizedBox(height: 8),
-                            const Text(
-                              '• Default RDP port is 3389\n'
-                              '• Make sure the target machine has Remote Desktop enabled\n'
-                              '• Network connectivity to the target is required\n'
-                              '• Valid credentials are needed for authentication\n'
-                              '• Guacamole mode provides full RDP functionality\n'
-                              '• Native mode tests connectivity only',
-                              style: TextStyle(fontSize: 14),
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.green.shade100,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.check_circle, color: Colors.green.shade700, size: 16),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'This RDP client now supports real protocol communication!',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.green.shade900,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         ),

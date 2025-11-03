@@ -184,15 +184,28 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadDevices() async {
     final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString('devices');
-    if (jsonStr != null) {
-      final List<dynamic> list = json.decode(jsonStr);
+    
+    // Try to load as StringList first (background_sync_service format)
+    final stringList = prefs.getStringList('devices');
+    if (stringList != null) {
       setState(() {
-        _devices = list
-            .cast<Map<String, dynamic>>()
+        _devices = stringList
+            .map((jsonStr) => json.decode(jsonStr) as Map<String, dynamic>)
             .map((e) => e.map((k, v) => MapEntry(k, v.toString())))
             .toList();
       });
+    } else {
+      // Fallback: try to load as String (legacy format)
+      final jsonStr = prefs.getString('devices');
+      if (jsonStr != null) {
+        final List<dynamic> list = json.decode(jsonStr);
+        setState(() {
+          _devices = list
+              .cast<Map<String, dynamic>>()
+              .map((e) => e.map((k, v) => MapEntry(k, v.toString())))
+              .toList();
+        });
+      }
     }
 
     // Add a test localhost device as a reference
@@ -214,7 +227,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _saveDevices() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('devices', json.encode(_devices));
+      // Save as StringList for consistency with background_sync_service
+      final devicesJson = _devices.map((device) => json.encode(device)).toList();
+      await prefs.setStringList('devices', devicesJson);
       await prefs.setString(
           'favorite_devices', json.encode(_favoriteDeviceHosts.toList()));
     } catch (e) {
@@ -1199,7 +1214,6 @@ class _ScanDialogState extends State<_ScanDialog> {
     String? ip = await info.getWifiIP();
     String? wifiName = await info.getWifiName();
     String? wifiBSSID = await info.getWifiBSSID();
-    print('Detected IP: $ip');
     print('WiFi Name: $wifiName');
     print('WiFi BSSID: $wifiBSSID');
     if (ip == null || !ip.contains('.')) {
