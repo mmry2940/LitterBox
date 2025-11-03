@@ -1,9 +1,21 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
 import '../models/saved_adb_device.dart';
 import '../adb/adb_mdns_discovery.dart';
 import '../adb/usb_bridge.dart';
 import '../adb_client.dart';
 import 'enhanced_adb_device_card.dart';
+
+/// Helper class for device status checking results
+class _DeviceStatusResult {
+  final AdbDeviceStatus status;
+  final int? latencyMs;
+
+  _DeviceStatusResult({
+    required this.status,
+    this.latencyMs,
+  });
+}
 
 /// Enhanced Dashboard Tab with segmented view: Saved / Discovered / New Connection
 class EnhancedAdbDashboard extends StatefulWidget {
@@ -63,11 +75,95 @@ class _EnhancedAdbDashboardState extends State<EnhancedAdbDashboard>
   late TabController _tabController;
   final Set<int> _selectedIndices = {};
   bool _isMultiSelectMode = false;
+  final Map<String, AdbDeviceStatus> _deviceStatusCache = {};
+  final Map<String, int> _deviceLatencyCache = {};
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _startStatusMonitoring();
+  }
+
+  void _startStatusMonitoring() {
+    // Check status of saved devices periodically
+    Future.delayed(const Duration(seconds: 1), () {
+      if (mounted) {
+        _checkDevicesStatus();
+      }
+    });
+  }
+
+  Future<void> _checkDevicesStatus() async {
+    for (final device in widget.savedDevices) {
+      if (!mounted) return;
+      
+      final deviceKey = '${device.host}:${device.port}';
+      
+      // Skip if recently checked (within last 30 seconds)
+      if (_deviceStatusCache.containsKey(deviceKey)) {
+        continue;
+      }
+      
+      try {
+        // Test connectivity with a quick ping or connection attempt
+        final status = await _testDeviceConnectivity(device.host, device.port);
+        if (mounted) {
+          setState(() {
+            _deviceStatusCache[deviceKey] = status.status;
+            if (status.latencyMs != null) {
+              _deviceLatencyCache[deviceKey] = status.latencyMs!;
+            }
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _deviceStatusCache[deviceKey] = AdbDeviceStatus.offline;
+          });
+        }
+      }
+      
+      // Small delay between checks to avoid overwhelming the network
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+  }
+
+  Future<_DeviceStatusResult> _testDeviceConnectivity(String host, int port) async {
+    final stopwatch = Stopwatch()..start();
+    
+    try {
+      // Try to connect to the device with a short timeout
+      final socket = await Socket.connect(
+        host,
+        port,
+        timeout: const Duration(seconds: 2),
+      );
+      
+      await socket.close();
+      stopwatch.stop();
+      
+      return _DeviceStatusResult(
+        status: AdbDeviceStatus.online,
+        latencyMs: stopwatch.elapsedMilliseconds,
+      );
+    } catch (e) {
+      stopwatch.stop();
+      return _DeviceStatusResult(
+        status: AdbDeviceStatus.offline,
+        latencyMs: null,
+      );
+    }
+  }
+
+  AdbDeviceStatus _getDeviceStatus(SavedADBDevice device) {
+    final deviceKey = '${device.host}:${device.port}';
+    return _deviceStatusCache[deviceKey] ?? AdbDeviceStatus.notTested;
+  }
+
+  int? _getDeviceLatency(SavedADBDevice device) {
+    final deviceKey = '${device.host}:${device.port}';
+    return _deviceLatencyCache[deviceKey];
   }
 
   @override
@@ -487,10 +583,11 @@ class _EnhancedAdbDashboardState extends State<EnhancedAdbDashboard>
               address: _getDeviceAddress(device),
               deviceType: _getDeviceType(device),
               connectionType: _mapConnectionType(device.connectionType),
-              status: AdbDeviceStatus.notTested, // TODO: Add real status
+              status: _getDeviceStatus(device),
               group: device.label,
               isFavorite: isFavorite,
               lastUsed: device.lastUsed,
+              latencyMs: _getDeviceLatency(device),
               subtitle: _getDeviceSubtitle(device),
               isMultiSelectMode: _isMultiSelectMode,
               isSelected: isSelected,

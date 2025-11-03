@@ -11,6 +11,7 @@ import 'adb_screen_refactored.dart';
 import 'vnc_screen.dart';
 import 'rdp_screen.dart';
 import 'esp32_screen.dart';
+import 'other_screen.dart';
 import '_host_tile_with_retry.dart';
 import '../network_init.dart';
 import '../isolate_scanner.dart';
@@ -1130,18 +1131,10 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text('Other'),
               leading: const Icon(Icons.more_horiz),
               onTap: () {
-                // Placeholder for Other screen
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Other'),
-                    content: const Text('Other screen not implemented yet.'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: const Text('OK'),
-                      ),
-                    ],
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const OtherScreen(),
                   ),
                 );
               },

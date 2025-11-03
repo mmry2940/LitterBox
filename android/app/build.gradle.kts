@@ -21,7 +21,10 @@ android {
     ndkVersion = "27.0.12077973"
     
     configurations.all {
-        resolutionStrategy.force("androidx.core:core:1.12.0")
+        resolutionStrategy {
+            force("androidx.core:core:1.13.1")
+            force("androidx.core:core-ktx:1.13.1")
+        }
     }
 
     compileOptions {
@@ -76,5 +79,6 @@ flutter {
 
 dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.0")
-    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core:1.13.1")
 }

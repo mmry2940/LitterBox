@@ -363,16 +363,107 @@ class FlutterAdbClient {
   }
 
   Future<Uint8List?> takeScreenshot() async {
-    try {
-      // Take screenshot and save to device
-      await executeCommand('shell screencap /sdcard/temp_screenshot.png');
+    if (!_isConnected || _connection == null) {
+      _addOutput('Cannot take screenshot: not connected');
+      return null;
+    }
 
-      // TODO: Implement file transfer to get the screenshot data
-      // For now, just indicate success
-      _addOutput('Screenshot taken and saved to device');
-      return null; // Return null for now, implement file transfer later
+    try {
+      _addOutput('Taking screenshot...');
+      
+      // Take screenshot and save to device temporary location
+      final screenshotPath = '/sdcard/temp_screenshot_${DateTime.now().millisecondsSinceEpoch}.png';
+      await executeCommand('shell screencap $screenshotPath');
+      
+      _addOutput('Screenshot saved to device, retrieving...');
+      
+      // Pull the file from device using sync protocol
+      final screenshotData = await _pullFile(screenshotPath);
+      
+      if (screenshotData != null) {
+        _addOutput('Screenshot retrieved successfully (${screenshotData.length} bytes)');
+        
+        // Clean up the temporary file on device
+        try {
+          await executeCommand('shell rm $screenshotPath');
+        } catch (e) {
+          _addOutput('Warning: Could not delete temp file: $e');
+        }
+        
+        return screenshotData;
+      } else {
+        _addOutput('Failed to retrieve screenshot data');
+        return null;
+      }
     } catch (e) {
       _addOutput('Screenshot failed: $e');
+      return null;
+    }
+  }
+
+  /// Pull a file from the device using shell command and base64 encoding
+  /// This is a workaround since flutter_adb doesn't expose sync protocol directly
+  Future<Uint8List?> _pullFile(String remotePath) async {
+    if (!_isConnected || _connection == null) {
+      return null;
+    }
+
+    try {
+      // Use shell command to read file and encode as base64
+      // This is less efficient but works without direct sync protocol access
+      final base64Command = 'shell base64 $remotePath';
+      
+      _addOutput('Retrieving file via base64 encoding...');
+      final base64Result = await executeCommand(base64Command);
+      
+      if (base64Result.isEmpty) {
+        _addOutput('File is empty or could not be read');
+        return null;
+      }
+      
+      // Remove any whitespace/newlines from base64 output
+      final cleanBase64 = base64Result.replaceAll(RegExp(r'\s+'), '');
+      
+      // Decode from base64
+      try {
+        final fileData = base64Decode(cleanBase64);
+        return fileData;
+      } catch (e) {
+        _addOutput('Failed to decode base64 data: $e');
+        
+        // Fallback: Try to read file as binary using dd command
+        return await _pullFileFallback(remotePath);
+      }
+    } catch (e) {
+      _addOutput('Error pulling file: $e');
+      return await _pullFileFallback(remotePath);
+    }
+  }
+
+  /// Fallback method to pull file using dd command and hexdump
+  Future<Uint8List?> _pullFileFallback(String remotePath) async {
+    try {
+      _addOutput('Trying fallback method with hexdump...');
+      
+      // Use hexdump to get hex representation of file
+      final hexCommand = 'shell hexdump -v -e \'1/1 "%02x"\'  $remotePath';
+      final hexResult = await executeCommand(hexCommand);
+      
+      if (hexResult.isEmpty || hexResult.length % 2 != 0) {
+        _addOutput('Invalid hex data received');
+        return null;
+      }
+      
+      // Convert hex string to bytes
+      final bytes = <int>[];
+      for (int i = 0; i < hexResult.length; i += 2) {
+        final hexByte = hexResult.substring(i, i + 2);
+        bytes.add(int.parse(hexByte, radix: 16));
+      }
+      
+      return Uint8List.fromList(bytes);
+    } catch (e) {
+      _addOutput('Fallback method failed: $e');
       return null;
     }
   }

@@ -25,16 +25,27 @@ class SecurityConfigService {
   static Future<Map<String, dynamic>> getSecurityConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final configStr = prefs.getString(_configKey);
-
-      if (configStr != null) {
-        final config = Map<String, dynamic>.from(_defaultConfig);
-        // Could parse custom config here
-        return config;
+      final config = Map<String, dynamic>.from(_defaultConfig);
+      
+      // Load stored values with type-specific getters
+      for (final entry in _defaultConfig.entries) {
+        final key = '${_configKey}_${entry.key}';
+        final defaultValue = entry.value;
+        
+        if (defaultValue is bool) {
+          config[entry.key] = prefs.getBool(key) ?? defaultValue;
+        } else if (defaultValue is int) {
+          config[entry.key] = prefs.getInt(key) ?? defaultValue;
+        } else if (defaultValue is double) {
+          config[entry.key] = prefs.getDouble(key) ?? defaultValue;
+        } else if (defaultValue is String) {
+          config[entry.key] = prefs.getString(key) ?? defaultValue;
+        }
       }
-
-      return Map<String, dynamic>.from(_defaultConfig);
+      
+      return config;
     } catch (e) {
+      print('Failed to get security config: $e');
       return Map<String, dynamic>.from(_defaultConfig);
     }
   }
@@ -43,10 +54,41 @@ class SecurityConfigService {
   static Future<void> updateSecurityConfig(Map<String, dynamic> config) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      // In a real implementation, you'd serialize and store the config
-      await prefs.setString(_configKey, 'updated'); // Placeholder
+      
+      // Validate config keys against defaults
+      final validatedConfig = <String, dynamic>{};
+      for (final key in _defaultConfig.keys) {
+        if (config.containsKey(key)) {
+          validatedConfig[key] = config[key];
+        } else {
+          validatedConfig[key] = _defaultConfig[key];
+        }
+      }
+      
+      // Store individual config values with type safety
+      for (final entry in validatedConfig.entries) {
+        final key = '${_configKey}_${entry.key}';
+        final value = entry.value;
+        
+        if (value is bool) {
+          await prefs.setBool(key, value);
+        } else if (value is int) {
+          await prefs.setInt(key, value);
+        } else if (value is double) {
+          await prefs.setDouble(key, value);
+        } else if (value is String) {
+          await prefs.setString(key, value);
+        }
+      }
+      
+      // Also store a timestamp of last update
+      await prefs.setString(
+        '${_configKey}_last_updated',
+        DateTime.now().toIso8601String(),
+      );
     } catch (e) {
       print('Failed to update security config: $e');
+      rethrow;
     }
   }
 

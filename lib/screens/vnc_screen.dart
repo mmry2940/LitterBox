@@ -2229,9 +2229,21 @@ class _VNCScreenState extends State<VNCScreen>
                               .map((e) =>
                                   DropdownMenuItem(value: e, child: Text(e)))
                               .toList(),
-                          onChanged: (v) {
-                            setState(() => _selectedEncoding = v ?? 'Raw');
-                            // TODO: Pass encoding to VNC client
+                          onChanged: (v) async {
+                            if (v != null && _vncClient != null) {
+                              setState(() => _selectedEncoding = v);
+                              // Convert encoding name to type and apply it
+                              final encodingType = VNCClient.getEncodingType(v);
+                              await _vncClient!.setEncodings([encodingType]);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Encoding changed to $v'),
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              }
+                            }
                           },
                         ),
                       ],

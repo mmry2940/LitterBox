@@ -1989,8 +1989,8 @@ class VNCClient {
   }
 
   // Set supported encodings
-  Future<void> _setEncodings() async {
-    final encodings = [0, 1]; // Raw and CopyRect encodings
+  Future<void> _setEncodings([List<int>? customEncodings]) async {
+    final encodings = customEncodings ?? [0, 1]; // Raw and CopyRect encodings by default
     final setEncodings = Uint8List(4 + encodings.length * 4);
 
     setEncodings[0] = 2; // SetEncodings message type
@@ -2008,6 +2008,38 @@ class VNCClient {
 
     _socket!.add(setEncodings);
     _log('Set encodings: ${encodings.join(', ')}');
+  }
+
+  /// Public method to change encodings dynamically
+  /// Encoding types: 0=Raw, 1=CopyRect, 2=RRE, 4=CoRRE, 5=Hextile, 6=Zlib, 7=Tight
+  Future<void> setEncodings(List<int> encodingTypes) async {
+    if (_socket == null) {
+      _log('Cannot set encodings: not connected');
+      return;
+    }
+    await _setEncodings(encodingTypes);
+  }
+
+  /// Helper method to convert encoding name to encoding type number
+  static int getEncodingType(String encodingName) {
+    switch (encodingName.toLowerCase()) {
+      case 'raw':
+        return 0;
+      case 'copyrect':
+        return 1;
+      case 'rre':
+        return 2;
+      case 'corre':
+        return 4;
+      case 'hextile':
+        return 5;
+      case 'zlib':
+        return 6;
+      case 'tight':
+        return 7;
+      default:
+        return 0; // Default to Raw
+    }
   }
 
   // Request frame buffer update
