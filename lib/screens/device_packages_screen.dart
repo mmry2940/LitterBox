@@ -66,6 +66,17 @@ class DevicePackagesScreen extends StatefulWidget {
 }
 
 class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
+  Widget _buildMetaItem(IconData icon, Color color, String text) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 4),
+        Text(text, style: const TextStyle(fontSize: 12)),
+      ],
+    );
+  }
+
   List<PackageInfo>? _packages;
   List<PackageInfo>? _filteredPackages;
   String? _error;
@@ -697,6 +708,10 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final screenWidth = MediaQuery.of(context).size.width;
+
     if (widget.loading || _loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -714,7 +729,7 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
               // Enhanced header with search, filters, and sorting
               Container(
                 color: Colors.grey.shade50,
-                padding: const EdgeInsets.all(16),
+                padding: EdgeInsets.all(isLandscape ? 12 : 16),
                 child: Column(
                   children: [
                     // Search bar
@@ -738,10 +753,13 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
                       ),
                       onChanged: (_) => _onSearchChanged(),
                     ),
-                    const SizedBox(height: 12),
+                    SizedBox(height: isLandscape ? 8 : 12),
 
                     // Filter and sort options
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         // Package manager indicator
                         Container(
@@ -760,10 +778,10 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
 
                         // Filter dropdown
-                        Expanded(
+                        SizedBox(
+                          width: isLandscape ? screenWidth * 0.34 : screenWidth * 0.55,
                           child: DropdownButtonFormField<String>(
                             initialValue: _selectedFilter,
                             decoration: const InputDecoration(
@@ -785,7 +803,6 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
                             },
                           ),
                         ),
-                        const SizedBox(width: 8),
 
                         // Sort options
                         PopupMenuButton<SortOption>(
@@ -908,41 +925,35 @@ class _DevicePackagesScreenState extends State<DevicePackagesScreen> {
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
-                                  Row(
+                                  Wrap(
+                                    spacing: 12,
+                                    runSpacing: 4,
                                     children: [
-                                      Icon(
+                                      _buildMetaItem(
                                         pkg.isInstalled
                                             ? Icons.verified
                                             : Icons.download,
-                                        size: 14,
-                                        color: pkg.isInstalled
+                                        pkg.isInstalled
                                             ? Colors.green
                                             : Colors.orange,
+                                        pkg.status,
                                       ),
-                                      const SizedBox(width: 4),
-                                      Text(pkg.status,
-                                          style: const TextStyle(fontSize: 12)),
-                                      const SizedBox(width: 12),
-                                      Icon(Icons.memory,
-                                          size: 14, color: Colors.deepPurple),
-                                      const SizedBox(width: 4),
-                                      Text(pkg.version,
-                                          style: const TextStyle(fontSize: 12)),
-                                      const SizedBox(width: 12),
-                                      Icon(Icons.architecture,
-                                          size: 14, color: Colors.teal),
-                                      const SizedBox(width: 4),
-                                      Text(pkg.architecture,
-                                          style: const TextStyle(fontSize: 12)),
-                                      if (pkg.size != null) ...[
-                                        const SizedBox(width: 12),
-                                        Icon(Icons.storage,
-                                            size: 14, color: Colors.brown),
-                                        const SizedBox(width: 4),
-                                        Text(pkg.size!,
-                                            style:
-                                                const TextStyle(fontSize: 12)),
-                                      ],
+                                      _buildMetaItem(
+                                        Icons.memory,
+                                        Colors.deepPurple,
+                                        pkg.version,
+                                      ),
+                                      _buildMetaItem(
+                                        Icons.architecture,
+                                        Colors.teal,
+                                        pkg.architecture,
+                                      ),
+                                      if (pkg.size != null)
+                                        _buildMetaItem(
+                                          Icons.storage,
+                                          Colors.brown,
+                                          pkg.size!,
+                                        ),
                                     ],
                                   ),
                                 ],

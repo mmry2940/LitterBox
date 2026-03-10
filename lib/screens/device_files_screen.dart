@@ -762,6 +762,9 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
   }
 
   Widget _buildFileManagerBody() {
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+
     if (widget.loading || _loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -780,8 +783,11 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
           Column(
             children: [
               Container(
-                margin: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                margin: EdgeInsets.fromLTRB(
+                  isLandscape ? 10 : 14, isLandscape ? 8 : 12, isLandscape ? 10 : 14, 8),
+                padding: EdgeInsets.symmetric(
+                  horizontal: isLandscape ? 10 : 12,
+                  vertical: isLandscape ? 6 : 8),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade200,
                   borderRadius: BorderRadius.circular(24),
@@ -903,7 +909,7 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
                 ),
               ),
               Container(
-                margin: const EdgeInsets.symmetric(horizontal: 14),
+                margin: EdgeInsets.symmetric(horizontal: isLandscape ? 10 : 14),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade200,
@@ -979,7 +985,8 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
               ),
               if (_isSearching)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+                  padding: EdgeInsets.fromLTRB(
+                      isLandscape ? 10 : 14, 10, isLandscape ? 10 : 14, 6),
                   child: TextField(
                     controller: _searchController,
                     decoration: const InputDecoration(
@@ -1004,7 +1011,8 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
               }
               return ListView.separated(
                 itemCount: filteredEntries.length,
-                padding: const EdgeInsets.fromLTRB(8, 0, 8, 92),
+                padding: EdgeInsets.fromLTRB(
+                    isLandscape ? 6 : 8, 0, isLandscape ? 6 : 8, 92),
                 separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (context, idx) {
                   final entry = filteredEntries[idx];

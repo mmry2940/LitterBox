@@ -46,6 +46,51 @@ class _DeviceScreenState extends State<DeviceScreen> {
   int _connectionAttempts = 0;
   DateTime? _lastConnectionAttempt;
 
+  Future<void> _ensureConnectionAlive({bool silent = true}) async {
+    if (!mounted) return;
+
+    final host = _deviceString('host');
+    final port = _devicePort();
+    final username = _deviceString('username');
+    if (host.isEmpty || username.isEmpty) return;
+
+    try {
+      final client = await _connectionPool.getSSHConnection(
+        host,
+        port,
+        username,
+        _password,
+        enableAutoReconnect: _autoReconnectEnabled,
+        timeout: const Duration(seconds: 20),
+        maxRetries: 3,
+      );
+
+      if (!mounted) return;
+
+      if (client != null) {
+        setState(() {
+          _sshClient = client;
+          _sshError = null;
+          _connecting = false;
+          _connectionTime = DateTime.now();
+          _infoScreenReloadKey++;
+          _filesScreenReloadKey++;
+          _processesScreenReloadKey++;
+          _packagesScreenReloadKey++;
+          _miscScreenReloadKey++;
+        });
+        _startConnectionValidation();
+      } else if (!silent) {
+        _handleConnectionError('Failed to re-establish SSH connection');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      if (!silent) {
+        _handleConnectionError(e);
+      }
+    }
+  }
+
   bool _shouldShowConnectionSnack(String event) {
     final normalized = event.trim().toLowerCase();
     // Suppress noisy informational toasts shown during normal connect flow.
@@ -154,26 +199,18 @@ class _DeviceScreenState extends State<DeviceScreen> {
           _sshClient = client;
           _connecting = false;
           _connectionTime = DateTime.now();
+          _infoScreenReloadKey++;
+          _filesScreenReloadKey++;
+          _processesScreenReloadKey++;
+          _packagesScreenReloadKey++;
           _miscScreenReloadKey++; // Refresh misc screen to show updated status
         });
+        _startConnectionValidation();
 
         // Enable background sync for this device if configured
         await _backgroundSync.enableDeviceSync(
             widget.device['name'] ?? host, true);
 
-        // Listen to reconnection events
-        _connectionPool.reconnectionEvents.listen((event) {
-          if (mounted &&
-              event.contains(_connectionId!) &&
-              _shouldShowConnectionSnack(event)) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(event),
-                duration: const Duration(seconds: 3),
-              ),
-            );
-          }
-        });
       } else {
         throw Exception('Failed to establish connection through pool');
       }
@@ -190,10 +227,10 @@ class _DeviceScreenState extends State<DeviceScreen> {
     }
   }
 
-  final int _infoScreenReloadKey = 0;
-  final int _filesScreenReloadKey = 0;
-  final int _processesScreenReloadKey = 0;
-  final int _packagesScreenReloadKey = 0;
+  int _infoScreenReloadKey = 0;
+  int _filesScreenReloadKey = 0;
+  int _processesScreenReloadKey = 0;
+  int _packagesScreenReloadKey = 0;
   int _miscScreenReloadKey = 0;
 
   @override
@@ -310,6 +347,11 @@ class _DeviceScreenState extends State<DeviceScreen> {
     setState(() {
       _selectedIndex = index;
     });
+
+    // Re-validate or recover SSH when switching to active tabs.
+    if (index != 5) {
+      unawaited(_ensureConnectionAlive());
+    }
   }
 
   @override
@@ -384,6 +426,14 @@ class _DeviceScreenState extends State<DeviceScreen> {
         ),
         body: _pages[_selectedIndex],
         bottomNavigationBar: BottomNavigationBar(
+          type: BottomNavigationBarType.fixed,
+          backgroundColor: const Color(0xFF1A1A22),
+          selectedItemColor: Colors.white,
+          unselectedItemColor: const Color(0xFFB0B3C0),
+          selectedLabelStyle:
+              const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          unselectedLabelStyle:
+              const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
           items: const <BottomNavigationBarItem>[
             BottomNavigationBarItem(icon: Icon(Icons.info), label: 'Info'),
             BottomNavigationBarItem(

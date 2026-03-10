@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../vnc_client.dart';
 
@@ -40,23 +39,10 @@ class _VNCViewerScreenState extends State<VNCViewerScreen> {
   @override
   void initState() {
     super.initState();
-    // Force landscape orientation for VNC viewer
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
   }
 
   @override
   void dispose() {
-    // Restore all orientations when leaving VNC viewer
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-
     // Note: We don't automatically disconnect here because the user might want
     // to keep the connection when navigating back. Disconnection is handled
     // explicitly in _disconnect() when the user chooses to disconnect.
