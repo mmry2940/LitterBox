@@ -46,6 +46,15 @@ class _DeviceScreenState extends State<DeviceScreen> {
   int _connectionAttempts = 0;
   DateTime? _lastConnectionAttempt;
 
+  bool _shouldShowConnectionSnack(String event) {
+    final normalized = event.trim().toLowerCase();
+    // Suppress noisy informational toasts shown during normal connect flow.
+    if (normalized.startsWith('connecting to ')) return false;
+    if (normalized.contains('successfully connected')) return false;
+    if (normalized.startsWith('connected to ')) return false;
+    return true;
+  }
+
   String _deviceString(String key, [String fallback = '']) {
     final value = widget.device[key];
     if (value == null) return fallback;
@@ -154,7 +163,9 @@ class _DeviceScreenState extends State<DeviceScreen> {
 
         // Listen to reconnection events
         _connectionPool.reconnectionEvents.listen((event) {
-          if (mounted && event.contains(_connectionId!)) {
+          if (mounted &&
+              event.contains(_connectionId!) &&
+              _shouldShowConnectionSnack(event)) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(event),
@@ -266,6 +277,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
           sshClient: _sshClient,
           error: _sshError,
           loading: _connecting,
+          deviceName: _deviceString('name', _deviceString('host', 'Device')),
         ),
         DeviceProcessesScreen(
           key: ValueKey(_processesScreenReloadKey),
@@ -399,7 +411,9 @@ class _DeviceScreenState extends State<DeviceScreen> {
   void _setupConnectionMonitoring() {
     _reconnectionSubscription?.cancel();
     _reconnectionSubscription = _connectionPool.reconnectionEvents.listen((event) {
-      if (_connectionId != null && event.contains(_connectionId!)) {
+      if (_connectionId != null &&
+          event.contains(_connectionId!) &&
+          _shouldShowConnectionSnack(event)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

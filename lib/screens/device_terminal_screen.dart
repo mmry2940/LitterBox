@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -178,6 +179,9 @@ class TerminalSession {
         break;
       case 'CTRL_D':
         shellSession!.write(Uint8List.fromList([4]));
+        break;
+      case 'CTRL_L':
+        shellSession!.write(Uint8List.fromList([12]));
         break;
       case 'ESC':
         shellSession!.write(Uint8List.fromList([27]));
@@ -426,6 +430,57 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen>
     _session?.clearTerminal();
   }
 
+  Future<void> _copySelectedText() async {
+    if (_session == null) return;
+
+    final selection = _controller.selection;
+    if (selection == null) {
+      _showTerminalSnackBar('No text selected. Long-press and drag to select.');
+      return;
+    }
+
+    final selectedText = _session!.terminal.buffer.getText(selection).trimRight();
+    if (selectedText.isEmpty) {
+      _showTerminalSnackBar('Selected text is empty.');
+      return;
+    }
+
+    await Clipboard.setData(ClipboardData(text: selectedText));
+    _controller.clearSelection();
+    _showTerminalSnackBar('Copied ${selectedText.length} characters.');
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    if (_session?.isConnected != true) return;
+
+    final clipData = await Clipboard.getData('text/plain');
+    final text = clipData?.text;
+
+    if (text == null || text.isEmpty) {
+      _showTerminalSnackBar('Clipboard is empty.');
+      return;
+    }
+
+    _session!.terminal.paste(text);
+    _scrollToBottom();
+  }
+
+  void _clearSelection() {
+    _controller.clearSelection();
+    _showTerminalSnackBar('Selection cleared.');
+  }
+
+  void _showTerminalSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(milliseconds: 1300),
+      ),
+    );
+  }
+
   void _sendCommand(String command) {
     _session?.sendCommand(command);
     _scrollToBottom();
@@ -553,6 +608,7 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen>
 
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         title: const Text('Terminal'),
         backgroundColor: Colors.black87,
         foregroundColor: Colors.white,
@@ -637,6 +693,49 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen>
                 child: ListTile(
                   leading: const Icon(Icons.refresh, size: 20),
                   title: const Text('Reset Font (14px)'),
+                  dense: true,
+                ),
+              ),
+            ],
+          ),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              switch (value) {
+                case 'copySelection':
+                  _copySelectedText();
+                  break;
+                case 'pasteClipboard':
+                  _pasteFromClipboard();
+                  break;
+                case 'clearSelection':
+                  _clearSelection();
+                  break;
+              }
+            },
+            icon: const Icon(Icons.content_copy),
+            tooltip: 'Copy/Paste',
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'copySelection',
+                child: ListTile(
+                  leading: Icon(Icons.copy, size: 20),
+                  title: Text('Copy Selected Text'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'pasteClipboard',
+                child: ListTile(
+                  leading: Icon(Icons.paste, size: 20),
+                  title: Text('Paste from Clipboard'),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'clearSelection',
+                child: ListTile(
+                  leading: Icon(Icons.clear, size: 20),
+                  title: Text('Clear Selection'),
                   dense: true,
                 ),
               ),

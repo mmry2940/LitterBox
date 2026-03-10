@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 // File entry model for file manager
 class _FileEntry {
@@ -40,11 +44,13 @@ class DeviceFilesScreen extends StatefulWidget {
   final SSHClient? sshClient;
   final String? error;
   final bool loading;
+  final String? deviceName;
   const DeviceFilesScreen({
     super.key,
     this.sshClient,
     this.error,
     this.loading = false,
+    this.deviceName,
   });
 
   @override
@@ -85,6 +91,152 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
   // Clipboard functionality
   List<String> _clipboard = [];
   bool _clipboardIsCut = false;
+
+  String _remotePathForName(String fileName) {
+    return _currentPath == '/' ? '/$fileName' : '$_currentPath/$fileName';
+  }
+
+  Future<void> _uploadFileToCurrentPath() async {
+    final picked = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
+      withData: true,
+    );
+
+    if (picked == null || picked.files.isEmpty) return;
+
+    final file = picked.files.single;
+    final fileName = file.name;
+
+    Uint8List? bytes = file.bytes;
+    if (bytes == null && file.path != null) {
+      bytes = await File(file.path!).readAsBytes();
+    }
+
+    if (bytes == null) {
+      _showSnackBar('Unable to read selected file.', Colors.red);
+      return;
+    }
+
+    setState(() => _loading = true);
+    try {
+      final sftp = await widget.sshClient!.sftp();
+      final remotePath = _remotePathForName(fileName);
+      final remoteFile = await sftp.open(
+        remotePath,
+        mode: SftpFileOpenMode.write |
+            SftpFileOpenMode.create |
+            SftpFileOpenMode.truncate,
+      );
+      await remoteFile.writeBytes(bytes);
+      await remoteFile.close();
+
+      _showSnackBar('Uploaded "$fileName" successfully.', Colors.green);
+      await _fetchFiles(_currentPath);
+    } catch (e) {
+      _showSnackBar('Upload failed: $e', Colors.red);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<String?> _pickDownloadDirectory() async {
+    final dirPath = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Select download folder',
+    );
+    if (dirPath != null && dirPath.isNotEmpty) return dirPath;
+
+    final fallback = await getApplicationDocumentsDirectory();
+    return fallback.path;
+  }
+
+  Future<void> _downloadSelectedFiles() async {
+    if (_selectedIndexes.isEmpty) {
+      _showSnackBar('Select file(s) to download first.', Colors.orange);
+      return;
+    }
+
+    final selectedEntries = _selectedIndexes
+        .map((i) => _entries![i])
+        .where((e) => !e.isDir)
+        .toList();
+
+    if (selectedEntries.isEmpty) {
+      _showSnackBar('Folders are not downloadable yet. Select file(s) only.', Colors.orange);
+      return;
+    }
+
+    final targetDir = await _pickDownloadDirectory();
+    if (targetDir == null) return;
+
+    setState(() => _loading = true);
+    int downloaded = 0;
+    try {
+      final sftp = await widget.sshClient!.sftp();
+
+      for (final entry in selectedEntries) {
+        final remotePath = _remotePathForName(entry.name);
+        final remoteFile = await sftp.open(remotePath, mode: SftpFileOpenMode.read);
+        final outFile = File('$targetDir/${entry.name}');
+        final sink = outFile.openWrite();
+        await for (final chunk in remoteFile.read()) {
+          sink.add(chunk);
+        }
+        await sink.close();
+        await remoteFile.close();
+        downloaded++;
+      }
+
+      _showSnackBar(
+        'Downloaded $downloaded file(s) to $targetDir',
+        Colors.green,
+      );
+    } catch (e) {
+      _showSnackBar('Download failed: $e', Colors.red);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _showFabActions() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.upload_file),
+                title: const Text('Upload File'),
+                subtitle: const Text('Pick local file and upload here'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _uploadFileToCurrentPath();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.download),
+                title: const Text('Download Selected'),
+                subtitle: const Text('Save selected remote files locally'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _downloadSelectedFiles();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.create_new_folder),
+                title: const Text('New Folder'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _createFolder();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   void _navigateTo(String path) {
     setState(() {
@@ -620,102 +772,229 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
       return Center(child: Text('Error: $_error'));
     }
     if (_entries != null) {
-      return Column(
+      final pathSegments =
+          _currentPath.split('/').where((segment) => segment.isNotEmpty).toList();
+
+      return Stack(
         children: [
-          // Modern path bar
-          Material(
-            color: Colors.blueGrey.shade50,
-            elevation: 1,
-            child: Column(
-              children: [
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.arrow_upward),
-                        tooltip: 'Up',
-                        onPressed: _currentPath != '/'
-                            ? () {
-                                String up = _currentPath;
-                                if (up.endsWith('/') && up.length > 1) {
-                                  up = up.substring(0, up.length - 1);
-                                }
-                                final lastSlash = up.lastIndexOf('/');
-                                String parent;
-                                if (lastSlash <= 0) {
-                                  parent = '/';
-                                } else {
-                                  parent = up.substring(0, lastSlash);
-                                  if (parent.isEmpty) parent = '/';
-                                }
-                                _navigateTo(parent);
+          Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.router, color: Colors.cyan.shade700, size: 22),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.deviceName?.isNotEmpty == true
+                            ? widget.deviceName!
+                            : 'Remote Device',
+                        style: const TextStyle(
+                          fontSize: 28 / 1.75,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.refresh),
+                      iconSize: 21,
+                      visualDensity: VisualDensity.compact,
+                      constraints:
+                          const BoxConstraints(minWidth: 34, minHeight: 34),
+                      tooltip: 'Refresh',
+                      onPressed: () => _fetchFiles(_currentPath),
+                    ),
+                    IconButton(
+                      icon:
+                          Icon(_isSearching ? Icons.filter_alt_off : Icons.filter_alt),
+                      iconSize: 21,
+                      visualDensity: VisualDensity.compact,
+                      constraints:
+                          const BoxConstraints(minWidth: 34, minHeight: 34),
+                      tooltip: _isSearching ? 'Hide search' : 'Show search',
+                      onPressed: _toggleSearch,
+                    ),
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert, size: 21),
+                      constraints:
+                          const BoxConstraints(minWidth: 34, minHeight: 34),
+                      tooltip: 'More actions',
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'selectAll':
+                            _selectAll();
+                            break;
+                          case 'copy':
+                            _copySelected();
+                            break;
+                          case 'cut':
+                            _cutSelected();
+                            break;
+                          case 'paste':
+                            _pasteFromClipboard();
+                            break;
+                          case 'delete':
+                            _deleteSelected();
+                            break;
+                          case 'newFolder':
+                            _createFolder();
+                            break;
+                          case 'createArchive':
+                            _createArchive();
+                            break;
+                          case 'toggleHidden':
+                            _toggleShowHidden();
+                            break;
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'selectAll',
+                          child: Text('Select All / Clear'),
+                        ),
+                        PopupMenuItem(
+                          value: 'copy',
+                          enabled: _selectedIndexes.isNotEmpty,
+                          child: const Text('Copy Selected'),
+                        ),
+                        PopupMenuItem(
+                          value: 'cut',
+                          enabled: _selectedIndexes.isNotEmpty,
+                          child: const Text('Cut Selected'),
+                        ),
+                        PopupMenuItem(
+                          value: 'paste',
+                          enabled: _clipboard.isNotEmpty,
+                          child: const Text('Paste Here'),
+                        ),
+                        PopupMenuItem(
+                          value: 'delete',
+                          enabled: _selectedIndexes.isNotEmpty,
+                          child: const Text('Delete Selected'),
+                        ),
+                        const PopupMenuDivider(),
+                        const PopupMenuItem(
+                          value: 'newFolder',
+                          child: Text('New Folder'),
+                        ),
+                        PopupMenuItem(
+                          value: 'createArchive',
+                          enabled: _selectedIndexes.isNotEmpty,
+                          child: const Text('Archive Selected'),
+                        ),
+                        const PopupMenuDivider(),
+                        PopupMenuItem(
+                          value: 'toggleHidden',
+                          child: Text(_showHidden
+                              ? 'Hide Hidden Files'
+                              : 'Show Hidden Files'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 14),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_upward),
+                      iconSize: 22,
+                      visualDensity: VisualDensity.compact,
+                      constraints:
+                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      tooltip: 'Up',
+                      onPressed: _currentPath != '/'
+                          ? () {
+                              String up = _currentPath;
+                              if (up.endsWith('/') && up.length > 1) {
+                                up = up.substring(0, up.length - 1);
                               }
-                            : null,
-                      ),
-                      Expanded(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Text(
-                            _currentPath,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.w600,
-                              fontSize: 16,
-                              color: Colors.black87,
+                              final lastSlash = up.lastIndexOf('/');
+                              String parent;
+                              if (lastSlash <= 0) {
+                                parent = '/';
+                              } else {
+                                parent = up.substring(0, lastSlash);
+                                if (parent.isEmpty) parent = '/';
+                              }
+                              _navigateTo(parent);
+                            }
+                          : null,
+                    ),
+                    const Icon(Icons.folder, color: Colors.teal),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () => _navigateTo('/'),
+                              child: const Text('/',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 22 / 1.5)),
                             ),
-                          ),
+                            for (int i = 0; i < pathSegments.length; i++) ...[
+                              const SizedBox(width: 6),
+                              const Icon(Icons.chevron_right,
+                                  size: 16, color: Colors.black54),
+                              const SizedBox(width: 6),
+                              GestureDetector(
+                                onTap: () {
+                                  final target =
+                                      '/${pathSegments.take(i + 1).join('/')}';
+                                  _navigateTo(target);
+                                },
+                                child: Text(
+                                  pathSegments[i],
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.refresh),
-                        tooltip: 'Refresh',
-                        onPressed: () => _fetchFiles(_currentPath),
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          _isSearching ? Icons.search_off : Icons.search,
-                          color: Colors.black87,
-                        ),
-                        tooltip: _isSearching ? 'Close search' : 'Search files',
-                        onPressed: _toggleSearch,
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          _showHidden ? Icons.visibility_off : Icons.visibility,
-                          color: Colors.black87,
-                        ),
-                        tooltip: _showHidden
-                            ? 'Hide hidden files'
-                            : 'Show hidden files',
-                        onPressed: _toggleShowHidden,
-                      ),
-                    ],
+                    ),
+                  ],
+                ),
+              ),
+              if (_isSearching)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: const InputDecoration(
+                      hintText: 'Search files and folders...',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    onChanged: _updateSearchQuery,
+                    autofocus: true,
                   ),
                 ),
-                if (_isSearching)
-                  Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: const InputDecoration(
-                        hintText: 'Search files and folders...',
-                        prefixIcon: Icon(Icons.search),
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      onChanged: _updateSearchQuery,
-                      autofocus: true,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          // File/folder list
-          Expanded(
-            child: () {
+              const SizedBox(height: 8),
+              Expanded(
+                child: () {
               final filteredEntries = _getFilteredEntries();
               if (filteredEntries.isEmpty && _searchQuery.isNotEmpty) {
                 return const Center(
@@ -725,6 +1004,7 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
               }
               return ListView.separated(
                 itemCount: filteredEntries.length,
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 92),
                 separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (context, idx) {
                   final entry = filteredEntries[idx];
@@ -732,9 +1012,9 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
                   final selected = _selectedIndexes.contains(originalIdx);
                   return Card(
                     color: selected ? Colors.blue.shade50 : Colors.white,
-                    elevation: selected ? 2 : 0,
+                    elevation: 0,
                     margin:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
                       side: selected
@@ -785,6 +1065,45 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
                       trailing: PopupMenuButton<String>(
                         onSelected: (value) {
                           switch (value) {
+                            case 'toggleSelect':
+                              setState(() {
+                                if (selected) {
+                                  _selectedIndexes.remove(originalIdx);
+                                } else {
+                                  _selectedIndexes.add(originalIdx);
+                                }
+                              });
+                              break;
+                            case 'open':
+                              if (entry.isDir) {
+                                _navigateTo(
+                                  _currentPath == '/'
+                                      ? '/${entry.name}'
+                                      : '$_currentPath/${entry.name}',
+                                );
+                              }
+                              break;
+                            case 'selectAll':
+                              _selectAll();
+                              break;
+                            case 'copy':
+                              _copySelected();
+                              break;
+                            case 'cut':
+                              _cutSelected();
+                              break;
+                            case 'paste':
+                              _pasteFromClipboard();
+                              break;
+                            case 'delete':
+                              _deleteSelected();
+                              break;
+                            case 'newFolder':
+                              _createFolder();
+                              break;
+                            case 'createArchive':
+                              _createArchive();
+                              break;
                             case 'rename':
                               _renameFile(originalIdx);
                               break;
@@ -794,6 +1113,109 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
                           }
                         },
                         itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'toggleSelect',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  selected
+                                      ? Icons.check_box
+                                      : Icons.check_box_outline_blank,
+                                  size: 16,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(selected ? 'Unselect' : 'Select'),
+                              ],
+                            ),
+                          ),
+                          if (entry.isDir)
+                            const PopupMenuItem(
+                              value: 'open',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.folder_open, size: 16),
+                                  SizedBox(width: 8),
+                                  Text('Open Folder'),
+                                ],
+                              ),
+                            ),
+                          const PopupMenuDivider(),
+                          const PopupMenuItem(
+                            value: 'selectAll',
+                            child: Row(
+                              children: [
+                                Icon(Icons.select_all, size: 16),
+                                SizedBox(width: 8),
+                                Text('Select All / Clear'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'copy',
+                            enabled: _selectedIndexes.isNotEmpty,
+                            child: const Row(
+                              children: [
+                                Icon(Icons.copy, size: 16),
+                                SizedBox(width: 8),
+                                Text('Copy Selected'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'cut',
+                            enabled: _selectedIndexes.isNotEmpty,
+                            child: const Row(
+                              children: [
+                                Icon(Icons.content_cut, size: 16),
+                                SizedBox(width: 8),
+                                Text('Cut Selected'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'paste',
+                            enabled: _clipboard.isNotEmpty,
+                            child: const Row(
+                              children: [
+                                Icon(Icons.paste, size: 16),
+                                SizedBox(width: 8),
+                                Text('Paste Here'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            enabled: _selectedIndexes.isNotEmpty,
+                            child: const Row(
+                              children: [
+                                Icon(Icons.delete, size: 16),
+                                SizedBox(width: 8),
+                                Text('Delete Selected'),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'newFolder',
+                            child: Row(
+                              children: [
+                                Icon(Icons.create_new_folder, size: 16),
+                                SizedBox(width: 8),
+                                Text('New Folder'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'createArchive',
+                            enabled: _selectedIndexes.isNotEmpty,
+                            child: const Row(
+                              children: [
+                                Icon(Icons.archive, size: 16),
+                                SizedBox(width: 8),
+                                Text('Archive Selected'),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuDivider(),
                           const PopupMenuItem(
                             value: 'rename',
                             child: Row(
@@ -820,6 +1242,14 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
                       ),
                       selected: selected,
                       onTap: () {
+                        if (entry.isDir) {
+                          _navigateTo(
+                            _currentPath == '/'
+                                ? '/${entry.name}'
+                                : '$_currentPath/${entry.name}',
+                          );
+                          return;
+                        }
                         setState(() {
                           if (selected) {
                             _selectedIndexes.remove(originalIdx);
@@ -828,73 +1258,31 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
                           }
                         });
                       },
-                      onLongPress: entry.isDir
-                          ? () => _navigateTo(
-                                _currentPath == '/'
-                                    ? '/${entry.name}'
-                                    : '$_currentPath/${entry.name}',
-                              )
-                          : null,
+                      onLongPress: () {
+                        setState(() {
+                          if (selected) {
+                            _selectedIndexes.remove(originalIdx);
+                          } else {
+                            _selectedIndexes.add(originalIdx);
+                          }
+                        });
+                      },
                     ),
                   );
                 },
               );
             }(),
-          ),
-          // Bottom action bar
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.select_all, color: Colors.black87),
-                    tooltip: 'Select All',
-                    onPressed: _selectAll,
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.copy, color: Colors.black87),
-                    tooltip: 'Copy',
-                    onPressed:
-                        _selectedIndexes.isNotEmpty ? _copySelected : null,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.content_cut, color: Colors.black87),
-                    tooltip: 'Cut',
-                    onPressed:
-                        _selectedIndexes.isNotEmpty ? _cutSelected : null,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.paste, color: Colors.black87),
-                    tooltip: 'Paste',
-                    onPressed:
-                        _clipboard.isNotEmpty ? _pasteFromClipboard : null,
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.red),
-                    tooltip: 'Delete',
-                    onPressed:
-                        _selectedIndexes.isNotEmpty ? _deleteSelected : null,
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.create_new_folder,
-                        color: Colors.green),
-                    tooltip: 'New Folder',
-                    onPressed: _createFolder,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.archive, color: Colors.blue),
-                    tooltip: 'Create Archive',
-                    onPressed:
-                        _selectedIndexes.isNotEmpty ? _createArchive : null,
-                  ),
-                ],
               ),
+            ],
+          ),
+          Positioned(
+            right: 20,
+            bottom: 20,
+            child: FloatingActionButton(
+              onPressed: _showFabActions,
+              backgroundColor: Colors.cyan.shade700,
+              foregroundColor: Colors.white,
+              child: const Icon(Icons.add),
             ),
           ),
         ],
