@@ -46,11 +46,25 @@ class _DeviceScreenState extends State<DeviceScreen> {
   int _connectionAttempts = 0;
   DateTime? _lastConnectionAttempt;
 
+  String _deviceString(String key, [String fallback = '']) {
+    final value = widget.device[key];
+    if (value == null) return fallback;
+    final text = value.toString();
+    return text.isEmpty ? fallback : text;
+  }
+
+  int _devicePort([int fallback = 22]) {
+    final value = widget.device['port'];
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '$fallback') ?? fallback;
+  }
+
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialTab;
-    _password = widget.device['password'] ?? '';
+    _password = _deviceString('password');
     _connectSSH();
   }
 
@@ -79,9 +93,17 @@ class _DeviceScreenState extends State<DeviceScreen> {
   Future<void> _connectSSH() async {
     if (!mounted) return;
 
-    final host = widget.device['host']!;
-    final port = int.tryParse(widget.device['port'] ?? '22') ?? 22;
-    final username = widget.device['username']!;
+    final host = _deviceString('host');
+    final port = _devicePort();
+    final username = _deviceString('username');
+
+    if (host.isEmpty || username.isEmpty) {
+      setState(() {
+        _connecting = false;
+        _sshError = 'Invalid device profile: host/username is missing.';
+      });
+      return;
+    }
 
     _connectionId = 'ssh:$username@$host:$port';
     _connectionAttempts++;
@@ -144,7 +166,9 @@ class _DeviceScreenState extends State<DeviceScreen> {
       } else {
         throw Exception('Failed to establish connection through pool');
       }
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('SSH connect error for $_connectionId: $e');
+      debugPrintStack(stackTrace: st);
       if (!mounted) return;
       setState(() {
         _sshError = e.toString();
@@ -302,7 +326,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
                 child: Text(
                   widget.device['name']?.isNotEmpty == true
                       ? widget.device['name']!
-                      : '${widget.device['username']}@${widget.device['host']}:${widget.device['port']}',
+                      : '${_deviceString('username', 'user')}@${_deviceString('host', 'unknown')}:${_devicePort()}',
                 ),
               ),
               if (_connectionId != null) ...[

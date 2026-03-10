@@ -25,6 +25,39 @@ class BackgroundSyncService {
 
   Stream<BackgroundSyncEvent> get events => _eventController.stream;
 
+  Future<List<Map<String, dynamic>>> _loadDevicesFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Preferred format in current app versions: a single JSON string list.
+    final devicesRaw = prefs.getString('devices');
+    if (devicesRaw != null && devicesRaw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(devicesRaw);
+        if (decoded is List) {
+          return decoded
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+      } catch (_) {
+        // Fall through to legacy format.
+      }
+    }
+
+    // Backward compatibility for older installs storing StringList entries.
+    final devicesList = prefs.getStringList('devices') ?? const <String>[];
+    return devicesList
+        .map((entry) => jsonDecode(entry))
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  Future<void> _saveDevicesToPrefs(List<Map<String, dynamic>> devices) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('devices', jsonEncode(devices));
+  }
+
   /// Start background sync service
   Future<void> start({
     Duration syncInterval = const Duration(minutes: 5),
@@ -76,11 +109,7 @@ class BackgroundSyncService {
     try {
       _addEvent(BackgroundSyncEvent.syncStarted());
 
-      final prefs = await SharedPreferences.getInstance();
-      final devicesJson = prefs.getStringList('devices') ?? [];
-      final devices = devicesJson
-          .map((json) => Map<String, dynamic>.from(jsonDecode(json)))
-          .toList();
+      final devices = await _loadDevicesFromPrefs();
 
       int synced = 0;
       int failed = 0;
@@ -246,9 +275,7 @@ class BackgroundSyncService {
 
   /// Enable background sync for a specific device
   Future<void> enableDeviceSync(String deviceName, bool enable) async {
-    final prefs = await SharedPreferences.getInstance();
-    final devicesJson = prefs.getStringList('devices') ?? [];
-    final devices = devicesJson.map((json) => jsonDecode(json)).toList();
+    final devices = await _loadDevicesFromPrefs();
 
     for (final device in devices) {
       if (device['name'] == deviceName) {
@@ -257,19 +284,16 @@ class BackgroundSyncService {
       }
     }
 
-    final updatedJson = devices.map((device) => jsonEncode(device)).toList();
-    await prefs.setStringList('devices', updatedJson);
+    await _saveDevicesToPrefs(devices);
 
     _addEvent(BackgroundSyncEvent.deviceSyncToggled(deviceName, enable));
   }
 
   /// Check if device has background sync enabled
   Future<bool> isDeviceSyncEnabled(String deviceName) async {
-    final prefs = await SharedPreferences.getInstance();
-    final devicesJson = prefs.getStringList('devices') ?? [];
+    final devices = await _loadDevicesFromPrefs();
 
-    for (final deviceJson in devicesJson) {
-      final device = jsonDecode(deviceJson);
+    for (final device in devices) {
       if (device['name'] == deviceName) {
         return device['enableBackgroundSync'] == true;
       }

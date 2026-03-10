@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/services.dart';
 
 class UsbDeviceInfo {
@@ -32,9 +33,17 @@ class UsbBridge {
 
   static Future<List<UsbDeviceInfo>> listDevices() async {
     try {
-      final list = await _ch.invokeMethod<List<dynamic>>('listDevices');
-      if (list == null) return [];
-      return list.map((e) => UsbDeviceInfo.fromMap(e)).toList();
+      final raw = await _ch.invokeMethod<dynamic>('listDevices');
+      dynamic list = raw;
+      if (raw is String) {
+        try {
+          list = jsonDecode(raw);
+        } catch (_) {
+          return [];
+        }
+      }
+      if (list is! List) return [];
+      return list.whereType<Map>().map((e) => UsbDeviceInfo.fromMap(e)).toList();
     } catch (_) {
       return [];
     }

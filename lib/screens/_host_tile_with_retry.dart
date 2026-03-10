@@ -21,12 +21,37 @@ class _HostTileWithRetryState extends State<HostTileWithRetry> {
   }
 
   void _resolveHostName() {
+    final String? cachedName = widget.host.cachedHostName as String?;
+    if (cachedName != null && cachedName.isNotEmpty) {
+      setState(() {
+        _hostNameFuture = Future.value(cachedName);
+      });
+      return;
+    }
+
     setState(() {
       _hostNameFuture = Future.any([
         widget.host.hostName,
         Future.delayed(_timeout, () => null),
       ]);
     });
+  }
+
+  List<String> _parsePorts(dynamic value) {
+    if (value is List) {
+      return value.map((e) => '$e').toList();
+    }
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return const <String>[];
+      final clean = trimmed.replaceAll('[', '').replaceAll(']', '');
+      return clean
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+    return const <String>[];
   }
 
   @override
@@ -55,6 +80,9 @@ class _HostTileWithRetryState extends State<HostTileWithRetry> {
                 hostName != 'Timed out'
             ? hostName
             : 'Device ${widget.host.address}';
+        final ports = _parsePorts(widget.host.openPorts);
+        final portsText =
+          ports.isEmpty ? 'unknown' : ports.map((e) => '$e').join(', ');
 
         return ListTile(
           leading: const Icon(Icons.computer),
@@ -77,6 +105,7 @@ class _HostTileWithRetryState extends State<HostTileWithRetry> {
                   hostName != displayName &&
                   hostName != 'Timed out')
                 Text('Hostname: $hostName'),
+              Text('Open ports: $portsText'),
               Text(
                   'Response: ${widget.host.responseTime?.inMilliseconds ?? '?'}ms'),
             ],

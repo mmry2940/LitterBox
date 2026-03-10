@@ -52,6 +52,26 @@ class DeviceFilesScreen extends StatefulWidget {
 }
 
 class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
+  Future<String> _readSshText(Stream<dynamic> stream) async {
+    final buffer = StringBuffer();
+    await for (final chunk in stream) {
+      if (chunk is String) {
+        buffer.write(chunk);
+      } else if (chunk is List<int>) {
+        buffer.write(utf8.decode(chunk, allowMalformed: true));
+      } else if (chunk is List) {
+        try {
+          buffer.write(utf8.decode(chunk.cast<int>(), allowMalformed: true));
+        } catch (_) {
+          buffer.write(chunk.toString());
+        }
+      } else {
+        buffer.write(chunk.toString());
+      }
+    }
+    return buffer.toString();
+  }
+
   final Set<int> _selectedIndexes = {};
   String _currentPath = '/home/';
   List<_FileEntry>? _entries;
@@ -160,14 +180,14 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
         if (_clipboardIsCut) {
           final session = await widget.sshClient!.execute(
               'mv "${sourcePath.replaceAll('"', '\\"')}" "${targetPath.replaceAll('"', '\\"')}"');
-          await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
-          await session.stderr.cast<List<int>>().transform(utf8.decoder).join();
+          await _readSshText(session.stdout);
+          await _readSshText(session.stderr);
           session.exitCode;
         } else {
           final session = await widget.sshClient!.execute(
               'cp -r "${sourcePath.replaceAll('"', '\\"')}" "${targetPath.replaceAll('"', '\\"')}"');
-          await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
-          await session.stderr.cast<List<int>>().transform(utf8.decoder).join();
+          await _readSshText(session.stdout);
+          await _readSshText(session.stderr);
           session.exitCode;
         }
       }
@@ -226,11 +246,8 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
         final command = entry.isDir ? 'rm -rf' : 'rm';
         final session = await widget.sshClient!
             .execute('$command "${filePath.replaceAll('"', '\\"')}"');
-        await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
-        final stderr = await session.stderr
-            .cast<List<int>>()
-            .transform(utf8.decoder)
-            .join();
+        await _readSshText(session.stdout);
+        final stderr = await _readSshText(session.stderr);
 
         if (stderr.isNotEmpty) {
           throw Exception('Failed to delete ${entry.name}: $stderr');
@@ -289,9 +306,8 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
 
       final session = await widget.sshClient!.execute(
           'mv "${oldPath.replaceAll('"', '\\"')}" "${newPath.replaceAll('"', '\\"')}"');
-      await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
-      final stderr =
-          await session.stderr.cast<List<int>>().transform(utf8.decoder).join();
+        await _readSshText(session.stdout);
+        final stderr = await _readSshText(session.stderr);
 
       if (stderr.isNotEmpty) {
         throw Exception(stderr);
@@ -344,9 +360,8 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
 
       final session = await widget.sshClient!
           .execute('mkdir -p "${folderPath.replaceAll('"', '\\"')}"');
-      await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
-      final stderr =
-          await session.stderr.cast<List<int>>().transform(utf8.decoder).join();
+        await _readSshText(session.stdout);
+        final stderr = await _readSshText(session.stderr);
 
       if (stderr.isNotEmpty) {
         throw Exception(stderr);
@@ -410,9 +425,8 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
 
       final session = await widget.sshClient!.execute(
           'cd "${_currentPath.replaceAll('"', '\\"')}" && tar -czf "${archiveName.replaceAll('"', '\\"')}.tar.gz" $filesArg');
-      await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
-      final stderr =
-          await session.stderr.cast<List<int>>().transform(utf8.decoder).join();
+        await _readSshText(session.stdout);
+        final stderr = await _readSshText(session.stderr);
 
       if (stderr.isNotEmpty) {
         throw Exception(stderr);
@@ -469,9 +483,8 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
       }
 
       final session = await widget.sshClient!.execute(command);
-      await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
-      final stderr =
-          await session.stderr.cast<List<int>>().transform(utf8.decoder).join();
+        await _readSshText(session.stdout);
+        final stderr = await _readSshText(session.stderr);
 
       if (stderr.isNotEmpty && !stderr.contains('inflating:')) {
         throw Exception(stderr);
@@ -526,6 +539,7 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
   }
 
   Future<void> _fetchFiles(String path) async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -535,8 +549,7 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
       final session = await widget.sshClient!.execute(
         'ls -lAht "${path.replaceAll('"', '"')}"',
       );
-      final output =
-          await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
+      final output = await _readSshText(session.stdout);
       final lines =
           output.split('\n').where((l) => l.trim().isNotEmpty).toList();
       // Skip total line if present
@@ -557,11 +570,13 @@ class _DeviceFilesScreenState extends State<DeviceFilesScreen> {
         if (!a.isDir && b.isDir) return 1;
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
+      if (!mounted) return;
       setState(() {
         _entries = sortedEntries;
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;

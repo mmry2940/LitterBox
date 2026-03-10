@@ -53,11 +53,6 @@ Stream<Map<String, dynamic>> isolateSubnetScan(
   return controller.stream;
 }
 
-Future<bool> _quickConnect(String ip) async {
-  final result = await _probeHost(ip);
-  return (result['alive'] as bool?) ?? false;
-}
-
 Future<Map<String, dynamic>> _probeHost(String ip) async {
   const candidatePorts = [22, 80, 443, 5555, 3389, 5900];
   const timeout = Duration(milliseconds: 120);

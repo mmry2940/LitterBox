@@ -58,6 +58,26 @@ class SystemInfo {
 
 class _DeviceInfoScreenState extends State<DeviceInfoScreen>
     with TickerProviderStateMixin {
+  Future<String> _readSshText(Stream<dynamic> stream) async {
+    final buffer = StringBuffer();
+    await for (final chunk in stream) {
+      if (chunk is String) {
+        buffer.write(chunk);
+      } else if (chunk is List<int>) {
+        buffer.write(utf8.decode(chunk, allowMalformed: true));
+      } else if (chunk is List) {
+        try {
+          buffer.write(utf8.decode(chunk.cast<int>(), allowMalformed: true));
+        } catch (_) {
+          buffer.write(chunk.toString());
+        }
+      } else {
+        buffer.write(chunk.toString());
+      }
+    }
+    return buffer.toString();
+  }
+
   SystemInfo? _systemInfo;
   String? _error;
   bool _loading = false;
@@ -133,8 +153,7 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen>
       ].join(' && echo "---SECTION_SEPARATOR---" && ');
 
       final session = await widget.sshClient!.execute(commands);
-      final output =
-          await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
+        final output = await _readSshText(session.stdout);
 
       _systemInfo = _parseSystemInfo(output);
       _refreshController.stop();

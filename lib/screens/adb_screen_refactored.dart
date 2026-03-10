@@ -1646,19 +1646,44 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
     // Platform side handles events over EventChannel name adb_usb_events
     const events = EventChannel('adb_usb_events');
     _usbEventsSub = events.receiveBroadcastStream().listen((event) async {
+      Map<String, dynamic>? eventMap;
       if (event is Map) {
-        final devices = (event['devices'] as List?) ?? [];
-        final parsed = devices.map((d) {
-          final m = Map<String, dynamic>.from(d as Map);
-          return UsbDeviceInfo(
-            deviceId: (m['deviceId'] as int?) ?? -1,
-            vendorId: (m['vendorId'] as int?) ?? 0,
-            productId: (m['productId'] as int?) ?? 0,
-            serial: m['serial'] as String?,
-            name: m['name'] as String? ?? '',
-            hasPermission: (m['hasPermission'] as bool?) ?? false,
-          );
-        }).toList();
+        eventMap = Map<String, dynamic>.from(event);
+      } else if (event is String) {
+        try {
+          final decoded = jsonDecode(event);
+          if (decoded is Map) {
+            eventMap = Map<String, dynamic>.from(decoded);
+          }
+        } catch (_) {
+          // Ignore malformed event payloads.
+        }
+      }
+      if (eventMap == null) return;
+
+      dynamic rawDevices = eventMap['devices'];
+      if (rawDevices is String) {
+        try {
+          rawDevices = jsonDecode(rawDevices);
+        } catch (_) {
+          rawDevices = const [];
+        }
+      }
+      final devices = rawDevices is List ? rawDevices : const [];
+
+      final parsed = devices.whereType<Map>().map((d) {
+        final m = Map<String, dynamic>.from(d);
+        return UsbDeviceInfo(
+          deviceId: (m['deviceId'] as num?)?.toInt() ?? -1,
+          vendorId: (m['vendorId'] as num?)?.toInt() ?? 0,
+          productId: (m['productId'] as num?)?.toInt() ?? 0,
+          serial: m['serial']?.toString(),
+          name: m['name']?.toString() ?? '',
+          hasPermission: (m['hasPermission'] as bool?) ?? false,
+        );
+      }).toList();
+
+      if (mounted) {
         setState(() => _usbDevices = parsed);
       }
     });

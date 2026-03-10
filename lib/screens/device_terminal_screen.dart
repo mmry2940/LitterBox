@@ -21,7 +21,12 @@ class TerminalSessionManager {
   Future<TerminalSession> createOrGetSession(
       String sessionId, SSHClient sshClient) async {
     if (_sessions.containsKey(sessionId)) {
-      return _sessions[sessionId]!;
+      final existing = _sessions[sessionId]!;
+      if (existing.isConnected) {
+        return existing;
+      }
+      existing.dispose();
+      _sessions.remove(sessionId);
     }
 
     final session = TerminalSession(sessionId, sshClient);
@@ -88,6 +93,19 @@ class TerminalSession {
     }
   }
 
+  String _decodeChunk(dynamic data) {
+    if (data is String) return data;
+    if (data is List<int>) return utf8.decode(data, allowMalformed: true);
+    if (data is List) {
+      try {
+        return utf8.decode(data.cast<int>(), allowMalformed: true);
+      } catch (_) {
+        return data.toString();
+      }
+    }
+    return data.toString();
+  }
+
   Future<void> initialize() async {
     terminal = Terminal(maxLines: 10000);
 
@@ -106,12 +124,12 @@ class TerminalSession {
 
       // Set up data streams
       session.stdout.listen((data) {
-        terminal.write(String.fromCharCodes(data));
+        terminal.write(_decodeChunk(data));
         _notifyDataReceived();
       });
 
       session.stderr.listen((data) {
-        terminal.write(String.fromCharCodes(data));
+        terminal.write(_decodeChunk(data));
         _notifyDataReceived();
       });
 
@@ -231,9 +249,12 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen>
   TerminalSession? _session;
   String _sessionId = '';
   double _fontSize = 14.0; // Default font size
+  VoidCallback? _statusListener;
+  VoidCallback? _dataListener;
 
   Future<void> _loadFontSize() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _fontSize = prefs.getDouble('terminal_font_size') ?? 14.0;
     });
@@ -290,19 +311,32 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen>
     if (widget.sshClient == null) return;
 
     try {
+      if (_session != null) {
+        if (_statusListener != null) {
+          _session!.removeStatusListener(_statusListener!);
+        }
+        if (_dataListener != null) {
+          _session!.removeDataListener(_dataListener!);
+        }
+      }
+
       _session = await TerminalSessionManager()
           .createOrGetSession(_sessionId, widget.sshClient!);
-      _session!.addStatusListener(() {
+
+      _statusListener = () {
         if (mounted) {
           setState(() {}); // Trigger UI update when status changes
         }
-      });
+      };
 
-      _session!.addDataListener(() {
+      _dataListener = () {
         if (mounted) {
           _scrollToBottom(); // Auto-scroll when new data is received
         }
-      });
+      };
+
+      _session!.addStatusListener(_statusListener!);
+      _session!.addDataListener(_dataListener!);
 
       if (mounted) {
         setState(() {});
@@ -315,6 +349,7 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen>
   void _ensureSessionConnected() {
     if (_session != null && !_session!.isConnected) {
       // Try to reconnect if session was lost
+      TerminalSessionManager().removeSession(_sessionId);
       _initializeSession();
     }
   }
@@ -346,8 +381,12 @@ class _DeviceTerminalScreenState extends State<DeviceTerminalScreen>
     _cursorTrackingTimer?.cancel();
     // Remove listeners but don't close session - it should persist
     if (_session != null) {
-      _session!.removeStatusListener(() {});
-      _session!.removeDataListener(() {});
+      if (_statusListener != null) {
+        _session!.removeStatusListener(_statusListener!);
+      }
+      if (_dataListener != null) {
+        _session!.removeDataListener(_dataListener!);
+      }
     }
     _scrollController.dispose();
     // Only stop foreground service if no other terminal screens are active

@@ -41,13 +41,25 @@ class MainActivity : FlutterActivity() {
 		
 		try {
 			usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
-			registerReceiver(usbReceiver, IntentFilter(ACTION_USB_PERMISSION))
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+				registerReceiver(
+					usbReceiver,
+					IntentFilter(ACTION_USB_PERMISSION),
+					Context.RECEIVER_NOT_EXPORTED
+				)
+			} else {
+				registerReceiver(usbReceiver, IntentFilter(ACTION_USB_PERMISSION))
+			}
 
 			// Hotplug (attach/detach) receiver
 			val hotplugFilter = IntentFilter()
 			hotplugFilter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
 			hotplugFilter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-			registerReceiver(hotplugReceiver, hotplugFilter)
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+				registerReceiver(hotplugReceiver, hotplugFilter, Context.RECEIVER_NOT_EXPORTED)
+			} else {
+				registerReceiver(hotplugReceiver, hotplugFilter)
+			}
 		} catch (e: Exception) {
 			android.util.Log.e("MainActivity", "Error setting up USB: ${e.message}", e)
 		}
@@ -121,7 +133,7 @@ class MainActivity : FlutterActivity() {
 	}
 
 	override fun onDestroy() {
-		unregisterReceiver(usbReceiver)
+		try { unregisterReceiver(usbReceiver) } catch (_: Exception) {}
 		try { unregisterReceiver(hotplugReceiver) } catch (_: Exception) {}
 		super.onDestroy()
 	}

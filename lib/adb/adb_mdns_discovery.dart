@@ -23,13 +23,21 @@ class AdbMdnsServiceInfo {
         'reachable': reachable,
         'ts': discoveredAt.millisecondsSinceEpoch,
       };
+
+  static Map<String, String> _normalizeTxt(dynamic value) {
+    if (value is Map) {
+      return value.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''));
+    }
+    return const <String, String>{};
+  }
+
   static AdbMdnsServiceInfo fromJson(Map<String, dynamic> j) =>
       AdbMdnsServiceInfo(
         j['host'] as String,
         j['ip'] as String?,
         j['ipv6'] as String?,
-        j['port'] as int,
-        (j['txt'] as Map).cast<String, String>(),
+        (j['port'] as num?)?.toInt() ?? 0,
+        _normalizeTxt(j['txt']),
         DateTime.fromMillisecondsSinceEpoch(j['ts'] as int),
         reachable: j['reachable'] as bool?,
       );

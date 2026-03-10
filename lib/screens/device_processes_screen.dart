@@ -276,6 +276,26 @@ class DeviceProcessesScreen extends StatefulWidget {
 }
 
 class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
+  Future<String> _readSshText(Stream<dynamic> stream) async {
+    final buffer = StringBuffer();
+    await for (final chunk in stream) {
+      if (chunk is String) {
+        buffer.write(chunk);
+      } else if (chunk is List<int>) {
+        buffer.write(utf8.decode(chunk, allowMalformed: true));
+      } else if (chunk is List) {
+        try {
+          buffer.write(utf8.decode(chunk.cast<int>(), allowMalformed: true));
+        } catch (_) {
+          buffer.write(chunk.toString());
+        }
+      } else {
+        buffer.write(chunk.toString());
+      }
+    }
+    return buffer.toString();
+  }
+
   List<Map<String, String>>? _processes;
   List<Map<String, String>>? _filteredProcesses;
   String? _error;
@@ -319,8 +339,7 @@ class _DeviceProcessesScreenState extends State<DeviceProcessesScreen> {
     });
     try {
       final session = await widget.sshClient!.execute('ps aux');
-      final output =
-          await session.stdout.cast<List<int>>().transform(utf8.decoder).join();
+        final output = await _readSshText(session.stdout);
       final lines =
           output.split('\n').where((l) => l.trim().isNotEmpty).toList();
       if (lines.isEmpty) throw Exception('No process data');

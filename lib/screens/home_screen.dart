@@ -108,6 +108,18 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  List<dynamic> _decodeJsonList(String raw) {
+    try {
+      final decoded = json.decode(raw);
+      if (decoded is List) return decoded;
+      if (decoded is String) {
+        final nested = json.decode(decoded);
+        if (nested is List) return nested;
+      }
+    } catch (_) {}
+    return const [];
+  }
+
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -195,7 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString('favorite_devices');
     if (jsonStr != null) {
-      final List<dynamic> list = json.decode(jsonStr);
+      final List<dynamic> list = _decodeJsonList(jsonStr);
       setState(() {
         _favoriteDeviceHosts.clear();
         _favoriteDeviceHosts.addAll(list.cast<String>());
@@ -207,11 +219,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString('devices');
     if (jsonStr != null) {
-      final List<dynamic> list = json.decode(jsonStr);
+      final List<dynamic> list = _decodeJsonList(jsonStr);
       setState(() {
         _devices = list
-            .cast<Map<String, dynamic>>()
-            .map((e) => e.map((k, v) => MapEntry(k, v.toString())))
+              .whereType<Map>()
+              .map((e) => e.map<String, dynamic>(
+                    (k, v) => MapEntry(k.toString(), v?.toString() ?? ''),
+                  ))
             .toList();
       });
     }
@@ -1216,6 +1230,41 @@ class _ScanDialogState extends State<_ScanDialog> {
   final Map<String, LiteHost> _pendingHosts = <String, LiteHost>{};
   Timer? _uiBatchTimer;
 
+  List<String> _coerceStringList(dynamic value) {
+    if (value is List) {
+      return value.map((e) => e.toString()).toList();
+    }
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return const <String>[];
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        try {
+          final decoded = json.decode(trimmed);
+          if (decoded is List) {
+            return decoded.map((e) => e.toString()).toList();
+          }
+        } catch (_) {
+          // Fall through to CSV style parsing.
+        }
+      }
+      return trimmed
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+    return const <String>[];
+  }
+
+  List<int> _coerceIntList(dynamic value) {
+    final values = _coerceStringList(value)
+        .map((e) => int.tryParse(e))
+        .whereType<int>()
+        .toList();
+    values.sort();
+    return values;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1273,7 +1322,7 @@ class _ScanDialogState extends State<_ScanDialog> {
       if (jsonStr == null) return;
       final data = json.decode(jsonStr) as Map<String, dynamic>;
       final ts = DateTime.tryParse(data['timestamp'] as String? ?? '');
-      final List<dynamic> ips = data['ips'] as List<dynamic>? ?? [];
+      final ips = _coerceStringList(data['ips']);
       if (ips.isNotEmpty) {
         setState(() {
           _foundHosts.addAll(ips.map((e) => LiteHost(e.toString())));
@@ -1364,9 +1413,7 @@ class _ScanDialogState extends State<_ScanDialog> {
         if (ip.isEmpty) return;
         final responseMs = (msg['responseMs'] as num?)?.toInt();
         final hostName = (msg['hostName'] as String?)?.trim();
-        final rawPorts = (msg['openPorts'] as List?) ?? const [];
-        final ports = rawPorts.map((e) => int.tryParse('$e')).whereType<int>().toList()
-          ..sort();
+        final ports = _coerceIntList(msg['openPorts']);
 
         _pendingHosts[ip] = LiteHost(
           ip,

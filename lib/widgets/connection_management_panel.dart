@@ -22,7 +22,7 @@ class _ConnectionManagementPanelState extends State<ConnectionManagementPanel> {
 
   Map<String, dynamic>? _connectionStats;
   Map<String, dynamic>? _syncStatus;
-  List<String> _recentEvents = [];
+  final List<String> _recentEvents = [];
 
   @override
   void initState() {
@@ -266,7 +266,8 @@ class _ConnectionManagementPanelState extends State<ConnectionManagementPanel> {
   }
 
   Widget _buildConnectionsList() {
-    final connections = _connectionStats!['connections'] as List;
+    final rawConnections = _connectionStats!['connections'];
+    final connections = rawConnections is List ? rawConnections : const [];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

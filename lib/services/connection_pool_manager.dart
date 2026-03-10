@@ -7,6 +7,45 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../adb_client.dart';
 import '../models/saved_adb_device.dart';
 
+ConnectivityResult? _coerceConnectivityResult(dynamic value) {
+  if (value is ConnectivityResult) return value;
+  if (value is List && value.isNotEmpty) {
+    return _coerceConnectivityResult(value.first);
+  }
+  if (value is String) {
+    switch (value.toLowerCase()) {
+      case 'wifi':
+        return ConnectivityResult.wifi;
+      case 'ethernet':
+        return ConnectivityResult.ethernet;
+      case 'mobile':
+        return ConnectivityResult.mobile;
+      case 'none':
+        return ConnectivityResult.none;
+      case 'bluetooth':
+        return ConnectivityResult.bluetooth;
+      case 'vpn':
+        return ConnectivityResult.vpn;
+      case 'other':
+        return ConnectivityResult.other;
+    }
+  }
+  return null;
+}
+
+NetworkState _networkStateFromConnectivity(ConnectivityResult? result) {
+  switch (result) {
+    case ConnectivityResult.wifi:
+    case ConnectivityResult.ethernet:
+    case ConnectivityResult.mobile:
+      return NetworkState.connected;
+    case ConnectivityResult.none:
+      return NetworkState.disconnected;
+    default:
+      return NetworkState.unknown;
+  }
+}
+
 /// Quality metrics for a connection
 class ConnectionQuality {
   final int latencyMs;
@@ -210,8 +249,8 @@ class ManagedConnection<T> {
     try {
       if (client is SSHClient) {
         final ssh = client as SSHClient;
-        final result = await ssh.run('echo \"validation\"').timeout(adaptiveTimeout);
-        final isValid = result != null && result.isNotEmpty;
+        final result = await ssh.run('echo "validation"').timeout(adaptiveTimeout);
+        final isValid = result.isNotEmpty;
 
         lastValidationTime = DateTime.now();
         isValidated = isValid;
@@ -439,17 +478,9 @@ class ManagedConnection<T> {
     try {
       if (kIsWeb) return NetworkState.connected; // Assume connected on web
 
-      final connectivityResults = await Connectivity().checkConnectivity();
-      switch (connectivityResults.first) {
-        case ConnectivityResult.wifi:
-        case ConnectivityResult.ethernet:
-        case ConnectivityResult.mobile:
-          return NetworkState.connected;
-        case ConnectivityResult.none:
-          return NetworkState.disconnected;
-        default:
-          return NetworkState.unknown;
-      }
+      final connectivityData = await Connectivity().checkConnectivity();
+      final result = _coerceConnectivityResult(connectivityData);
+      return _networkStateFromConnectivity(result);
     } catch (e) {
       return NetworkState.unknown;
     }
@@ -483,7 +514,7 @@ class ConnectionPoolManager {
       StreamController.broadcast();
   final StreamController<String> _networkEvents = StreamController.broadcast();
 
-  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  StreamSubscription<dynamic>? _connectivitySubscription;
   NetworkState _currentNetworkState = NetworkState.unknown;
   Timer? _networkMonitorTimer;
 
@@ -499,7 +530,13 @@ class ConnectionPoolManager {
 
     _connectivitySubscription =
         Connectivity().onConnectivityChanged.listen((results) {
-      _handleNetworkChange(results.first);
+      final first = _coerceConnectivityResult(results);
+      if (first != null) {
+        _handleNetworkChange(first);
+      }
+    }, onError: (error) {
+      _networkEvents.add('Connectivity stream error: $error');
+      _currentNetworkState = NetworkState.unknown;
     });
 
     // Periodic network quality check
@@ -525,16 +562,7 @@ class ConnectionPoolManager {
   }
 
   NetworkState _mapConnectivityToNetworkState(ConnectivityResult result) {
-    switch (result) {
-      case ConnectivityResult.wifi:
-      case ConnectivityResult.ethernet:
-      case ConnectivityResult.mobile:
-        return NetworkState.connected;
-      case ConnectivityResult.none:
-        return NetworkState.disconnected;
-      default:
-        return NetworkState.unknown;
-    }
+    return _networkStateFromConnectivity(result);
   }
 
   void _handleNetworkDisconnection() {
