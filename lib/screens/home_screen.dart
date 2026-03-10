@@ -9,7 +9,6 @@ import 'package:network_info_plus/network_info_plus.dart';
 import 'device_screen.dart';
 import 'adb_screen_refactored.dart';
 import 'vnc_screen.dart';
-import 'rdp_screen.dart';
 import 'esp32_screen.dart';
 import '_host_tile_with_retry.dart';
 import '../network_init.dart';
@@ -90,8 +89,9 @@ class LiteHost {
       return cachedHostName;
     }
     try {
-      final reverse =
-          await InternetAddress(address).reverse().timeout(const Duration(milliseconds: 350));
+      final reverse = await InternetAddress(address)
+          .reverse()
+          .timeout(const Duration(milliseconds: 350));
       if (reverse.host.isNotEmpty && reverse.host != address) {
         return reverse.host;
       }
@@ -172,12 +172,6 @@ class _HomeScreenState extends State<HomeScreen> {
             'visible': true
           },
           {
-            'key': 'rdp',
-            'label': 'RDP',
-            'icon': Icons.computer.codePoint,
-            'visible': true
-          },
-          {
             'key': 'other',
             'label': 'Other',
             'icon': Icons.more_horiz.codePoint,
@@ -222,10 +216,10 @@ class _HomeScreenState extends State<HomeScreen> {
       final List<dynamic> list = _decodeJsonList(jsonStr);
       setState(() {
         _devices = list
-              .whereType<Map>()
-              .map((e) => e.map<String, dynamic>(
-                    (k, v) => MapEntry(k.toString(), v?.toString() ?? ''),
-                  ))
+            .whereType<Map>()
+            .map((e) => e.map<String, dynamic>(
+                  (k, v) => MapEntry(k.toString(), v?.toString() ?? ''),
+                ))
             .toList();
       });
     }
@@ -1114,15 +1108,6 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             ListTile(
-              title: const Text('RDP'),
-              leading: const Icon(Icons.computer),
-              onTap: () {
-                Navigator.of(context).push(MaterialPageRoute(
-                  builder: (context) => const RDPScreen(),
-                ));
-              },
-            ),
-            ListTile(
               title: const Text('Connection Manager'),
               leading: const Icon(Icons.hub),
               onTap: () {
@@ -1419,7 +1404,8 @@ class _ScanDialogState extends State<_ScanDialog> {
           ip,
           responseTime:
               responseMs != null ? Duration(milliseconds: responseMs) : null,
-          cachedHostName: (hostName == null || hostName.isEmpty) ? null : hostName,
+          cachedHostName:
+              (hostName == null || hostName.isEmpty) ? null : hostName,
           openPorts: ports,
         );
 

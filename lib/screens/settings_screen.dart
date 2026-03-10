@@ -439,7 +439,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _showSystemInfo() async {
-    String systemInfoText = 'System Information\n' + '=' * 50 + '\n';
+    String systemInfoText = 'System Information\n${'=' * 50}\n';
 
     try {
       // App information - basic info without package_info_plus
@@ -491,7 +491,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('System Information'),
-          content: Container(
+          content: SizedBox(
             width: 400,
             height: 500,
             child: SingleChildScrollView(
@@ -596,7 +596,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Diagnostic Results'),
-          content: Container(
+          content: SizedBox(
             width: 400,
             height: 400,
             child: SingleChildScrollView(
@@ -651,7 +651,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Full Backup Created'),
-          content: Container(
+          content: SizedBox(
             width: 400,
             height: 300,
             child: Column(
@@ -704,7 +704,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Restore from Backup'),
-        content: Container(
+        content: SizedBox(
           width: 400,
           child: Column(
             mainAxisSize: MainAxisSize.min,

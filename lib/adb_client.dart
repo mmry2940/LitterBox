@@ -905,7 +905,7 @@ class ADBClientManager {
           return true;
         } catch (e) {
           _addOutput('❌ Basic TCP connection also failed: $e');
-          throw e;
+          rethrow;
         }
       }
     } catch (e) {

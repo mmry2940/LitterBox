@@ -1717,7 +1717,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<ESP32ConnectionType>(
-              value: _connectionType,
+              initialValue: _connectionType,
               decoration: const InputDecoration(
                 labelText: 'Connection Type',
                 border: OutlineInputBorder(),

@@ -759,10 +759,12 @@ class ESP32Service {
 
       // Add nearby IPs first (±10 from current device)
       for (int offset = 1; offset <= 10; offset++) {
-        if (currentDeviceIP - offset >= 1)
+        if (currentDeviceIP - offset >= 1) {
           ipsToScan.add(currentDeviceIP - offset);
-        if (currentDeviceIP + offset <= 254)
+        }
+        if (currentDeviceIP + offset <= 254) {
           ipsToScan.add(currentDeviceIP + offset);
+        }
       }
 
       // Add common router/gateway IPs
