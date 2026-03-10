@@ -67,12 +67,34 @@ class DeviceListScreen extends StatelessWidget {
 class LiteHost {
   final String address;
   final Duration? responseTime;
-  LiteHost(this.address, {this.responseTime});
+  final String? cachedHostName;
+  final List<int> openPorts;
+
+  LiteHost(
+    this.address, {
+    this.responseTime,
+    this.cachedHostName,
+    this.openPorts = const <int>[],
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) || (other is LiteHost && other.address == address);
+
+  @override
+  int get hashCode => address.hashCode;
+
   // Mimic API used by HostTileWithRetry
   Future<String?> get hostName async {
+    if (cachedHostName != null && cachedHostName!.isNotEmpty) {
+      return cachedHostName;
+    }
     try {
-      final list = await InternetAddress.lookup(address);
-      if (list.isNotEmpty) return list.first.host;
+      final reverse =
+          await InternetAddress(address).reverse().timeout(const Duration(milliseconds: 350));
+      if (reverse.host.isNotEmpty && reverse.host != address) {
+        return reverse.host;
+      }
     } catch (_) {}
     return null;
   }
@@ -1183,7 +1205,7 @@ class _ScanDialogState extends State<_ScanDialog> {
   final Set<LiteHost> _foundHosts = <LiteHost>{};
   bool _scanning = false;
   String _errorMessage = '';
-  StreamSubscription<String>? _scanSubscription;
+  StreamSubscription<Map<String, dynamic>>? _scanSubscription;
   String? _subnet;
   String? _networkInfo;
   bool _fetchingNetworkInfo = true;
@@ -1191,6 +1213,8 @@ class _ScanDialogState extends State<_ScanDialog> {
   String _progressText = '';
   bool _loadedCached = false;
   DateTime? _cacheTime;
+  final Map<String, LiteHost> _pendingHosts = <String, LiteHost>{};
+  Timer? _uiBatchTimer;
 
   @override
   void initState() {
@@ -1278,11 +1302,20 @@ class _ScanDialogState extends State<_ScanDialog> {
   @override
   void dispose() {
     _scanSubscription?.cancel();
+    _uiBatchTimer?.cancel();
     super.dispose();
   }
 
   DateTime? _lastScanStarted;
   Timer? _debounceTimer;
+
+  void _flushPendingHosts() {
+    if (!mounted || _pendingHosts.isEmpty) return;
+    setState(() {
+      _foundHosts.addAll(_pendingHosts.values);
+      _pendingHosts.clear();
+    });
+  }
 
   void _startScan() {
     if (!mounted || _subnet == null) return;
@@ -1301,25 +1334,54 @@ class _ScanDialogState extends State<_ScanDialog> {
       _scanning = true;
       _foundHosts.clear();
       _errorMessage = '';
+      _progressText = '';
     });
     print('Starting isolate scan for subnet: $_subnet');
     try {
-      final stream =
-          isolateSubnetScan(_subnet!, firstHostId: 1, lastHostId: 254);
+      _scanSubscription?.cancel();
+      _uiBatchTimer?.cancel();
+      _pendingHosts.clear();
+      _uiBatchTimer = Timer.periodic(
+        const Duration(milliseconds: 120),
+        (_) => _flushPendingHosts(),
+      );
+
+      final stream = isolateSubnetScan(
+        _subnet!,
+        firstHostId: 1,
+        lastHostId: 254,
+      );
       _scanSubscription = stream.listen((msg) {
-        if (msg.startsWith('progress:')) {
-          final pct = msg.split(':').last;
+        final type = msg['type'] as String?;
+        if (type == 'progress') {
+          final pct = (msg['percent'] ?? '').toString();
           if (mounted) setState(() => _progressText = '$pct%');
           return;
         }
-        final ip = msg;
-        if (mounted) {
-          setState(() {
-            // Represent ActiveHost minimally (placeholder wrapper) - for now just store via custom ActiveHost-like stand-in
-            _foundHosts.add(LiteHost(ip));
-          });
+        if (type != 'host') return;
+
+        final ip = (msg['ip'] ?? '').toString();
+        if (ip.isEmpty) return;
+        final responseMs = (msg['responseMs'] as num?)?.toInt();
+        final hostName = (msg['hostName'] as String?)?.trim();
+        final rawPorts = (msg['openPorts'] as List?) ?? const [];
+        final ports = rawPorts.map((e) => int.tryParse('$e')).whereType<int>().toList()
+          ..sort();
+
+        _pendingHosts[ip] = LiteHost(
+          ip,
+          responseTime:
+              responseMs != null ? Duration(milliseconds: responseMs) : null,
+          cachedHostName: (hostName == null || hostName.isEmpty) ? null : hostName,
+          openPorts: ports,
+        );
+
+        if (_pendingHosts.length >= 8) {
+          _flushPendingHosts();
         }
       }, onDone: () {
+        _uiBatchTimer?.cancel();
+        _flushPendingHosts();
         _cacheResults();
         if (mounted) {
           setState(() {
@@ -1327,6 +1389,7 @@ class _ScanDialogState extends State<_ScanDialog> {
           });
         }
       }, onError: (e) {
+        _uiBatchTimer?.cancel();
         if (mounted) {
           setState(() {
             _scanning = false;
@@ -1347,6 +1410,8 @@ class _ScanDialogState extends State<_ScanDialog> {
   void _cancelScan() {
     if (!_scanning) return;
     _scanSubscription?.cancel();
+    _uiBatchTimer?.cancel();
+    _flushPendingHosts();
     _cacheResults();
     setState(() {
       _scanning = false;
