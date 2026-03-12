@@ -418,10 +418,11 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   }
 
   /// Show dialog to get pairing information for wireless debugging
-  Future<Map<String, dynamic>?> _showPairingDialog(String host, int connectionPort) async {
+  Future<Map<String, dynamic>?> _showPairingDialog(
+      String host, int connectionPort) async {
     final pairingPortController = TextEditingController(text: '37205');
     final pairingCodeController = TextEditingController();
-    
+
     return showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => AlertDialog(
@@ -469,9 +470,10 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
           ),
           ElevatedButton(
             onPressed: () {
-              final pairingPort = int.tryParse(pairingPortController.text.trim()) ?? 37205;
+              final pairingPort =
+                  int.tryParse(pairingPortController.text.trim()) ?? 37205;
               final pairingCode = pairingCodeController.text.trim();
-              
+
               if (pairingCode.length == 6) {
                 Navigator.of(context).pop({
                   'pairingPort': pairingPort,
@@ -479,7 +481,9 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
                 });
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter a valid 6-digit pairing code')),
+                  const SnackBar(
+                      content:
+                          Text('Please enter a valid 6-digit pairing code')),
                 );
               }
             },
@@ -547,11 +551,11 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
             final pairingResult = await _showPairingDialog(host, port);
             if (pairingResult != null) {
               success = await _adb.pairDevice(
-                host, 
-                pairingResult['pairingPort'] as int, 
-                pairingResult['pairingCode'] as String,
-                port  // connection port for future connections
-              );
+                  host,
+                  pairingResult['pairingPort'] as int,
+                  pairingResult['pairingCode'] as String,
+                  port // connection port for future connections
+                  );
               if (success) {
                 // After successful pairing, try to connect
                 await Future.delayed(const Duration(seconds: 2));
@@ -1603,6 +1607,8 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
   }
 
   Future<void> _runMdnsScan() async {
+    if (_mdnsScanning) return;
+
     setState(() {
       _mdnsScanning = true;
     });
@@ -1616,6 +1622,16 @@ class _AdbRefactoredScreenState extends State<AdbRefactoredScreen>
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
           'mdns_cache', jsonEncode(results.map((e) => e.toJson()).toList()));
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('mDNS scan complete: ${results.length} service(s)'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)

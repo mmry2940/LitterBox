@@ -123,7 +123,6 @@ class ConnectionCircuitBreaker {
 
   CircuitBreakerState _state = CircuitBreakerState.closed;
   int _failureCount = 0;
-  DateTime? _lastFailureTime;
   DateTime? _nextRetryTime;
 
   ConnectionCircuitBreaker({
@@ -154,13 +153,11 @@ class ConnectionCircuitBreaker {
   void recordSuccess() {
     _failureCount = 0;
     _state = CircuitBreakerState.closed;
-    _lastFailureTime = null;
     _nextRetryTime = null;
   }
 
   void recordFailure() {
     _failureCount++;
-    _lastFailureTime = DateTime.now();
 
     if (_failureCount >= failureThreshold) {
       _state = CircuitBreakerState.open;
@@ -171,7 +168,6 @@ class ConnectionCircuitBreaker {
   void reset() {
     _failureCount = 0;
     _state = CircuitBreakerState.closed;
-    _lastFailureTime = null;
     _nextRetryTime = null;
   }
 }
@@ -249,7 +245,8 @@ class ManagedConnection<T> {
     try {
       if (client is SSHClient) {
         final ssh = client as SSHClient;
-        final result = await ssh.run('echo "validation"').timeout(adaptiveTimeout);
+        final result =
+            await ssh.run('echo "validation"').timeout(adaptiveTimeout);
         final isValid = result.isNotEmpty;
 
         lastValidationTime = DateTime.now();
@@ -548,13 +545,14 @@ class ConnectionPoolManager {
   void _handleNetworkChange(ConnectivityResult result) {
     final newState = _mapConnectivityToNetworkState(result);
     if (newState != _currentNetworkState) {
+      final previousState = _currentNetworkState;
       _networkEvents.add(
           'Network state changed: ${_currentNetworkState.name} -> ${newState.name}');
       _currentNetworkState = newState;
 
       if (newState == NetworkState.disconnected) {
         _handleNetworkDisconnection();
-      } else if (_currentNetworkState == NetworkState.disconnected &&
+      } else if (previousState == NetworkState.disconnected &&
           newState == NetworkState.connected) {
         _handleNetworkReconnection();
       }

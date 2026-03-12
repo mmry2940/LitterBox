@@ -100,6 +100,15 @@ class LiteHost {
   }
 }
 
+enum DeviceSortMode {
+  name('Name'),
+  host('Host/IP'),
+  status('Status');
+
+  const DeviceSortMode(this.label);
+  final String label;
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -133,7 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _multiSelectMode = false;
   final Set<int> _selectedDeviceIndexes = {};
   String _deviceSearchQuery = '';
-  String _selectedGroupFilter = 'All';
+  DeviceSortMode _deviceSortMode = DeviceSortMode.name;
   final Map<String, DeviceStatus> _deviceStatuses = {};
 
   final Set<String> _favoriteDeviceHosts = {};
@@ -821,34 +830,46 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           ),
-          // Device group filter
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: DropdownButtonFormField<String>(
-              initialValue: _selectedGroupFilter,
-              decoration: const InputDecoration(
-                labelText: 'Filter by Group',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.filter_list),
-                isDense: true,
-              ),
-              items: const [
-                DropdownMenuItem(value: 'All', child: Text('All Groups')),
-                DropdownMenuItem(value: 'Default', child: Text('Default')),
-                DropdownMenuItem(value: 'Work', child: Text('Work')),
-                DropdownMenuItem(value: 'Home', child: Text('Home')),
-                DropdownMenuItem(value: 'Servers', child: Text('Servers')),
-                DropdownMenuItem(
-                    value: 'Development', child: Text('Development')),
-                DropdownMenuItem(value: 'Local', child: Text('Local')),
+            child: Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<DeviceSortMode>(
+                    initialValue: _deviceSortMode,
+                    decoration: const InputDecoration(
+                      labelText: 'Sort Devices',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.sort),
+                      isDense: true,
+                    ),
+                    items: DeviceSortMode.values
+                        .map(
+                          (mode) => DropdownMenuItem<DeviceSortMode>(
+                            value: mode,
+                            child: Text(mode.label),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() {
+                          _deviceSortMode = value;
+                        });
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '${_devices.length} total',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    _selectedGroupFilter = value;
-                  });
-                }
-              },
             ),
           ),
           // Devices list and batch actions
@@ -921,7 +942,6 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Builder(
               builder: (context) {
                 // Efficient filtering for large lists
-                final filteredDevices = <Map<String, dynamic>>[];
                 final filteredIndexes = <int>[];
                 for (int i = 0; i < _devices.length; i++) {
                   final device = _devices[i];
@@ -936,75 +956,108 @@ class _HomeScreenState extends State<HomeScreen> {
                       continue;
                     }
                   }
-                  if (_selectedGroupFilter != 'All' &&
-                      device['group'] != _selectedGroupFilter) {
-                    continue;
-                  }
-                  filteredDevices.add(device);
                   filteredIndexes.add(i);
                 }
-                if (filteredDevices.isEmpty) {
-                  return const Center(child: Text('No devices added.'));
-                }
-                return ListView.builder(
-                  itemCount: filteredDevices.length,
-                  padding: const EdgeInsets.all(8),
-                  itemBuilder: (context, idx) {
-                    final device = filteredDevices[idx];
-                    final index = filteredIndexes[idx];
-                    final isFavorite =
-                        _favoriteDeviceHosts.contains(device['host']);
-                    final isSelected = _selectedDeviceIndexes.contains(index);
-                    final status = _deviceStatuses[device['host']];
 
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: EnhancedDeviceCard(
-                        device: device,
-                        isFavorite: isFavorite,
-                        isSelected: isSelected,
-                        status: status,
-                        multiSelectMode: _multiSelectMode,
-                        onTap: !_multiSelectMode
-                            ? () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => DeviceScreen(
-                                      device: device,
-                                      initialTab:
-                                          5, // Show Misc tab (overview cards)
-                                    ),
-                                  ),
-                                );
-                              }
-                            : () {
-                                setState(() {
-                                  if (isSelected) {
-                                    _selectedDeviceIndexes.remove(index);
-                                  } else {
-                                    _selectedDeviceIndexes.add(index);
-                                  }
-                                });
-                              },
-                        onLongPress: !_multiSelectMode
-                            ? () => _showQuickActions(context, device)
-                            : null,
-                        onEdit: () => _showDeviceSheet(editIndex: index),
-                        onDelete: () => _removeDevice(index),
-                        onToggleFavorite: () {
-                          setState(() {
-                            if (isFavorite) {
-                              _favoriteDeviceHosts.remove(device['host']);
-                            } else {
-                              _favoriteDeviceHosts.add(device['host']!);
-                            }
-                            _saveDevices();
-                          });
-                        },
+                filteredIndexes.sort((a, b) {
+                  final da = _devices[a];
+                  final db = _devices[b];
+                  switch (_deviceSortMode) {
+                    case DeviceSortMode.name:
+                      final an = (da['name'] ?? da['host'] ?? '').toString();
+                      final bn = (db['name'] ?? db['host'] ?? '').toString();
+                      return an.toLowerCase().compareTo(bn.toLowerCase());
+                    case DeviceSortMode.host:
+                      final ah = (da['host'] ?? '').toString();
+                      final bh = (db['host'] ?? '').toString();
+                      return ah.toLowerCase().compareTo(bh.toLowerCase());
+                    case DeviceSortMode.status:
+                      final sa = _deviceStatuses[da['host']];
+                      final sb = _deviceStatuses[db['host']];
+                      final ao = sa?.isOnline == true ? 0 : 1;
+                      final bo = sb?.isOnline == true ? 0 : 1;
+                      if (ao != bo) return ao.compareTo(bo);
+                      final ap = sa?.pingMs ?? 999999;
+                      final bp = sb?.pingMs ?? 999999;
+                      return ap.compareTo(bp);
+                  }
+                });
+
+                final filteredDevices = filteredIndexes
+                    .map((index) => _devices[index])
+                    .toList(growable: false);
+
+                if (filteredDevices.isEmpty) {
+                  if (_deviceSearchQuery.isNotEmpty) {
+                    return Center(
+                      child: Text(
+                        'No devices match "$_deviceSearchQuery".',
                       ),
                     );
-                  },
+                  }
+                  return const Center(child: Text('No devices added.'));
+                }
+                return RefreshIndicator(
+                  onRefresh: _checkAllDeviceStatuses,
+                  child: ListView.builder(
+                    itemCount: filteredDevices.length,
+                    padding: const EdgeInsets.all(8),
+                    itemBuilder: (context, idx) {
+                      final device = filteredDevices[idx];
+                      final index = filteredIndexes[idx];
+                      final isFavorite =
+                          _favoriteDeviceHosts.contains(device['host']);
+                      final isSelected = _selectedDeviceIndexes.contains(index);
+                      final status = _deviceStatuses[device['host']];
+
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: EnhancedDeviceCard(
+                          device: device,
+                          isFavorite: isFavorite,
+                          isSelected: isSelected,
+                          status: status,
+                          multiSelectMode: _multiSelectMode,
+                          onTap: !_multiSelectMode
+                              ? () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => DeviceScreen(
+                                        device: device,
+                                        initialTab: 5,
+                                      ),
+                                    ),
+                                  );
+                                }
+                              : () {
+                                  setState(() {
+                                    if (isSelected) {
+                                      _selectedDeviceIndexes.remove(index);
+                                    } else {
+                                      _selectedDeviceIndexes.add(index);
+                                    }
+                                  });
+                                },
+                          onLongPress: !_multiSelectMode
+                              ? () => _showQuickActions(context, device)
+                              : null,
+                          onEdit: () => _showDeviceSheet(editIndex: index),
+                          onDelete: () => _removeDevice(index),
+                          onToggleFavorite: () {
+                            setState(() {
+                              if (isFavorite) {
+                                _favoriteDeviceHosts.remove(device['host']);
+                              } else {
+                                _favoriteDeviceHosts.add(device['host']!);
+                              }
+                              _saveDevices();
+                            });
+                          },
+                        ),
+                      );
+                    },
+                  ),
                 );
               },
             ),
@@ -1264,9 +1317,7 @@ class _ScanDialogState extends State<_ScanDialog> {
     String? ip = await info.getWifiIP();
     String? wifiName = await info.getWifiName();
     String? wifiBSSID = await info.getWifiBSSID();
-    print('Detected IP: $ip');
-    print('WiFi Name: $wifiName');
-    print('WiFi BSSID: $wifiBSSID');
+    debugPrint('Scan prep: IP=$ip, WiFi=$wifiName, BSSID=$wifiBSSID');
     if (ip == null || !ip.contains('.')) {
       setState(() {
         _fetchingNetworkInfo = false;
@@ -1337,6 +1388,7 @@ class _ScanDialogState extends State<_ScanDialog> {
   void dispose() {
     _scanSubscription?.cancel();
     _uiBatchTimer?.cancel();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 
@@ -1370,7 +1422,7 @@ class _ScanDialogState extends State<_ScanDialog> {
       _errorMessage = '';
       _progressText = '';
     });
-    print('Starting isolate scan for subnet: $_subnet');
+    debugPrint('Starting isolate scan for subnet: $_subnet');
     try {
       _scanSubscription?.cancel();
       _uiBatchTimer?.cancel();
@@ -1442,6 +1494,7 @@ class _ScanDialogState extends State<_ScanDialog> {
 
   void _cancelScan() {
     if (!_scanning) return;
+    _debounceTimer?.cancel();
     _scanSubscription?.cancel();
     _uiBatchTimer?.cancel();
     _flushPendingHosts();
@@ -1453,17 +1506,17 @@ class _ScanDialogState extends State<_ScanDialog> {
   }
 
   void _testNetworkConnectivity() async {
-    print('=== Network Connectivity Test ===');
+    debugPrint('=== Network Connectivity Test ===');
     final info = NetworkInfo();
     String? ip = await info.getWifiIP();
     String? wifiName = await info.getWifiName();
     String? wifiBSSID = await info.getWifiBSSID();
 
-    print('IP: $ip');
-    print('WiFi Name: $wifiName');
-    print('WiFi BSSID: $wifiBSSID');
-    print('Subnet: [$_subnet');
-    print('================================');
+    debugPrint('IP: $ip');
+    debugPrint('WiFi Name: $wifiName');
+    debugPrint('WiFi BSSID: $wifiBSSID');
+    debugPrint('Subnet: $_subnet');
+    debugPrint('================================');
 
     // Show the results in a dialog
     showDialog(

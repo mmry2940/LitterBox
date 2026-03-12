@@ -58,20 +58,29 @@ Future<Map<String, dynamic>> _probeHost(String ip) async {
   const timeout = Duration(milliseconds: 120);
   final stopwatch = Stopwatch()..start();
   final List<int> openPorts = <int>[];
+  var responded = false;
 
   Future<void> checkPort(int port) async {
     try {
       final socket = await Socket.connect(ip, port, timeout: timeout);
       socket.destroy();
       openPorts.add(port);
+      responded = true;
     } catch (_) {
-      // Ignore unreachable ports.
+      // A host with all service ports closed often responds with
+      // "connection refused". Treat that as alive so it still appears in scan.
+      final lower = _.toString().toLowerCase();
+      if (lower.contains('connection refused') ||
+          lower.contains('errno = 111') ||
+          lower.contains('errno = 61')) {
+        responded = true;
+      }
     }
   }
 
   await Future.wait(candidatePorts.map(checkPort));
   stopwatch.stop();
-  if (openPorts.isEmpty) {
+  if (openPorts.isEmpty && !responded) {
     return {'alive': false};
   }
 

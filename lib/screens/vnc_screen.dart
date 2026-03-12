@@ -239,7 +239,7 @@ class _VNCScreenState extends State<VNCScreen>
         }
       });
     } catch (e) {
-      print('Error loading connection profiles: $e');
+      debugPrint('Error loading connection profiles: $e');
     }
   }
 
@@ -540,7 +540,7 @@ class _VNCScreenState extends State<VNCScreen>
   }
 
   void _connectWithEmbeddedNoVNC() {
-    print('DEBUG: _connectWithEmbeddedNoVNC called');
+    debugPrint('DEBUG: _connectWithEmbeddedNoVNC called');
     final host = _hostController.text.trim();
     final vncPort = int.tryParse(_vncPortController.text.trim()) ?? 5900;
     final password = _passwordController.text;
@@ -556,7 +556,7 @@ class _VNCScreenState extends State<VNCScreen>
       _isConnecting = true;
       _connectionError = null;
     });
-    print('DEBUG: Set _isConnecting to true for embedded noVNC');
+    debugPrint('DEBUG: Set _isConnecting to true for embedded noVNC');
 
     // Create embedded noVNC HTML
     final noVncHtml = _generateNoVNCHtml(host, vncPort, password);
@@ -567,7 +567,7 @@ class _VNCScreenState extends State<VNCScreen>
         _isConnecting = false;
         _showVncWidget = true;
       });
-      print('DEBUG: WebView VNC connected, showing webview widget');
+      debugPrint('DEBUG: WebView VNC connected, showing webview widget');
     }).catchError((error) {
       setState(() {
         _connectionError = 'Failed to load embedded noVNC: $error';
@@ -715,7 +715,7 @@ class _VNCScreenState extends State<VNCScreen>
 
     // Listen to logs for debugging
     debugClient.logs.listen((log) {
-      print('Debug VNC Log: $log');
+      debugPrint('Debug VNC Log: $log');
     });
 
     try {
@@ -758,7 +758,7 @@ class _VNCScreenState extends State<VNCScreen>
 
     // Listen to logs for debugging
     testClient.logs.listen((log) {
-      print('Test VNC Log: $log');
+      debugPrint('Test VNC Log: $log');
     });
 
     try {
@@ -803,17 +803,18 @@ class _VNCScreenState extends State<VNCScreen>
 
     // Listen to logs for debugging
     _vncClient!.logs.listen((log) {
-      print('VNC Log: $log');
+      debugPrint('VNC Log: $log');
     });
 
     // Set up connection state listener BEFORE connecting
     _vncClient!.connectionState.listen((state) {
-      print('DEBUG: VNC connection state changed to: $state');
+      debugPrint('DEBUG: VNC connection state changed to: $state');
       if (mounted) {
         setState(() {
           switch (state) {
             case VNCConnectionState.connected:
-              print('DEBUG: Connection state is CONNECTED, showing VNC widget');
+              debugPrint(
+                  'DEBUG: Connection state is CONNECTED, showing VNC widget');
               _isConnecting = false;
               _showVncWidget = true;
               _reconnectAttempts = 0; // reset attempts on success
@@ -824,7 +825,7 @@ class _VNCScreenState extends State<VNCScreen>
               }
               break;
             case VNCConnectionState.failed:
-              print('DEBUG: Connection state is FAILED');
+              debugPrint('DEBUG: Connection state is FAILED');
               _connectionError =
                   'Failed to connect to VNC server. If you see "Too many security failures", wait 5-10 minutes before retrying.';
               _isConnecting = false;
@@ -832,13 +833,13 @@ class _VNCScreenState extends State<VNCScreen>
               _maybeScheduleReconnect();
               break;
             case VNCConnectionState.disconnected:
-              print('DEBUG: Connection state is DISCONNECTED');
+              debugPrint('DEBUG: Connection state is DISCONNECTED');
               _isConnecting = false;
               _showVncWidget = false;
               _maybeScheduleReconnect();
               break;
             default:
-              print('DEBUG: Connection state is: $state');
+              debugPrint('DEBUG: Connection state is: $state');
               break;
           }
         });
@@ -1824,10 +1825,11 @@ class _VNCScreenState extends State<VNCScreen>
                         onPressed: _isConnecting
                             ? null
                             : () {
-                                print(
+                                debugPrint(
                                     'DEBUG: Connect button pressed! Mode: $_connectionMode');
                                 final connectFunc = _getConnectFunction();
-                                print('DEBUG: Connect function: $connectFunc');
+                                debugPrint(
+                                    'DEBUG: Connect function: $connectFunc');
                                 connectFunc?.call();
                               },
                         icon: Icon(_getConnectIcon()),

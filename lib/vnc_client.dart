@@ -105,7 +105,7 @@ class VNCClient {
       for (final l in _logBuffer) {
         // Use debugPrint to chunk long output
         // ignore: avoid_print
-        print(l);
+        debugPrint(l);
         _logController.add(l);
       }
       _logBuffer.clear();
@@ -2497,12 +2497,13 @@ class VNCClient {
   }
 
   void _updateState(VNCConnectionState newState) {
-    print('DEBUG: _updateState called with: $newState, old state: $_state');
+    debugPrint(
+        'DEBUG: _updateState called with: $newState, old state: $_state');
     _state = newState;
-    print(
+    debugPrint(
         'DEBUG: Broadcasting state $newState to ${_stateController.hasListener ? "listeners" : "no listeners"}');
     _stateController.add(newState);
-    print('DEBUG: State update complete, current state: $_state');
+    debugPrint('DEBUG: State update complete, current state: $_state');
   }
 
   void _handleServerCutText(Uint8List data) {
@@ -2656,13 +2657,13 @@ class VNCClientWidget extends StatefulWidget {
   @override
   State<VNCClientWidget> createState() {
     _instanceCount++;
-    print(
+    debugPrint(
         '[VNCClientWidget] Creating new state instance (#$_instanceCount total)');
     final state = _VNCClientWidgetState();
 
     // If there's already an active instance, dispose it first
     if (_activeInstance != null) {
-      print(
+      debugPrint(
           '[VNCClientWidget] Warning: Disposing previous active instance to prevent multiple widgets');
       _activeInstance!._disposeStreams();
     }
@@ -2687,11 +2688,12 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
   @override
   void initState() {
     super.initState();
-    print('[VNCClientWidget] initState called - Widget ${widget.hashCode}');
+    debugPrint(
+        '[VNCClientWidget] initState called - Widget ${widget.hashCode}');
 
     _connectionStateSubscription =
         widget.client.connectionState.listen((state) {
-      print('[VNCClientWidget] State change: $state');
+      debugPrint('[VNCClientWidget] State change: $state');
       if (mounted) {
         // Check if widget is still mounted
         setState(() {
@@ -2712,7 +2714,7 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
 
   /// Helper method to dispose streams without calling super.dispose()
   void _disposeStreams() {
-    print(
+    debugPrint(
         '[VNCClientWidget] _disposeStreams called - cleaning up subscriptions');
     _connectionStateSubscription?.cancel();
     _frameUpdateSubscription?.cancel();
@@ -2723,7 +2725,7 @@ class _VNCClientWidgetState extends State<VNCClientWidget> {
   @override
   void dispose() {
     VNCClientWidget._instanceCount--;
-    print(
+    debugPrint(
         '[VNCClientWidget] dispose called - Widget ${widget.hashCode}, remaining instances: ${VNCClientWidget._instanceCount}');
 
     // Clear the active instance reference if this is the active one
@@ -3343,7 +3345,8 @@ class VNCFramePainter extends CustomPainter {
 
     // Ensure we have valid size constraints
     if (!size.isFinite || size.isEmpty || size.width <= 0 || size.height <= 0) {
-      print('[VNCFramePainter] Invalid canvas size: $size, using fallback');
+      debugPrint(
+          '[VNCFramePainter] Invalid canvas size: $size, using fallback');
       _drawFallbackDisplay(canvas, Size(800, 600)); // Use fallback size
       return;
     }
@@ -3551,7 +3554,7 @@ class VNCFramePainter extends CustomPainter {
       _drawScaledFrameBuffer(
           canvas, size, offsetX, offsetY, scale, scaledWidth, scaledHeight);
     } catch (e) {
-      print('[VNCFramePainter] Error drawing pixels: $e');
+      debugPrint('[VNCFramePainter] Error drawing pixels: $e');
       // Fallback to simple centered rectangle
       _drawFallbackDisplay(canvas, size);
     }
@@ -3629,7 +3632,7 @@ class VNCFramePainter extends CustomPainter {
 
     // Only log pixel count every 30th paint call to reduce debug spam
     if (_paintCallCount % 30 == 1) {
-      print(
+      debugPrint(
           '[VNCFramePainter] Drew $pixelsDrawn pixels (sample rate: $sampleRate, scale: ${scale.toStringAsFixed(2)}) within bounds ${drawBounds.width.toInt()}x${drawBounds.height.toInt()}');
     }
   }
@@ -3690,7 +3693,7 @@ class VNCFramePainter extends CustomPainter {
 
     // Only log pixel count every 30th paint call
     if (_paintCallCount % 30 == 1) {
-      print(
+      debugPrint(
           '[VNCFramePainter] Drew $pixelsDrawn pixels (sample rate: $sampleRate) with stretch scaling ${scaleX.toStringAsFixed(2)}x${scaleY.toStringAsFixed(2)}');
     }
   }

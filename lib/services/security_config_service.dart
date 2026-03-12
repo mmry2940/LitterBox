@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'secure_storage_service.dart';
 
@@ -46,7 +47,7 @@ class SecurityConfigService {
       // In a real implementation, you'd serialize and store the config
       await prefs.setString(_configKey, 'updated'); // Placeholder
     } catch (e) {
-      print('Failed to update security config: $e');
+      debugPrint('Failed to update security config: $e');
     }
   }
 
@@ -185,7 +186,7 @@ class SecurityConfigService {
 
       // Could also clear app cache/temp files here
     } catch (e) {
-      print('Security reset failed: $e');
+      debugPrint('Security reset failed: $e');
       rethrow;
     }
   }

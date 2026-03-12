@@ -44,7 +44,6 @@ class _DeviceScreenState extends State<DeviceScreen> {
   StreamSubscription<String>? _networkSubscription;
   Timer? _connectionValidationTimer;
   int _connectionAttempts = 0;
-  DateTime? _lastConnectionAttempt;
 
   Future<void> _ensureConnectionAlive({bool silent = true}) async {
     if (!mounted) return;
@@ -161,7 +160,6 @@ class _DeviceScreenState extends State<DeviceScreen> {
 
     _connectionId = 'ssh:$username@$host:$port';
     _connectionAttempts++;
-    _lastConnectionAttempt = DateTime.now();
 
     setState(() {
       _connecting = true;
@@ -210,7 +208,6 @@ class _DeviceScreenState extends State<DeviceScreen> {
         // Enable background sync for this device if configured
         await _backgroundSync.enableDeviceSync(
             widget.device['name'] ?? host, true);
-
       } else {
         throw Exception('Failed to establish connection through pool');
       }
@@ -457,10 +454,11 @@ class _DeviceScreenState extends State<DeviceScreen> {
       ),
     );
   }
-  
+
   void _setupConnectionMonitoring() {
     _reconnectionSubscription?.cancel();
-    _reconnectionSubscription = _connectionPool.reconnectionEvents.listen((event) {
+    _reconnectionSubscription =
+        _connectionPool.reconnectionEvents.listen((event) {
       if (_connectionId != null &&
           event.contains(_connectionId!) &&
           _shouldShowConnectionSnack(event)) {
@@ -478,7 +476,8 @@ class _DeviceScreenState extends State<DeviceScreen> {
 
   void _startConnectionValidation() {
     _connectionValidationTimer?.cancel();
-    _connectionValidationTimer = Timer.periodic(const Duration(minutes: 2), (_) {
+    _connectionValidationTimer =
+        Timer.periodic(const Duration(minutes: 2), (_) {
       _validateConnection();
     });
   }

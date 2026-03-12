@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'adb_backend.dart';
 import 'adb/usb_bridge.dart';
@@ -317,7 +318,7 @@ class ADBServer {
   void _log(String message) {
     final timestamp = DateTime.now().toString().substring(11, 19);
     final logMessage = '[$timestamp] ADB Server: $message';
-    print(logMessage);
+    debugPrint(logMessage);
     if (!_logController.isClosed) {
       _logController.add(logMessage);
     }
@@ -345,7 +346,7 @@ class ADBProtocolClient {
 
   Future<bool> connect(String host, int port) async {
     try {
-      print('Attempting ADB protocol connection to $host:$port');
+      debugPrint('Attempting ADB protocol connection to $host:$port');
       _socket = await Socket.connect(host, port,
           timeout: const Duration(seconds: 10));
 
@@ -353,13 +354,13 @@ class ADBProtocolClient {
       try {
         _socket?.setOption(SocketOption.tcpNoDelay, true);
       } catch (e) {
-        print('Warning: Could not set socket options: $e');
+        debugPrint('Warning: Could not set socket options: $e');
         // Continue anyway
       }
 
       final handshakeSuccess = await _performHandshake()
           .timeout(const Duration(seconds: 5), onTimeout: () {
-        print('ADB handshake timed out');
+        debugPrint('ADB handshake timed out');
         return false;
       });
 
@@ -369,7 +370,7 @@ class ADBProtocolClient {
 
       return handshakeSuccess;
     } catch (e) {
-      print('ADB Protocol connection failed: $e');
+      debugPrint('ADB Protocol connection failed: $e');
       await close(); // Ensure socket is closed on error
       return false;
     }
@@ -392,7 +393,7 @@ class ADBProtocolClient {
 
       return false;
     } catch (e) {
-      print('ADB handshake failed: $e');
+      debugPrint('ADB handshake failed: $e');
       return false;
     }
   }
@@ -406,19 +407,19 @@ class ADBProtocolClient {
       try {
         await _sendMessage(A_OPEN, _localId, service.length, service);
       } catch (e) {
-        print('Error sending shell command open message: $e');
+        debugPrint('Error sending shell command open message: $e');
         return null;
       }
 
       // Wait for OKAY response with timeout
       final openResponse = await _readMessage()
           .timeout(const Duration(seconds: 3), onTimeout: () {
-        print('Timeout waiting for shell OKAY response');
+        debugPrint('Timeout waiting for shell OKAY response');
         return null;
       });
 
       if (openResponse == null || openResponse['command'] != A_OKAY) {
-        print(
+        debugPrint(
             'Failed to get OKAY response for shell: ${openResponse?['command']}');
         return null;
       }
@@ -439,7 +440,7 @@ class ADBProtocolClient {
 
       return await completer.future;
     } catch (e) {
-      print('Shell command execution failed: $e');
+      debugPrint('Shell command execution failed: $e');
       return null;
     }
   }
@@ -474,7 +475,7 @@ class ADBProtocolClient {
         _readShellOutput(output, completer);
       }
     }).catchError((e) {
-      print('Error reading shell output: $e');
+      debugPrint('Error reading shell output: $e');
       if (!completer.isCompleted) {
         completer.complete(output.toString());
       }
@@ -526,7 +527,7 @@ class ADBProtocolClient {
         'data': data,
       };
     } catch (e) {
-      print('Failed to read ADB message: $e');
+      debugPrint('Failed to read ADB message: $e');
       return null;
     }
   }
@@ -553,7 +554,7 @@ class ADBProtocolClient {
           }
         },
         onError: (e) {
-          print('Error reading socket bytes: $e');
+          debugPrint('Error reading socket bytes: $e');
           if (!completer.isCompleted) {
             completer.completeError('Socket read error: $e');
           }
@@ -585,7 +586,7 @@ class ADBProtocolClient {
 
       return await completer.future;
     } catch (e) {
-      print('Error reading socket bytes: $e');
+      debugPrint('Error reading socket bytes: $e');
       // In case of error, return empty list as a fallback
       return [];
     }
@@ -608,7 +609,7 @@ class ADBProtocolClient {
         _socket = null;
       }
     } catch (e) {
-      print('Error closing ADB protocol socket: $e');
+      debugPrint('Error closing ADB protocol socket: $e');
     } finally {
       _socket = null;
     }
@@ -842,7 +843,7 @@ class ADBClientManager {
             _connectedDeviceId = '$host:$port';
             _updateState(ADBConnectionState.connected);
             _addOutput('✅ Connected via external adb backend');
-            
+
             // Validate connection with a simple command
             final validationResult = await _validateConnection();
             if (validationResult) {
@@ -871,7 +872,7 @@ class ADBClientManager {
         _updateState(ADBConnectionState.connected);
         _addOutput('✅ Connected via ADB protocol to $host:$port');
         _addOutput('🔓 ADB protocol handshake completed');
-        
+
         // Validate connection with actual command
         final validationResult = await _validateConnection();
         if (validationResult) {
@@ -894,14 +895,15 @@ class ADBClientManager {
           // Test if this is actually an ADB server by sending a simple command
           _socket!.add(utf8.encode('host:version'));
           await _socket!.flush();
-          
+
           // Wait briefly for response
           await Future.delayed(const Duration(milliseconds: 500));
-          
+
           _updateState(ADBConnectionState.connected);
           _addOutput('✅ Connected to $host:$port (basic TCP)');
           _addOutput('🔓 Basic connectivity established');
-          _addOutput('⚠️ Limited functionality - commands may not work properly');
+          _addOutput(
+              '⚠️ Limited functionality - commands may not work properly');
           return true;
         } catch (e) {
           _addOutput('❌ Basic TCP connection also failed: $e');
@@ -922,26 +924,32 @@ class ADBClientManager {
 
   /// Validate that the connection actually works by executing a simple command
   Future<bool> _validateConnection() async {
-    if (_connectionMode == ADBConnectionMode.server && _externalBackend != null) {
+    if (_connectionMode == ADBConnectionMode.server &&
+        _externalBackend != null) {
       try {
         // Try to get device properties to validate connection
-        final result = await _externalBackend!.shell(_connectedDeviceId, 'getprop ro.build.version.release');
-        return result.isNotEmpty && !result.contains('error') && !result.contains('failed');
+        final result = await _externalBackend!
+            .shell(_connectedDeviceId, 'getprop ro.build.version.release');
+        return result.isNotEmpty &&
+            !result.contains('error') &&
+            !result.contains('failed');
       } catch (e) {
         _addOutput('🔍 Validation via external backend failed: $e');
         return false;
       }
-    } else if (_connectionMode == ADBConnectionMode.direct && _adbProtocol != null) {
+    } else if (_connectionMode == ADBConnectionMode.direct &&
+        _adbProtocol != null) {
       try {
         // Try to execute a simple shell command via ADB protocol
-        final result = await _adbProtocol!.executeShellCommand('getprop ro.build.version.release');
+        final result = await _adbProtocol!
+            .executeShellCommand('getprop ro.build.version.release');
         return result != null && result.isNotEmpty && !result.contains('error');
       } catch (e) {
         _addOutput('🔍 Validation via ADB protocol failed: $e');
         return false;
       }
     }
-    
+
     // For basic TCP connections, we can't really validate
     return true;
   }
@@ -963,21 +971,24 @@ class ADBClientManager {
             _updateState(ADBConnectionState.failed);
             return false;
           }
-          
+
           // Look for authorized devices first
-          final authorizedDevices = devices.where((d) => d.state == 'device').toList();
-          final unauthorizedDevices = devices.where((d) => d.state == 'unauthorized').toList();
-          
+          final authorizedDevices =
+              devices.where((d) => d.state == 'device').toList();
+          final unauthorizedDevices =
+              devices.where((d) => d.state == 'unauthorized').toList();
+
           if (authorizedDevices.isNotEmpty) {
             final first = authorizedDevices.first;
             _connectedDeviceId = first.serial;
             _connectionMode = ADBConnectionMode.server;
-            
+
             // Validate connection works
             final validationResult = await _validateConnection();
             if (validationResult) {
               _updateState(ADBConnectionState.connected);
-              _addOutput('✅ Connected to USB device: ${first.serial} (${first.state})');
+              _addOutput(
+                  '✅ Connected to USB device: ${first.serial} (${first.state})');
               _addOutput('🔍 Connection validated successfully');
               return true;
             } else {
@@ -987,7 +998,8 @@ class ADBClientManager {
             }
           } else if (unauthorizedDevices.isNotEmpty) {
             _addOutput('❌ USB device found but not authorized');
-            _addOutput('💡 Please check your device screen and tap "Allow" for USB debugging');
+            _addOutput(
+                '💡 Please check your device screen and tap "Allow" for USB debugging');
             _updateState(ADBConnectionState.failed);
             return false;
           } else {
@@ -999,7 +1011,8 @@ class ADBClientManager {
             return false;
           }
         } catch (e) {
-          _addOutput('⚠️ External adb backend USB failed: $e, falling back to direct connection');
+          _addOutput(
+              '⚠️ External adb backend USB failed: $e, falling back to direct connection');
         }
       }
 
@@ -1015,26 +1028,30 @@ class ADBClientManager {
 
       if (deviceList.isEmpty) {
         _addOutput('❌ No devices found via ADB server');
-        _addOutput('💡 Make sure ADB server is running and device is connected');
+        _addOutput(
+            '💡 Make sure ADB server is running and device is connected');
         _updateState(ADBConnectionState.failed);
         return false;
       }
 
       // Parse device list and use first available authorized device
-      final lines = deviceList.split('\n').where((line) => line.trim().isNotEmpty);
+      final lines =
+          deviceList.split('\n').where((line) => line.trim().isNotEmpty);
       final deviceInfo = <Map<String, String>>[];
-      
+
       for (final line in lines) {
         final parts = line.split('\t');
         if (parts.length >= 2) {
           deviceInfo.add({'serial': parts[0], 'state': parts[1]});
         }
       }
-      
+
       // Look for authorized devices first
-      final authorizedDevices = deviceInfo.where((d) => d['state'] == 'device').toList();
-      final unauthorizedDevices = deviceInfo.where((d) => d['state'] == 'unauthorized').toList();
-      
+      final authorizedDevices =
+          deviceInfo.where((d) => d['state'] == 'device').toList();
+      final unauthorizedDevices =
+          deviceInfo.where((d) => d['state'] == 'unauthorized').toList();
+
       if (authorizedDevices.isNotEmpty) {
         final device = authorizedDevices.first;
         _connectedDeviceId = device['serial']!;
@@ -1046,7 +1063,8 @@ class ADBClientManager {
         return true;
       } else if (unauthorizedDevices.isNotEmpty) {
         _addOutput('❌ USB device found but not authorized');
-        _addOutput('💡 Please check your device screen and tap "Allow" for USB debugging');
+        _addOutput(
+            '💡 Please check your device screen and tap "Allow" for USB debugging');
         for (final device in unauthorizedDevices) {
           _addOutput('   • ${device['serial']}: ${device['state']}');
         }
@@ -1085,7 +1103,7 @@ class ADBClientManager {
       _updateState(ADBConnectionState.failed);
       _addOutput('❌ USB connection error: $e');
       _addOutput('💡 Make sure ADB server is running: adb start-server');
-      print('ADB USB connection error: $e');
+      debugPrint('ADB USB connection error: $e');
       return false;
     }
   }
@@ -1126,7 +1144,8 @@ class ADBClientManager {
       // Try external ADB backend first (adb pair)
       if (_externalBackend != null) {
         try {
-          final success = await _externalBackend!.pair(host, pairingPort, pairingCode);
+          final success =
+              await _externalBackend!.pair(host, pairingPort, pairingCode);
           if (success) {
             _addOutput('✅ Pairing successful via external ADB');
             _addOutput('📱 Device is now paired for wireless debugging');
@@ -1134,10 +1153,12 @@ class ADBClientManager {
             _updateState(ADBConnectionState.disconnected);
             return true;
           } else {
-            _addOutput('⚠️ External ADB pairing failed, trying direct connection...');
+            _addOutput(
+                '⚠️ External ADB pairing failed, trying direct connection...');
           }
         } catch (e) {
-          _addOutput('⚠️ External ADB pairing error: $e, falling back to direct...');
+          _addOutput(
+              '⚠️ External ADB pairing error: $e, falling back to direct...');
         }
       }
 
@@ -1165,10 +1186,10 @@ class ADBClientManager {
           (data) {
             final response = utf8.decode(data);
             _addOutput('📨 Response: $response');
-            
+
             // Check if pairing was successful
-            if (response.contains('Successfully paired') || 
-                response.contains('paired') || 
+            if (response.contains('Successfully paired') ||
+                response.contains('paired') ||
                 data.isNotEmpty) {
               responseCompleter.complete(true);
             } else {
@@ -1187,7 +1208,7 @@ class ADBClientManager {
         });
 
         final pairingSuccess = await responseCompleter.future;
-        
+
         // Cleanup
         timeoutTimer.cancel();
         await subscription.cancel();
@@ -1204,7 +1225,6 @@ class ADBClientManager {
           _addOutput('❌ Pairing failed - invalid response from device');
           return false;
         }
-        
       } catch (e) {
         _addOutput('❌ Failed to connect to pairing port: $e');
         _addOutput(
@@ -1214,7 +1234,7 @@ class ADBClientManager {
     } catch (e) {
       _updateState(ADBConnectionState.failed);
       _addOutput('❌ Pairing error: $e');
-      print('ADB pairing error: $e');
+      debugPrint('ADB pairing error: $e');
       return false;
     }
   }
@@ -1301,7 +1321,7 @@ class ADBClientManager {
       }
     } catch (e) {
       _addOutput('❌ Command execution error: $e');
-      print('ADB command execution error: $e');
+      debugPrint('ADB command execution error: $e');
     }
   }
 
@@ -1418,7 +1438,7 @@ class ADBClientManager {
           }
         },
         onError: (error) {
-          print('Socket error in _readADBResponse: $error');
+          debugPrint('Socket error in _readADBResponse: $error');
           cleanupResources();
           if (!completer.isCompleted) {
             completer.complete(''); // Return empty on error rather than crash
@@ -1462,7 +1482,7 @@ class ADBClientManager {
 
       return await completer.future;
     } catch (e) {
-      print('Error in _readADBResponse: $e');
+      debugPrint('Error in _readADBResponse: $e');
       return '';
     }
   }
@@ -1505,7 +1525,7 @@ class ADBClientManager {
     } catch (e) {
       _updateState(ADBConnectionState.disconnected);
       _addOutput('❌ Disconnect error: $e');
-      print('ADB disconnect error: $e');
+      debugPrint('ADB disconnect error: $e');
     }
   }
 
@@ -1627,9 +1647,9 @@ class ADBClientManager {
     if (!_outputController.isClosed) _outputController.add(line);
     if (_outputMode == ADBOutputMode.raw) {
       // still print for debugging
-      print(line);
+      debugPrint(line);
     } else {
-      print('ADB: $line');
+      debugPrint('ADB: $line');
     }
   }
 
@@ -1672,21 +1692,27 @@ class ADBClientManager {
       return true;
     }
     if (_externalBackend == null) {
-      _addOutput('❌ Cannot start logcat: no external backend available', deviceOutput: false);
-      _addOutput('💡 Try running "adb start-server" in terminal first', deviceOutput: false);
+      _addOutput('❌ Cannot start logcat: no external backend available',
+          deviceOutput: false);
+      _addOutput('💡 Try running "adb start-server" in terminal first',
+          deviceOutput: false);
       return false;
     }
     if (_connectedDeviceId.isEmpty) {
-      _addOutput('❌ Cannot start logcat: no device connected', deviceOutput: false);
-      _addOutput('💡 Connect to a device first from the Dashboard tab', deviceOutput: false);
+      _addOutput('❌ Cannot start logcat: no device connected',
+          deviceOutput: false);
+      _addOutput('💡 Connect to a device first from the Dashboard tab',
+          deviceOutput: false);
       return false;
     }
-    
-    _addOutput('🚀 Starting logcat for device: $_connectedDeviceId', deviceOutput: false);
+
+    _addOutput('🚀 Starting logcat for device: $_connectedDeviceId',
+        deviceOutput: false);
     if (filters.isNotEmpty) {
-      _addOutput('🔍 Applying filters: ${filters.join(", ")}', deviceOutput: false);
+      _addOutput('🔍 Applying filters: ${filters.join(", ")}',
+          deviceOutput: false);
     }
-    
+
     try {
       final stream =
           _externalBackend!.streamLogcat(_connectedDeviceId, filters: filters);
@@ -1709,7 +1735,8 @@ class ADBClientManager {
         _addOutput('⏹️ Logcat stream ended', deviceOutput: false);
         _logcatActive = false;
       });
-      _addOutput('📜 Logcat streaming started successfully', deviceOutput: false);
+      _addOutput('📜 Logcat streaming started successfully',
+          deviceOutput: false);
       return true;
     } catch (e) {
       _addOutput('❌ Failed to start logcat: $e', deviceOutput: false);
@@ -1875,7 +1902,8 @@ class ADBClientManager {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('adb_key_fingerprint');
       await prefs.remove('adb_authorized_devices');
-      _addOutput('🗑️ Cleared all saved ADB credentials and authorization history');
+      _addOutput(
+          '🗑️ Cleared all saved ADB credentials and authorization history');
     } catch (e) {
       _addOutput('❌ Failed to clear credentials: $e');
     }
@@ -1885,8 +1913,9 @@ class ADBClientManager {
     try {
       final prefs = await SharedPreferences.getInstance();
       final keyFingerprint = prefs.getString('adb_key_fingerprint');
-      final authorizedDevices = prefs.getStringList('adb_authorized_devices') ?? [];
-      
+      final authorizedDevices =
+          prefs.getStringList('adb_authorized_devices') ?? [];
+
       _addOutput('🔑 RSA Key Status:');
       if (keyFingerprint != null) {
         _addOutput('  📋 Key ID: ${keyFingerprint.substring(0, 8)}...');

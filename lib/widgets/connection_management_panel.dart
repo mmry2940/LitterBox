@@ -19,6 +19,7 @@ class _ConnectionManagementPanelState extends State<ConnectionManagementPanel> {
 
   StreamSubscription<String>? _reconnectionSubscription;
   StreamSubscription<BackgroundSyncEvent>? _syncEventsSubscription;
+  Timer? _statsRefreshTimer;
 
   Map<String, dynamic>? _connectionStats;
   Map<String, dynamic>? _syncStatus;
@@ -31,7 +32,7 @@ class _ConnectionManagementPanelState extends State<ConnectionManagementPanel> {
     _setupEventStreams();
 
     // Refresh stats periodically
-    Timer.periodic(const Duration(seconds: 10), (_) {
+    _statsRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (mounted) {
         _loadInitialData();
       }
@@ -42,6 +43,7 @@ class _ConnectionManagementPanelState extends State<ConnectionManagementPanel> {
   void dispose() {
     _reconnectionSubscription?.cancel();
     _syncEventsSubscription?.cancel();
+    _statsRefreshTimer?.cancel();
     super.dispose();
   }
 

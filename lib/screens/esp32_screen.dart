@@ -79,10 +79,19 @@ class _ESP32ScreenState extends State<ESP32Screen>
       _isScanning = true;
     });
 
+    var progressDialogOpen = false;
+
+    void closeProgressDialogIfOpen() {
+      if (!mounted || !progressDialogOpen) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      progressDialogOpen = false;
+    }
+
     try {
       // Show progress dialog with more detailed information
       showDialog(
         context: context,
+        useRootNavigator: true,
         barrierDismissible: false,
         builder: (context) => AlertDialog(
           title: const Row(
@@ -109,8 +118,11 @@ class _ESP32ScreenState extends State<ESP32Screen>
           ),
         ),
       );
+      progressDialogOpen = true;
 
       int foundDevices = 0;
+      int bluetoothFound = 0;
+      int lanFound = 0;
 
       // Scan for Bluetooth devices
       try {
@@ -128,6 +140,7 @@ class _ESP32ScreenState extends State<ESP32Screen>
               _devices.add(device);
             });
             foundDevices++;
+            bluetoothFound++;
           }
         }
       } catch (e) {
@@ -156,6 +169,7 @@ class _ESP32ScreenState extends State<ESP32Screen>
               _devices.add(device);
             });
             foundDevices++;
+            lanFound++;
           }
         }
       } catch (e) {
@@ -163,16 +177,15 @@ class _ESP32ScreenState extends State<ESP32Screen>
       }
 
       // Close progress dialog
-      if (mounted && Navigator.canPop(context)) {
-        Navigator.pop(context);
-      }
+      closeProgressDialogIfOpen();
 
       _saveDevices();
 
       // Show results with appropriate message
       if (mounted) {
         final message = foundDevices > 0
-            ? 'Found $foundDevices ESP32 device${foundDevices == 1 ? '' : 's'}'
+            ? 'Found $foundDevices ESP32 device${foundDevices == 1 ? '' : 's'} '
+                '(BT: $bluetoothFound, LAN: $lanFound)'
             : 'No ESP32 devices found. Try adding a device manually or check your network connection.';
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -191,9 +204,7 @@ class _ESP32ScreenState extends State<ESP32Screen>
       }
     } catch (e) {
       // Close progress dialog if still open
-      if (mounted && Navigator.canPop(context)) {
-        Navigator.pop(context);
-      }
+      closeProgressDialogIfOpen();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
