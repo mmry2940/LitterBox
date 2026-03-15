@@ -4,13 +4,13 @@
 [![Dart](https://img.shields.io/badge/Dart-3.5.0-0175C2?logo=dart)](https://dart.dev)
 [![Android](https://img.shields.io/badge/Android-5.0+-3DDC84?logo=android)](https://developer.android.com)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/mmry2940/LitterBox)](https://github.com/mmry2940/LitterBox/releases)
+[![Release](https://img.shields.io/badge/Release-v2.0.0-blue)](https://github.com/mmry2940/LitterBox/releases)
 
-> **A powerful remote access toolkit for Android developers and system administrators**
+> **A powerful remote access toolkit for Android developers, system administrators, and IoT engineers**
 
-LitterBox is a comprehensive Android application that brings together essential remote access tools in one convenient package. Whether you're managing servers via SSH, debugging Android devices with ADB, or accessing remote desktops through VNC/RDP, LitterBox provides the tools you need with a modern, intuitive interface.
+LitterBox is a comprehensive Android application that brings together essential remote access and device management tools in one convenient package. Whether you're managing servers via SSH, debugging Android devices with ADB, accessing remote desktops through VNC, managing ESP32 microcontrollers, or monitoring connection quality — LitterBox provides the tools you need with a modern, secure, and intuitive interface.
 
-![LitterBox Screenshots](https://via.placeholder.com/800x400/2196F3/FFFFFF?text=LitterBox+Screenshots)
+> **🆕 Version 2.0.0** — Major update adding ESP32 support, in-app security, background sync, connection pooling, app management, and more. See [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md) for the full changelog.
 
 ## ✨ Features Overview
 
@@ -18,15 +18,23 @@ LitterBox is a comprehensive Android application that brings together essential 
 - **SSH Terminal** - Full-featured terminal with persistent connections
 - **Android ADB Manager** - Comprehensive ADB interface for device management  
 - **VNC Client** - Native VNC remote desktop viewer
-- **RDP Client** - Remote Desktop Protocol support
-- **Network Scanner** - Discover devices on your local network
-- **Device Manager** - Centralized connection management
+- **ESP32 Manager** - Connect and control ESP32 microcontrollers via Bluetooth or LAN
+- **Network Scanner** - Discover and sort devices on your local network
+- **Device Manager** - Centralized connection management with connection pooling
+- **App Manager** - Browse, search, and manage installed apps on connected Android devices
+
+### 🔐 **Security**
+- **Encrypted credential storage** - Connection passwords stored with device-specific encryption
+- **Security health reports** - Real-time overview of stored credentials and security posture
+- **Security settings screen** - Manage policies, view stats, and audit saved connections
 
 ### 🎨 **User Experience**
 - **Material 3 Design** - Modern, responsive UI following Google's design principles
 - **Dark/Light Themes** - Automatic theme switching and manual toggle
 - **Responsive Layout** - Optimized for phones and tablets
-- **Intuitive Navigation** - Easy-to-use interface for complex operations
+- **Device sorting & filtering** - Sort SSH hosts by name, host, or status
+- **Connection quality indicator** - Visual signal-strength widget for active connections
+- **Background sync** - Automatic data synchronization for saved devices
 
 ---
 
@@ -164,34 +172,66 @@ flutter build apk --release
 
 </details>
 
-### 💻 **RDP Remote Desktop** ⚠️ **Partially Implemented**
+### 🔌 **ESP32 Manager** ✅ **New in 2.0.0**
 
 <details>
-<summary>Click to expand RDP features</summary>
+<summary>Click to expand ESP32 features</summary>
 
-**Working Features:**
-- ✅ **Connection testing** - TCP connectivity verification
-- ✅ **Guacamole integration** - WebView-based RDP via Guacamole
-- ✅ **Connection profiles** - Save RDP server configurations
-- ✅ **Basic authentication** - Username/password/domain support
+**Connection Methods:**
+- ✅ **Bluetooth** - Scan and connect to nearby ESP32 devices via Bluetooth
+- ✅ **LAN / Wi-Fi** - Connect over IP to ESP32 devices on the local network
+- ✅ **Saved devices** - Persist ESP32 device configurations across sessions
 
-**Limitations:**
-- ⚠️ **Native RDP client** - Protocol implementation incomplete
-- ⚠️ **Direct RDP connection** - Currently requires Guacamole server
-- ⚠️ **Advanced features** - No file transfer, audio, or clipboard sync
+**Device Control:**
+- ✅ **REPL console** - Interactive MicroPython/Lua REPL with command history
+- ✅ **GPIO monitoring** - View and toggle GPIO pin states in real time
+- ✅ **Sensor data** - Read temperature, humidity, and other sensor values
+- ✅ **File system** - Browse and manage files on the device
+- ✅ **Firmware info** - Chip model, MAC address, CPU frequency, free memory
 
-**Current Status:**
-The RDP implementation focuses on connection management and testing. For full RDP functionality, users should:
-1. Set up a Guacamole server
-2. Use the Guacamole WebView mode
-3. Native RDP mode is for testing connectivity only
+**Technical Stack:**
+- HTTP API communication for LAN-connected devices
+- Bluetooth service integration via platform channels
+- `esp32_scan_test_dialog` for scan/test workflow
 
-**Future Improvements:**
-- [ ] Complete native RDP protocol implementation
-- [ ] Direct RDP connections without Guacamole
-- [ ] File transfer support
-- [ ] Audio redirection
-- [ ] Enhanced security options
+</details>
+
+### 📱 **App Manager** ✅ **New in 2.0.0**
+
+<details>
+<summary>Click to expand App Manager features</summary>
+
+**App Operations:**
+- ✅ **Installed apps list** - View all user and system apps on connected ADB device
+- ✅ **Search & filter** - Filter by All / User / System / Enabled / Disabled
+- ✅ **Batch operations** - Select multiple apps and uninstall or perform actions in bulk
+- ✅ **Favorites** - Mark frequently used packages for quick access
+- ✅ **APK installation** - Install APKs via file picker
+
+**Technical Stack:**
+- Shared ADB connection via `SharedADBManager`
+- `AppInfo` model for structured package metadata
+
+</details>
+
+### 🔐 **Security Settings** ✅ **New in 2.0.0**
+
+<details>
+<summary>Click to expand Security features</summary>
+
+**Credential Security:**
+- ✅ **Encrypted storage** - All passwords encrypted with device-specific key derivation
+- ✅ **Secure ADB devices** - Saved ADB configurations protected by `SecureADBDeviceManager`
+- ✅ **Secure VNC devices** - VNC profiles stored via `SecureVNCDeviceManager`
+
+**Security Health:**
+- ✅ **Health report** - `SecurityConfigService.performSecurityCheck()` produces a detailed `SecurityHealthReport`
+- ✅ **Connection stats** - View counts of saved ADB and VNC connections
+- ✅ **Configurable policies** - Password expiration, max saved devices, session timeout, max failed attempts, lockout duration
+
+**Settings Screen Integration:**
+- ✅ **Session management** - Configure authentication timeout
+- ✅ **Security settings screen** - Dedicated screen accessible from the Settings drawer
 
 </details>
 
@@ -289,49 +329,83 @@ The RDP implementation focuses on connection management and testing. For full RD
 
 #### **UI & Visualization**
 - `syncfusion_flutter_gauges: ^31.1.19` - Charts and progress indicators
-- `shared_preferences: ^2.4.12` - Local data persistence
-- `file_picker: ^8.0.3` - File system integration
+- `shared_preferences: ^2.2.2` - Local data persistence
+- `file_picker: ^10.3.3` - File system integration
 
 #### **Network & Discovery**
 - `network_tools: ^6.0.2` - Network scanning utilities
 - `network_info_plus: ^7.0.0` - Network information
 - `multicast_dns: ^0.3.2` - mDNS service discovery
+- `connectivity_plus: ^7.0.0` - Network connectivity monitoring
 
 #### **Security & Encryption**
 - `crypto: ^3.0.3` - Cryptographic operations
-- `pointycastle: ^3.7.3` - Dart cryptography library
+- `pointycastle: ^3.9.1` - Dart cryptography library
 
 #### **Platform Integration**
-- `webview_flutter: ^4.4.2` - WebView for RDP/noVNC
+- `webview_flutter: ^4.4.2` - WebView for noVNC
 - `path_provider: ^2.1.4` - Platform directories
+- `http: ^1.2.0` - HTTP client for ESP32 and WebADB
+- `web_socket_channel: ^3.0.1` - WebSocket support
 
 ### 🏛️ **Application Structure**
 
 ```
 lib/
-├── main.dart                    # Application entry point
-├── screens/                     # Main UI screens
-│   ├── home_screen.dart         # Device dashboard
-│   ├── device_screen.dart       # Device detail tabs
-│   ├── device_terminal_screen.dart  # SSH terminal
-│   ├── device_info_screen.dart     # System information
-│   ├── adb_screen_refactored.dart  # ADB management
-│   ├── vnc_screen.dart          # VNC remote desktop
-│   └── rdp_screen.dart          # RDP remote desktop
-├── models/                      # Data models
-│   ├── device_status.dart       # Device connection status
-│   └── saved_adb_device.dart    # Saved ADB configurations
-├── services/                    # Background services
-│   └── device_status_monitor.dart  # Connection monitoring
-├── widgets/                     # Reusable UI components
-│   ├── enhanced_device_card.dart   # Device cards
-│   └── adb_connection_wizard.dart  # ADB setup wizard
-├── adb/                        # ADB implementation
-│   ├── flutter_adb_client.dart    # Flutter-native ADB
-│   ├── adb_mdns_discovery.dart    # mDNS device discovery
-│   └── usb_bridge.dart            # USB device integration
-└── controllers/                # State management
-    └── webadb_controller.dart      # WebADB server control
+├── main.dart                         # Application entry point
+├── screens/                          # Main UI screens
+│   ├── home_screen.dart              # Device dashboard with sort/filter
+│   ├── device_screen.dart            # Device detail tabs
+│   ├── device_terminal_screen.dart   # SSH terminal
+│   ├── device_info_screen.dart       # System information
+│   ├── device_details_screen.dart    # Enhanced device details
+│   ├── device_files_screen.dart      # Remote file browser
+│   ├── device_logs_screen.dart       # Logcat / log viewer
+│   ├── device_packages_screen.dart   # Package listing
+│   ├── device_processes_screen.dart  # Process monitoring
+│   ├── device_misc_screen.dart       # Miscellaneous device tools
+│   ├── adb_screen_refactored.dart    # ADB management
+│   ├── adb_cards_preview_screen.dart # ADB card previews
+│   ├── apps_screen.dart              # App Manager (NEW)
+│   ├── esp32_screen.dart             # ESP32 Manager (NEW)
+│   ├── vnc_screen.dart               # VNC connection list
+│   ├── vnc_viewer_screen.dart        # VNC remote desktop viewer
+│   ├── security_settings_screen.dart # Security settings (NEW)
+│   └── settings_screen.dart          # App settings
+├── models/                           # Data models
+│   ├── device_status.dart            # Device connection status
+│   ├── saved_adb_device.dart         # Saved ADB configurations
+│   ├── saved_vnc_device.dart         # Saved VNC configurations
+│   ├── secure_adb_device.dart        # Encrypted ADB device storage (NEW)
+│   ├── secure_vnc_device.dart        # Encrypted VNC device storage (NEW)
+│   └── app_info.dart                 # App package metadata (NEW)
+├── services/                         # Background services
+│   ├── device_status_monitor.dart    # Connection monitoring
+│   ├── background_sync_service.dart  # Background data sync (NEW)
+│   ├── connection_pool_manager.dart  # Connection pooling with health checks (NEW)
+│   ├── shared_adb_manager.dart       # Shared ADB connection manager (NEW)
+│   ├── secure_storage_service.dart   # Encrypted credential storage (NEW)
+│   ├── security_config_service.dart  # Security policies & health checks (NEW)
+│   ├── adb_connection_manager.dart   # ADB connection lifecycle
+│   └── esp32_service.dart            # ESP32 device service (NEW)
+├── widgets/                          # Reusable UI components
+│   ├── enhanced_device_card.dart     # Device cards
+│   ├── adb_connection_wizard.dart    # ADB setup wizard
+│   ├── connection_management_panel.dart  # Connection hub panel (NEW)
+│   ├── connection_quality_indicator.dart # Signal-strength widget (NEW)
+│   ├── device_summary_card.dart      # Compact device summary (NEW)
+│   ├── enhanced_adb_dashboard.dart   # Improved ADB dashboard (NEW)
+│   ├── enhanced_adb_device_card.dart # ADB device card (NEW)
+│   ├── enhanced_misc_card.dart       # Misc tools card (NEW)
+│   └── esp32_scan_test_dialog.dart   # ESP32 scan dialog (NEW)
+├── adb/                              # ADB implementation
+│   ├── flutter_adb_client.dart       # Flutter-native ADB
+│   ├── adb_mdns_discovery.dart       # mDNS device discovery
+│   ├── embedded_adb_manager.dart     # Embedded ADB manager
+│   ├── enhanced_adb_manager.dart     # Enhanced ADB operations
+│   └── usb_bridge.dart               # USB device integration
+└── controllers/                      # State management
+    └── webadb_controller.dart        # WebADB server control
 ```
 
 ### 🔄 **State Management**
@@ -342,8 +416,8 @@ lib/
 
 ### 🔐 **Security Features**
 - **Local-only data storage** - No cloud data transmission
-- **Encrypted connections** - SSH, VNC, RDP use standard encryption
-- **Secure credential storage** - Passwords stored locally only
+- **Encrypted connections** - SSH and VNC use standard encryption
+- **Secure credential storage** - Passwords encrypted with device-specific keys (new in 2.0.0)
 - **Permission management** - Minimal required permissions
 
 ---
@@ -354,23 +428,31 @@ lib/
 - [x] SSH terminal with persistent connections
 - [x] Android ADB management (Wi-Fi, USB, pairing)
 - [x] VNC remote desktop client
-- [x] Network device discovery
+- [x] Network device discovery with sorting and filtering
 - [x] Device information and monitoring
 - [x] File transfer and management
 - [x] Material 3 UI implementation
 - [x] Background service integration
 - [x] Connection state management
 - [x] Settings and preferences
+- [x] **ESP32 management** (Bluetooth & LAN) *(new in 2.0.0)*
+- [x] **App Manager** (batch ops, favorites, filter) *(new in 2.0.0)*
+- [x] **Security settings** (encrypted storage, health reports) *(new in 2.0.0)*
+- [x] **Background sync service** *(new in 2.0.0)*
+- [x] **Connection pool manager** with health checks *(new in 2.0.0)*
+- [x] **Connection quality indicator widget** *(new in 2.0.0)*
+- [x] **Device sorting & filtering** in home screen *(new in 2.0.0)*
 
 ### ⚠️ **Partially Implemented**
-- [x] RDP client (basic functionality, requires Guacamole for full features)
 - [x] WebADB server (functional but could use more features)
+
+### ❌ **Removed in 2.0.0**
+- ~~RDP client~~ — The dedicated RDP screen has been removed. RDP port is still configurable in settings for future use.
 
 ### 🔮 **Future Enhancements**
 - [ ] Native RDP protocol implementation
 - [ ] SFTP file transfer integration
 - [ ] Custom SSH key management
-- [ ] Connection encryption improvements
 - [ ] Advanced network monitoring
 - [ ] Plugin system for additional protocols
 - [ ] Tablet-optimized layouts
@@ -379,7 +461,6 @@ lib/
 ### 🐛 **Known Issues**
 - Kotlin compilation warnings during build (cosmetic only)
 - VNC security lockout requires server restart after multiple failures
-- RDP native mode limited to connection testing
 - Large file transfers may timeout on slow connections
 
 ---
