@@ -3,7 +3,7 @@
 [![Flutter](https://img.shields.io/badge/Flutter-3.24.0-02569B?logo=flutter)](https://flutter.dev)
 [![Dart](https://img.shields.io/badge/Dart-3.5.0-0175C2?logo=dart)](https://dart.dev)
 [![Android](https://img.shields.io/badge/Android-5.0+-3DDC84?logo=android)](https://developer.android.com)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/mmry2940/LitterBox)](https://github.com/mmry2940/LitterBox/releases)
 
 > **A powerful remote access toolkit for Android developers and system administrators**
@@ -264,7 +264,7 @@ The RDP implementation focuses on connection management and testing. For full RD
 - ✅ **Path management** - Recent paths and quick access
 
 **File Picker Integration:**
-- Uses `file_picker` package (downgraded to 8.0.3 for compatibility)
+- Uses `file_picker` package (^10.3.3)
 - Local file system access
 - Integration with ADB file operations
 
@@ -290,7 +290,7 @@ The RDP implementation focuses on connection management and testing. For full RD
 #### **UI & Visualization**
 - `syncfusion_flutter_gauges: ^31.1.19` - Charts and progress indicators
 - `shared_preferences: ^2.4.12` - Local data persistence
-- `file_picker: ^8.0.3` - File system integration
+- `file_picker: ^10.3.3` - File system integration
 
 #### **Network & Discovery**
 - `network_tools: ^6.0.2` - Network scanning utilities
@@ -418,15 +418,16 @@ Found a bug or have a feature request? Please check existing issues first, then 
 
 ## 📄 **License**
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
-### **MIT License Summary**
+### **GPL-3.0 License Summary**
 - ✅ Commercial use allowed
 - ✅ Modification allowed  
 - ✅ Distribution allowed
 - ✅ Private use allowed
+- ❗ Modifications must be shared under the same license
+- ❗ Source code must be made available
 - ❗ No warranty provided
-- ❗ Author not liable for damages
 
 ---
 
