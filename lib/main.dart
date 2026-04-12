@@ -63,7 +63,7 @@ Future<void> _deferredInit() async {
     NetworkToolsInitializer.completeSuccess();
   } catch (e) {
     if (kDebugMode) {
-      debugPrint('Deferred network tools init fallback: $e');
+      debugPrint('Network tools primary init failed, attempting fallback: $e');
     }
     try {
       await _configureNetworkToolsIsolate('');
@@ -165,6 +165,7 @@ class _SplashScreenState extends State<SplashScreen> {
   void initState() {
     super.initState();
     _timer = Timer(const Duration(seconds: 3), () async {
+      if (!mounted) return;
       String route = '/home';
       try {
         final prefs = await SharedPreferences.getInstance();
