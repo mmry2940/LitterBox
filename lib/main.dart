@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_breakpoints/flutter_breakpoints.dart';
 import 'package:path_provider/path_provider.dart';
@@ -61,11 +62,17 @@ Future<void> _deferredInit() async {
     await _configureNetworkToolsIsolate(dir.path);
     NetworkToolsInitializer.completeSuccess();
   } catch (e) {
+    if (kDebugMode) {
+      debugPrint('Network tools primary init failed, attempting fallback: $e');
+    }
     try {
       await _configureNetworkToolsIsolate('');
       NetworkToolsInitializer.completeSuccess();
-    } catch (_) {}
-    print('Deferred network tools init fallback: $e');
+    } catch (e2) {
+      if (kDebugMode) {
+        debugPrint('Network tools init failed entirely: $e2');
+      }
+    }
     if (!NetworkToolsInitializer.isDone) {
       NetworkToolsInitializer.completeFailure(e);
     }
@@ -81,7 +88,9 @@ Future<void> _configureNetworkToolsIsolate(String path) async {
     // Fallback without isolate if not supported
     await configureNetworkTools(path, enableDebugging: true);
   }
-  print('Network tools configured (deferred) with path: $path');
+  if (kDebugMode) {
+    debugPrint('Network tools configured (deferred) with path: $path');
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -125,6 +134,7 @@ class MyApp extends StatelessWidget {
                     home: SplashScreen(
                         splashImage: splashImage ?? 'assets/splash_1.jpg'),
                     routes: {
+                      '/android': (context) => const AdbRefactoredScreen(),
                       '/settings': (context) => const SettingsScreen(),
                       '/home': (context) => const HomeScreen(),
                     },
@@ -139,43 +149,53 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class SplashScreen extends StatelessWidget {
+class SplashScreen extends StatefulWidget {
   final String? splashImage;
 
   const SplashScreen({super.key, this.splashImage});
 
   @override
-  Widget build(BuildContext context) {
-    // Navigate to the main screen after a delay
-    Timer(const Duration(seconds: 3), () async {
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(const Duration(seconds: 3), () async {
+      if (!mounted) return;
       String route = '/home';
       try {
         final prefs = await SharedPreferences.getInstance();
         final startup = prefs.getString('startup_page');
         if (startup == 'android') {
           route = '/android';
-        } else if (startup == 'settings') route = '/settings';
-      } catch (_) {}
-      if (!context.mounted) return;
-      // Use named routes when possible else direct widget
-      if (route == '/android') {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const AdbRefactoredScreen()),
-        );
-      } else if (route == '/settings') {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const SettingsScreen()),
-        );
-      } else {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-        );
+        } else if (startup == 'settings') {
+          route = '/settings';
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('SplashScreen: failed to read startup_page: $e');
+        }
       }
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed(route);
     });
+  }
 
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       body: Center(
-        child: Image.asset(splashImage ?? 'assets/splash_1.jpg'),
+        child: Image.asset(widget.splashImage ?? 'assets/splash_1.jpg'),
       ),
     );
   }
